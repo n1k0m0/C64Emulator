@@ -24,6 +24,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace SharpPixels
 {
@@ -128,6 +129,14 @@ namespace SharpPixels
         private readonly List<Bitmap> _expiredBitmapScratch = new List<Bitmap>();
         private readonly int _pixelByteCount;
         private readonly int _pixelStrideBytes;
+        private readonly GCHandle _pixelBufferHandle;
+        private readonly IntPtr _pixelBufferPointer;
+        private int[] _stretchSourceXMap;
+        private int[] _stretchSourceYMap;
+        private int _stretchMapSourceWidth;
+        private int _stretchMapSourceHeight;
+        private int _stretchMapTargetWidth;
+        private int _stretchMapTargetHeight;
 
         private readonly float[] vertices =
         {
@@ -161,8 +170,10 @@ namespace SharpPixels
             PixelsHeight = height;
             _pixelStrideBytes = PixelsWidth << 2;
             _pixelByteCount = PixelsHeight * _pixelStrideBytes;
-            _pixels = new byte[PixelsWidth * (PixelsHeight << 2)];
-            InitializePixelAlphaChannel();
+            _pixels = new byte[_pixelByteCount];
+            _pixelBufferHandle = GCHandle.Alloc(_pixels, GCHandleType.Pinned);
+            _pixelBufferPointer = _pixelBufferHandle.AddrOfPinnedObject();
+            ClearScreen();
             UpdateTextureCoordinates();
         }       
 
@@ -258,6 +269,10 @@ namespace SharpPixels
             }
 
             _shader.Dispose();
+            if (_pixelBufferHandle.IsAllocated)
+            {
+                _pixelBufferHandle.Free();
+            }
 
             foreach (var bitmapMemory in _bitmapMemories.Values)
             {
@@ -285,16 +300,7 @@ namespace SharpPixels
 
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
-            GL.TexSubImage2D(TextureTarget2d.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.ES30.PixelFormat.Rgba, PixelType.UnsignedByte, _pixels);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
-            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 5 * sizeof(float), 0);
-            GL.EnableVertexAttribArray(0);
-            if (_texCoordLocation >= 0)
-            {
-                GL.VertexAttribPointer(_texCoordLocation, 2, VertexAttribPointerType.Float, false, 5 * sizeof(float), 3 * sizeof(float));
-                GL.EnableVertexAttribArray(_texCoordLocation);
-            }
+            GL.TexSubImage2D(TextureTarget2d.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.ES30.PixelFormat.Rgba, PixelType.UnsignedByte, _pixelBufferPointer);
 
             _shader.Use();
             
@@ -358,12 +364,15 @@ namespace SharpPixels
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte* GetBitmapPointer(Bitmap bitmap)
         {
-            if (!_bitmapMemories.ContainsKey(bitmap))
+            BitmapMemory bitmapMemory;
+            if (!_bitmapMemories.TryGetValue(bitmap, out bitmapMemory))
             {
-                _bitmapMemories.Add(bitmap, new BitmapMemory(bitmap));
+                bitmapMemory = new BitmapMemory(bitmap);
+                _bitmapMemories.Add(bitmap, bitmapMemory);
             }
-            _bitmapMemories[bitmap].ExpirationTime = DateTime.Now.AddSeconds(1);
-            return _bitmapMemories[bitmap].BitmapPointer;
+
+            bitmapMemory.ExpirationTime = DateTime.Now.AddSeconds(1);
+            return bitmapMemory.BitmapPointer;
         }
 
         /// <summary>
@@ -376,9 +385,9 @@ namespace SharpPixels
         /// <returns>returns true, if the bitmap was found and the bitmap was unlocked and returns false, if the bitmap is not in the cache</returns>
         public bool UnlockBitmap(Bitmap bitmap)
         {
-            if (_bitmapMemories.ContainsKey(bitmap))
+            BitmapMemory bitmapMemory;
+            if (_bitmapMemories.TryGetValue(bitmap, out bitmapMemory))
             {
-                var bitmapMemory = _bitmapMemories[bitmap];
                 bitmapMemory.Dispose();
                 _bitmapMemories.Remove(bitmap);
                 return true;
@@ -494,8 +503,7 @@ namespace SharpPixels
         /// </summary>
         public void ClearScreen()
         {
-            Array.Clear(_pixels, 0, _pixelByteCount);
-            InitializePixelAlphaChannel();
+            FillPixelBuffer(PackRgba(0, 0, 0));
         }
 
         /// <summary>
@@ -534,14 +542,9 @@ namespace SharpPixels
             {
                 return;
             }
-            var address = (y * _pixelStrideBytes) + (x << 2);
-            _pixels[address] = red;
-            address++;
-            _pixels[address] = green;
-            address++;
-            _pixels[address] = blue;
-            address++;
-            _pixels[address] = 255;
+
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
+            target[(y * PixelsWidth) + x] = PackRgba(red, green, blue);
         }
 
         /// <summary>
@@ -574,9 +577,43 @@ namespace SharpPixels
         /// </summary>
         private void InitializePixelAlphaChannel()
         {
-            for (int i = 3; i < _pixels.Length; i += 4)
+            int pixelCount = PixelsWidth * PixelsHeight;
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
+            for (int i = 0; i < pixelCount; i++)
             {
-                _pixels[i] = 255;
+                target[i] |= 0xFF000000U;
+            }
+        }
+
+        /// <summary>
+        /// Converts RGBA channels to the little-endian 32-bit layout used by the upload buffer.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint PackRgba(byte red, byte green, byte blue)
+        {
+            return 0xFF000000U | ((uint)blue << 16) | ((uint)green << 8) | red;
+        }
+
+        /// <summary>
+        /// Converts an ARGB source pixel to the little-endian RGBA layout used by the upload buffer.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint PackArgbSource(uint argb)
+        {
+            return 0xFF000000U | ((argb & 0x000000FFU) << 16) | (argb & 0x0000FF00U) | ((argb >> 16) & 0x000000FFU);
+        }
+
+        /// <summary>
+        /// Fills the entire upload buffer with a packed RGBA color.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FillPixelBuffer(uint packedColor)
+        {
+            int pixelCount = PixelsWidth * PixelsHeight;
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
+            for (int i = 0; i < pixelCount; i++)
+            {
+                target[i] = packedColor;
             }
         }
 
@@ -634,33 +671,43 @@ namespace SharpPixels
                 destinationX + scaledWidth <= PixelsWidth &&
                 destinationY + scaledHeight <= PixelsHeight)
             {
+                uint* target = (uint*)_pixelBufferPointer.ToPointer();
                 for (int sourceY = 0; sourceY < sourceHeight; sourceY++)
                 {
                     int sourceRow = sourceY * sourceWidth;
-                    int targetY = destinationY + (sourceY * scale);
-                    for (int yRepeat = 0; yRepeat < scale; yRepeat++)
+                    int targetRowIndex = ((destinationY + (sourceY * scale)) * PixelsWidth) + destinationX;
+                    uint* targetRow = target + targetRowIndex;
+
+                    if (scale == 1)
                     {
-                        int address = ((targetY + yRepeat) * _pixelStrideBytes) + (destinationX << 2);
                         for (int sourceX = 0; sourceX < sourceWidth; sourceX++)
                         {
-                            uint argb = sourcePixels[sourceRow + sourceX];
-                            byte red = (byte)((argb >> 16) & 0xFF);
-                            byte green = (byte)((argb >> 8) & 0xFF);
-                            byte blue = (byte)(argb & 0xFF);
-                            for (int xRepeat = 0; xRepeat < scale; xRepeat++)
-                            {
-                                _pixels[address++] = red;
-                                _pixels[address++] = green;
-                                _pixels[address++] = blue;
-                                _pixels[address++] = 255;
-                            }
+                            targetRow[sourceX] = PackArgbSource(sourcePixels[sourceRow + sourceX]);
                         }
+                        continue;
+                    }
+
+                    int targetX = 0;
+                    for (int sourceX = 0; sourceX < sourceWidth; sourceX++)
+                    {
+                        uint packed = PackArgbSource(sourcePixels[sourceRow + sourceX]);
+                        for (int xRepeat = 0; xRepeat < scale; xRepeat++)
+                        {
+                            targetRow[targetX++] = packed;
+                        }
+                    }
+
+                    int copiedRowBytes = scaledWidth << 2;
+                    for (int yRepeat = 1; yRepeat < scale; yRepeat++)
+                    {
+                        System.Buffer.MemoryCopy(targetRow, targetRow + (yRepeat * PixelsWidth), copiedRowBytes, copiedRowBytes);
                     }
                 }
 
                 return;
             }
 
+            uint* clippedTarget = (uint*)_pixelBufferPointer.ToPointer();
             for (int sourceY = 0; sourceY < sourceHeight; sourceY++)
             {
                 int targetY = destinationY + (sourceY * scale);
@@ -674,7 +721,7 @@ namespace SharpPixels
                 int sourceRow = sourceY * sourceWidth;
                 for (int yRepeat = yRepeatStart; yRepeat < yRepeatEnd; yRepeat++)
                 {
-                    int targetRowAddress = (targetY + yRepeat) * _pixelStrideBytes;
+                    int targetRowIndex = (targetY + yRepeat) * PixelsWidth;
                     for (int sourceX = 0; sourceX < sourceWidth; sourceX++)
                     {
                         int targetX = destinationX + (sourceX * scale);
@@ -685,17 +732,11 @@ namespace SharpPixels
                             continue;
                         }
 
-                        uint argb = sourcePixels[sourceRow + sourceX];
-                        byte red = (byte)((argb >> 16) & 0xFF);
-                        byte green = (byte)((argb >> 8) & 0xFF);
-                        byte blue = (byte)(argb & 0xFF);
-                        int address = targetRowAddress + ((targetX + xRepeatStart) << 2);
+                        uint packed = PackArgbSource(sourcePixels[sourceRow + sourceX]);
+                        int targetIndex = targetRowIndex + targetX + xRepeatStart;
                         for (int xRepeat = xRepeatStart; xRepeat < xRepeatEnd; xRepeat++)
                         {
-                            _pixels[address++] = red;
-                            _pixels[address++] = green;
-                            _pixels[address++] = blue;
-                            _pixels[address++] = 255;
+                            clippedTarget[targetIndex++] = packed;
                         }
                     }
                 }
@@ -721,21 +762,52 @@ namespace SharpPixels
                 return;
             }
 
+            EnsureStretchMaps(sourceWidth, sourceHeight);
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
             for (int y = 0; y < PixelsHeight; y++)
             {
-                int sourceY = (y * sourceHeight) / PixelsHeight;
+                int sourceY = _stretchSourceYMap[y];
                 int sourceRow = sourceY * sourceWidth;
-                int address = y * _pixelStrideBytes;
+                int targetIndex = y * PixelsWidth;
                 for (int x = 0; x < PixelsWidth; x++)
                 {
-                    int sourceX = (x * sourceWidth) / PixelsWidth;
-                    uint argb = sourcePixels[sourceRow + sourceX];
-                    _pixels[address++] = (byte)((argb >> 16) & 0xFF);
-                    _pixels[address++] = (byte)((argb >> 8) & 0xFF);
-                    _pixels[address++] = (byte)(argb & 0xFF);
-                    _pixels[address++] = 255;
+                    int sourceX = _stretchSourceXMap[x];
+                    target[targetIndex++] = PackArgbSource(sourcePixels[sourceRow + sourceX]);
                 }
             }
+        }
+
+        /// <summary>
+        /// Builds nearest-neighbor stretch lookup tables when source or target dimensions change.
+        /// </summary>
+        private void EnsureStretchMaps(int sourceWidth, int sourceHeight)
+        {
+            if (_stretchSourceXMap != null &&
+                _stretchSourceYMap != null &&
+                _stretchMapSourceWidth == sourceWidth &&
+                _stretchMapSourceHeight == sourceHeight &&
+                _stretchMapTargetWidth == PixelsWidth &&
+                _stretchMapTargetHeight == PixelsHeight)
+            {
+                return;
+            }
+
+            _stretchSourceXMap = new int[PixelsWidth];
+            _stretchSourceYMap = new int[PixelsHeight];
+            for (int x = 0; x < PixelsWidth; x++)
+            {
+                _stretchSourceXMap[x] = (x * sourceWidth) / PixelsWidth;
+            }
+
+            for (int y = 0; y < PixelsHeight; y++)
+            {
+                _stretchSourceYMap[y] = (y * sourceHeight) / PixelsHeight;
+            }
+
+            _stretchMapSourceWidth = sourceWidth;
+            _stretchMapSourceHeight = sourceHeight;
+            _stretchMapTargetWidth = PixelsWidth;
+            _stretchMapTargetHeight = PixelsHeight;
         }
 
         /// <summary>
@@ -763,6 +835,20 @@ namespace SharpPixels
         /// <param name="blue">Blue color channel.</param>
         public void DrawLine(int x0, int y0, int x1, int y1, byte red, byte green, byte blue)
         {
+            if (y0 == y1)
+            {
+                int startX = Math.Min(x0, x1);
+                DrawFilledRectangle(startX, y0, Math.Abs(x1 - x0) + 1, 1, red, green, blue);
+                return;
+            }
+
+            if (x0 == x1)
+            {
+                int startY = Math.Min(y0, y1);
+                DrawFilledRectangle(x0, startY, 1, Math.Abs(y1 - y0) + 1, red, green, blue);
+                return;
+            }
+
             //code from https://de.wikipedia.org/wiki/Bresenham-Algorithmus
             int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
             int dy = -1 * Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
@@ -825,6 +911,20 @@ namespace SharpPixels
         /// <param name="alpha">Alpha color channel.</param>
         public void DrawLineWithAlpha(int x0, int y0, int x1, int y1, byte red, byte green, byte blue, byte alpha)
         {
+            if (y0 == y1)
+            {
+                int startX = Math.Min(x0, x1);
+                DrawFilledRectangleWithAlpha(startX, y0, Math.Abs(x1 - x0) + 1, 1, red, green, blue, alpha);
+                return;
+            }
+
+            if (x0 == x1)
+            {
+                int startY = Math.Min(y0, y1);
+                DrawFilledRectangleWithAlpha(x0, startY, 1, Math.Abs(y1 - y0) + 1, red, green, blue, alpha);
+                return;
+            }
+
             //code from https://de.wikipedia.org/wiki/Bresenham-Algorithmus
             int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
             int dy = -1 * Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
@@ -1296,15 +1396,14 @@ namespace SharpPixels
                 return;
             }
 
+            uint packedColor = PackRgba(red, green, blue);
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
             for (int targetY = startY; targetY < endY; targetY++)
             {
-                int address = (targetY * _pixelStrideBytes) + (startX << 2);
+                int targetIndex = (targetY * PixelsWidth) + startX;
                 for (int targetX = startX; targetX < endX; targetX++)
                 {
-                    _pixels[address++] = red;
-                    _pixels[address++] = green;
-                    _pixels[address++] = blue;
-                    _pixels[address++] = 255;
+                    target[targetIndex++] = packedColor;
                 }
             }
         }

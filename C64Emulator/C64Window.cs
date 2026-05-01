@@ -501,7 +501,6 @@ namespace C64Emulator
             byte borderRed = (byte)((borderArgb >> 16) & 0xFF);
             byte borderGreen = (byte)((borderArgb >> 8) & 0xFF);
             byte borderBlue = (byte)(borderArgb & 0xFF);
-            DrawFilledRectangle(0, 0, PixelsWidth, PixelsHeight, borderRed, borderGreen, borderBlue);
 
             int integerScaleX = PixelsWidth / width;
             int integerScaleY = PixelsHeight / height;
@@ -512,11 +511,30 @@ namespace C64Emulator
                 int scaledHeight = height * integerScale;
                 int offsetX = (PixelsWidth - scaledWidth) / 2;
                 int offsetY = (PixelsHeight - scaledHeight) / 2;
+                DrawFrameMargins(offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
                 DrawArgbPixelsScaled(pixels, width, height, offsetX, offsetY, integerScale);
                 return;
             }
 
             DrawArgbPixelsStretched(pixels, width, height);
+        }
+
+        /// <summary>
+        /// Fills only the letterbox/pillarbox margins that are outside the scaled C64 frame.
+        /// </summary>
+        private void DrawFrameMargins(int frameX, int frameY, int frameWidth, int frameHeight, byte red, byte green, byte blue)
+        {
+            if (frameY > 0)
+            {
+                DrawFilledRectangle(0, 0, PixelsWidth, frameY, red, green, blue);
+                DrawFilledRectangle(0, frameY + frameHeight, PixelsWidth, PixelsHeight - frameY - frameHeight, red, green, blue);
+            }
+
+            if (frameX > 0)
+            {
+                DrawFilledRectangle(0, frameY, frameX, frameHeight, red, green, blue);
+                DrawFilledRectangle(frameX + frameWidth, frameY, PixelsWidth - frameX - frameWidth, frameHeight, red, green, blue);
+            }
         }
 
         /// <summary>
