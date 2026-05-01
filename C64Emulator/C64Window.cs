@@ -53,6 +53,7 @@ namespace C64Emulator
         private const double TurboToastHoldSeconds = 0.85;
         private const double TurboToastFadeSeconds = 0.35;
         private static readonly Dictionary<char, byte[]> OverlayFont = CreateOverlayFont();
+        private readonly C64Model _model;
         private C64System _system;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private CancellationTokenSource _emulationCancellation;
@@ -92,22 +93,17 @@ namespace C64Emulator
         /// </summary>
         public C64Window(C64Model model, string title) : base(model.VisibleWidth, model.VisibleHeight, title)
         {
-            InitializeSystem(model);
+            _model = model;
+            InitializeSystem();
             StartEmulation();
         }
 
         /// <summary>
         /// Handles the initialize system operation.
         /// </summary>
-        private void InitializeSystem(C64Model model)
+        private void InitializeSystem()
         {
-            _system = new C64System(model);
-            // Standard disk loads now run over the drive-side IEC state
-            // machine without the low-level CPU IEC hooks enabled.
-            _system.EnableKernalIecHooks = false;
-            _cyclesPerStopwatchTick = model.CpuHz / Stopwatch.Frequency;
-            _secondsPerCycle = 1.0 / model.CpuHz;
-            _frameSnapshot = new uint[model.VisibleWidth * model.VisibleHeight];
+            CreateSystemInstance();
             _emulationBaseCycle = 0;
             _lastRenderedCycle = 0;
             _smoothedMhz = 0.0;
@@ -117,6 +113,25 @@ namespace C64Emulator
             _confirmationAction = ConfirmationAction.None;
             _resetConfirmVisible = false;
             _turboToastSecondsRemaining = 0.0;
+        }
+
+        /// <summary>
+        /// Creates a fresh emulated machine while keeping the host window state intact.
+        /// </summary>
+        private void CreateSystemInstance()
+        {
+            _system = new C64System(_model);
+            // Standard disk loads now run over the drive-side IEC state
+            // machine without the low-level CPU IEC hooks enabled.
+            _system.EnableKernalIecHooks = false;
+            _cyclesPerStopwatchTick = _model.CpuHz / Stopwatch.Frequency;
+            _secondsPerCycle = 1.0 / _model.CpuHz;
+
+            int framePixelCount = _model.VisibleWidth * _model.VisibleHeight;
+            if (_frameSnapshot == null || _frameSnapshot.Length != framePixelCount)
+            {
+                _frameSnapshot = new uint[framePixelCount];
+            }
         }
 
         /// <summary>
@@ -1294,8 +1309,72 @@ namespace C64Emulator
         private void PerformSystemReset()
         {
             StopEmulation();
-            _overlayStatusText = _system.ResetAndReloadMedia();
+
+            MountedMediaInfo mountedMedia = _system.MountedMedia;
+            Dictionary<int, string> mountedDrivePaths = _system.GetMountedDriveHostPaths();
+            float sidMasterVolume = _system.SidMasterVolume;
+            float sidNoiseLevel = _system.SidNoiseLevel;
+            SidChipModel sidChipModel = _system.CurrentSidChipModel;
+            JoystickPort joystickPort = _system.CurrentJoystickPort;
+            bool enableKernalIecHooks = _system.EnableKernalIecHooks;
+
+            C64System oldSystem = _system;
+            oldSystem.Dispose();
+            CreateSystemInstance();
+            _system.SetSidMasterVolume(sidMasterVolume);
+            _system.SetSidNoiseLevel(sidNoiseLevel);
+            _system.SetSidChipModel(sidChipModel);
+            _system.SetJoystickPort(joystickPort);
+            _system.EnableKernalIecHooks = enableKernalIecHooks;
+
+            _turboMode = false;
+            _turboTimingResetPending = false;
+            _smoothedMhz = 0.0;
+            _driveFooterVisibility = 0.0;
+            _driveFooterIdleSeconds = 0.0;
+            _driveFooterPulsePhase = 0.0;
+            _turboToastSecondsRemaining = 0.0;
+            _overlayStatusText = ReloadMountedMediaAfterPowerCycle(mountedMedia, mountedDrivePaths);
             StartEmulation();
+        }
+
+        /// <summary>
+        /// Reloads host-side media into a freshly created machine after a power-cycle reset.
+        /// </summary>
+        private string ReloadMountedMediaAfterPowerCycle(
+            MountedMediaInfo mountedMedia,
+            Dictionary<int, string> mountedDrivePaths)
+        {
+            string statusText = "RESET COMPLETE";
+            if (mountedDrivePaths != null)
+            {
+                foreach (KeyValuePair<int, string> mountedDrivePath in mountedDrivePaths)
+                {
+                    if (string.IsNullOrWhiteSpace(mountedDrivePath.Value) || !File.Exists(mountedDrivePath.Value))
+                    {
+                        statusText = "RESET MEDIA FAILED";
+                        continue;
+                    }
+
+                    string mountStatus = _system.MountMedia(mountedDrivePath.Value, mountedDrivePath.Key);
+                    statusText = mountStatus.StartsWith("DISK MOUNTED", StringComparison.OrdinalIgnoreCase)
+                        ? "RESET MEDIA RELOADED"
+                        : mountStatus;
+                }
+            }
+
+            if (mountedMedia != null &&
+                mountedMedia.Kind == MountedMediaKind.Prg &&
+                !string.IsNullOrWhiteSpace(mountedMedia.HostPath) &&
+                File.Exists(mountedMedia.HostPath))
+            {
+                string mountStatus = _system.MountMedia(mountedMedia.HostPath);
+                statusText = string.Equals(mountStatus, "PRG LOADED", StringComparison.OrdinalIgnoreCase)
+                    ? "RESET MEDIA RELOADED"
+                    : mountStatus;
+            }
+
+            return statusText;
         }
 
         /// <summary>

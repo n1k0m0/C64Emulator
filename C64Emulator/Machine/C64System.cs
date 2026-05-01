@@ -547,6 +547,17 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets a snapshot of all host disk images currently inserted into emulated drives.
+        /// </summary>
+        public Dictionary<int, string> GetMountedDriveHostPaths()
+        {
+            lock (_syncRoot)
+            {
+                return new Dictionary<int, string>(_mountedDrivePaths);
+            }
+        }
+
+        /// <summary>
         /// Mounts media.
         /// </summary>
         public string MountMedia(string path)
