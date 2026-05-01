@@ -43,6 +43,19 @@ ScaffoldingReadMe.txt
 ~$*
 *~
 CodeCoverage/
+.vs/
+*.user
+*.suo
+
+# NuGet package restore output
+packages/
+
+# Local ROMs and mounted media are required at runtime but not redistributed.
+C64Emulator/*.bin
+C64Emulator/*.d64
+C64Emulator/*.D64
+C64Emulator/*.prg
+C64Emulator/*.PRG
 
 # MSBuild Binary and Structured Log
 *.binlog
