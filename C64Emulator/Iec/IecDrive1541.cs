@@ -333,18 +333,18 @@ namespace C64Emulator.Core
                     return true;
                 }
 
-                return IsBusy && (((_ledPhaseCycles / LedBlinkHalfPeriodCycles) & 0x01) == 0);
+                return HasVisibleActivity && (((_ledPhaseCycles / LedBlinkHalfPeriodCycles) & 0x01) == 0);
             }
         }
 
         public bool IsActivityActive
         {
-            get { return _mountedImage != null && IsBusy; }
+            get { return _mountedImage != null && HasVisibleActivity; }
         }
 
         public bool NeedsClockTick
         {
-            get { return _mountedImage != null && IsBusy; }
+            get { return _mountedImage != null && HasCycleCriticalWork; }
         }
 
         public bool HasCustomCodeActive
@@ -442,12 +442,22 @@ namespace C64Emulator.Core
             }
         }
 
-        private bool IsBusy
+        private bool HasVisibleActivity
         {
             get
             {
                 return _ledBusyCycles > 0 ||
-                    _presenceProbeHoldActive ||
+                    HasCycleCriticalWork ||
+                    _hardware.IsMotorOn ||
+                    _hardware.IsLedOn;
+            }
+        }
+
+        private bool HasCycleCriticalWork
+        {
+            get
+            {
+                if (_presenceProbeHoldActive ||
                     _attentionHandshakeState != AttentionHandshakeState.Idle ||
                     _deviceListening ||
                     _deviceTalking ||
@@ -460,10 +470,22 @@ namespace C64Emulator.Core
                     _pendingCustomExecutionWaitForAtnRelease ||
                     !_receiver.IsIdle ||
                     !_sender.IsIdle ||
-                    _hardware.IsBooting ||
-                    _hardware.HasCustomCodeActive ||
-                    _hardware.IsMotorOn ||
-                    _hardware.IsLedOn;
+                    _hardware.IsBooting)
+                {
+                    return true;
+                }
+
+                if (_hardware.HasCustomCodeActive)
+                {
+                    return true;
+                }
+
+                if (_hardware.IsSerialTransportActive)
+                {
+                    return IsIecBusActiveForDrive();
+                }
+
+                return false;
             }
         }
 
@@ -1050,6 +1072,35 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Advances drive-visible activity indicators without running the IEC or 1541 CPU state machines.
+        /// </summary>
+        public void AdvanceIdleVisualState(int cycles)
+        {
+            if (cycles <= 0 || NeedsClockTick)
+            {
+                return;
+            }
+
+            if (_ledBusyCycles > 0)
+            {
+                _ledBusyCycles -= cycles;
+                if (_ledBusyCycles < 0)
+                {
+                    _ledBusyCycles = 0;
+                }
+            }
+
+            if (HasVisibleActivity)
+            {
+                _ledPhaseCycles += cycles;
+            }
+            else
+            {
+                _ledPhaseCycles = 0;
+            }
+        }
+
+        /// <summary>
         /// Handles the drain software transport for pending custom execution operation.
         /// </summary>
         private void DrainSoftwareTransportForPendingCustomExecution(bool atnLow)
@@ -1572,6 +1623,16 @@ namespace C64Emulator.Core
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Returns whether the shared IEC lines currently require the custom drive code to be caught up.
+        /// </summary>
+        private bool IsIecBusActiveForDrive()
+        {
+            return _port.IsLineLow(IecBusLine.Atn) ||
+                _port.IsLineLow(IecBusLine.Clock) ||
+                _port.IsLineLow(IecBusLine.Data);
         }
 
         /// <summary>
@@ -3622,7 +3683,7 @@ namespace C64Emulator.Core
                 _ledBusyCycles--;
             }
 
-            if (IsBusy)
+            if (HasVisibleActivity)
             {
                 _ledPhaseCycles++;
             }

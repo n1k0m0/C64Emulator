@@ -111,6 +111,10 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 TickCore();
+                if (!RunDrivesToCurrentTime())
+                {
+                    AdvanceIdleDriveVisualState(1);
+                }
             }
         }
 
@@ -233,6 +237,11 @@ namespace C64Emulator.Core
                 for (var i = 0; i < cycles; i++)
                 {
                     TickCore();
+                }
+
+                if (!RunDrivesToCurrentTime())
+                {
+                    AdvanceIdleDriveVisualState(cycles);
                 }
             }
         }
@@ -695,19 +704,40 @@ namespace C64Emulator.Core
         /// <summary>
         /// Runs the drives to current time routine.
         /// </summary>
-        private void RunDrivesToCurrentTime()
+        private bool RunDrivesToCurrentTime()
         {
             if (!AnyDriveNeedsClockTick())
             {
                 _drive1541ExecutedCycles = _drive1541TargetCycles;
-                return;
+                return false;
             }
 
+            bool tickedDrive = false;
             while (_drive1541ExecutedCycles + 1.0 <= _drive1541TargetCycles)
             {
                 TickAllDrivesOnce();
+                tickedDrive = true;
                 _drive1541ExecutedCycles += 1.0;
             }
+
+            return tickedDrive;
+        }
+
+        /// <summary>
+        /// Advances drive activity indicators while their emulated CPUs are parked.
+        /// </summary>
+        private void AdvanceIdleDriveVisualState(int c64Cycles)
+        {
+            if (c64Cycles <= 0)
+            {
+                return;
+            }
+
+            int driveCycles = Math.Max(1, (int)Math.Ceiling(c64Cycles * 1000000.0 / _model.CpuHz));
+            _drive8.AdvanceIdleVisualState(driveCycles);
+            _drive9.AdvanceIdleVisualState(driveCycles);
+            _drive10.AdvanceIdleVisualState(driveCycles);
+            _drive11.AdvanceIdleVisualState(driveCycles);
         }
 
         /// <summary>
@@ -787,7 +817,10 @@ namespace C64Emulator.Core
             _sid.Tick();
             MirrorHeldHostInputIntoKeyboardBuffer();
             _vic.FinishCycle();
-            RunDrivesToCurrentTime();
+            if (AnyDriveNeedsClockTick())
+            {
+                RunDrivesToCurrentTime();
+            }
         }
 
         /// <summary>
