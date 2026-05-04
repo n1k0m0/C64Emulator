@@ -20,6 +20,8 @@ namespace C64Emulator.Core
     /// </summary>
     public static class InstructionSteps
     {
+        private const byte UnstableOpcodeMagic = 0xEE;
+
         /// <summary>
         /// Handles the sei implied operation.
         /// </summary>
@@ -1703,7 +1705,7 @@ namespace C64Emulator.Core
         {
             return ImmediateRead(cpu, ref context, value =>
             {
-                cpu.A = (byte)(cpu.X & value);
+                cpu.A = (byte)((cpu.A | UnstableOpcodeMagic) & cpu.X & value);
                 cpu.SetNZ(cpu.A);
             });
         }
@@ -1715,9 +1717,10 @@ namespace C64Emulator.Core
         {
             return ImmediateRead(cpu, ref context, value =>
             {
-                cpu.A = value;
-                cpu.X = value;
-                cpu.SetNZ(value);
+                byte result = (byte)((cpu.A | UnstableOpcodeMagic) & value);
+                cpu.A = result;
+                cpu.X = result;
+                cpu.SetNZ(result);
             });
         }
 
@@ -1756,7 +1759,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static bool AhxIndirectZeroPageY(Cpu6510 cpu, ref InstructionContext context)
         {
-            return IndirectZeroPageYWrite(cpu, ref context, (byte)(cpu.A & cpu.X));
+            return IndirectZeroPageYMaskedWrite(cpu, ref context, address => (byte)(cpu.A & cpu.X & GetHighByteMask(address)));
         }
 
         /// <summary>
@@ -1766,7 +1769,7 @@ namespace C64Emulator.Core
         {
             byte value = (byte)(cpu.A & cpu.X);
             cpu.SP = value;
-            return AbsoluteIndexedWrite(cpu, ref context, cpu.Y, value);
+            return AbsoluteIndexedMaskedWrite(cpu, ref context, cpu.Y, address => (byte)(value & GetHighByteMask(address)));
         }
 
         /// <summary>
@@ -1774,7 +1777,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static bool ShyAbsoluteX(Cpu6510 cpu, ref InstructionContext context)
         {
-            return AbsoluteIndexedWrite(cpu, ref context, cpu.X, cpu.Y);
+            return AbsoluteIndexedMaskedWrite(cpu, ref context, cpu.X, address => (byte)(cpu.Y & GetHighByteMask(address)));
         }
 
         /// <summary>
@@ -1782,7 +1785,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static bool ShxAbsoluteY(Cpu6510 cpu, ref InstructionContext context)
         {
-            return AbsoluteIndexedWrite(cpu, ref context, cpu.Y, cpu.X);
+            return AbsoluteIndexedMaskedWrite(cpu, ref context, cpu.Y, address => (byte)(cpu.X & GetHighByteMask(address)));
         }
 
         /// <summary>
@@ -1790,7 +1793,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static bool AhxAbsoluteY(Cpu6510 cpu, ref InstructionContext context)
         {
-            return AbsoluteIndexedWrite(cpu, ref context, cpu.Y, (byte)(cpu.A & cpu.X));
+            return AbsoluteIndexedMaskedWrite(cpu, ref context, cpu.Y, address => (byte)(cpu.A & cpu.X & GetHighByteMask(address)));
         }
 
         /// <summary>
@@ -2076,6 +2079,37 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Handles absolute indexed writes whose value depends on the final effective address high byte.
+        /// </summary>
+        private static bool AbsoluteIndexedMaskedWrite(Cpu6510 cpu, ref InstructionContext context, byte index, System.Func<ushort, byte> valueFactory)
+        {
+            switch (context.StepIndex)
+            {
+                case 0:
+                    context.Address = cpu.Read(cpu.PC);
+                    cpu.PC++;
+                    context.StepIndex++;
+                    return false;
+                case 1:
+                    context.Address |= (ushort)(cpu.Read(cpu.PC) << 8);
+                    cpu.PC++;
+                    context.Address2 = context.Address;
+                    context.Address = (ushort)(context.Address + index);
+                    context.StepIndex++;
+                    return false;
+                case 2:
+                    cpu.DummyRead(GetPageWrappedAddress(context.Address2, context.Address));
+                    context.StepIndex++;
+                    return false;
+                case 3:
+                    cpu.Write(context.Address, valueFactory(context.Address));
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
         /// Handles the indirect zero page y read operation.
         /// </summary>
         private static bool IndirectZeroPageYRead(Cpu6510 cpu, ref InstructionContext context, System.Action<byte> apply)
@@ -2177,6 +2211,39 @@ namespace C64Emulator.Core
                     return false;
                 case 4:
                     cpu.Write(context.Address, value);
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Handles indirect zero page y writes whose value depends on the final effective address high byte.
+        /// </summary>
+        private static bool IndirectZeroPageYMaskedWrite(Cpu6510 cpu, ref InstructionContext context, System.Func<ushort, byte> valueFactory)
+        {
+            switch (context.StepIndex)
+            {
+                case 0:
+                    context.Address = cpu.Read(cpu.PC);
+                    cpu.PC++;
+                    context.StepIndex++;
+                    return false;
+                case 1:
+                    context.Address2 = cpu.Read((byte)context.Address);
+                    context.StepIndex++;
+                    return false;
+                case 2:
+                    context.Address2 |= (ushort)(cpu.Read((byte)(context.Address + 1)) << 8);
+                    context.Address = (ushort)(context.Address2 + cpu.Y);
+                    context.StepIndex++;
+                    return false;
+                case 3:
+                    cpu.DummyRead(GetPageWrappedAddress(context.Address2, context.Address));
+                    context.StepIndex++;
+                    return false;
+                case 4:
+                    cpu.Write(context.Address, valueFactory(context.Address));
                     return true;
                 default:
                     return true;
@@ -2685,6 +2752,14 @@ namespace C64Emulator.Core
         private static ushort GetPageWrappedAddress(ushort baseAddress, ushort indexedAddress)
         {
             return (ushort)((baseAddress & 0xFF00) | (indexedAddress & 0x00FF));
+        }
+
+        /// <summary>
+        /// Gets the high-byte mask used by the unstable NMOS store opcodes.
+        /// </summary>
+        private static byte GetHighByteMask(ushort address)
+        {
+            return (byte)(((address >> 8) + 1) & 0xFF);
         }
     }
 }

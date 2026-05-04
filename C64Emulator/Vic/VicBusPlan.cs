@@ -13,6 +13,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+using System.IO;
+
 namespace C64Emulator.Core
 {
     /// <summary>
@@ -53,6 +55,22 @@ namespace C64Emulator.Core
         public VicBusSlot GetSlot(int cycleInLine)
         {
             return _slots[cycleInLine % _slots.Length];
+        }
+
+        /// <summary>
+        /// Writes the current line bus plan into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this);
+        }
+
+        /// <summary>
+        /// Restores the current line bus plan from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            StateSerializer.ReadObjectFields(reader, this);
         }
 
         /// <summary>

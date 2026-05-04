@@ -15,6 +15,7 @@
 */
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 
 namespace C64Emulator.Core
@@ -53,6 +54,43 @@ namespace C64Emulator.Core
                 FilenameBytes = Array.Empty<byte>();
                 ResetReadSource();
                 WriteBuffer = null;
+            }
+
+            /// <summary>
+            /// Writes the complete drive channel state into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                BinaryStateIO.WriteByteArray(writer, FilenameBytes);
+                BinaryStateIO.WriteByteArray(writer, ReadBuffer);
+                writer.Write(ReadOffset);
+                writer.Write(SequentialReader != null);
+                if (SequentialReader != null)
+                {
+                    SequentialReader.SaveState(writer);
+                }
+
+                BinaryStateIO.WriteByteList(writer, WriteBuffer);
+            }
+
+            /// <summary>
+            /// Restores the complete drive channel state from a savestate stream.
+            /// </summary>
+            public void LoadState(BinaryReader reader, D64Image image)
+            {
+                FilenameBytes = BinaryStateIO.ReadByteArray(reader) ?? Array.Empty<byte>();
+                ReadBuffer = BinaryStateIO.ReadByteArray(reader) ?? Array.Empty<byte>();
+                ReadOffset = reader.ReadInt32();
+                bool hasSequentialReader = reader.ReadBoolean();
+                SequentialReader = hasSequentialReader && image != null
+                    ? D64Image.SequentialFileReader.LoadState(image, reader)
+                    : null;
+                if (hasSequentialReader && image == null)
+                {
+                    D64Image.SequentialFileReader.SkipState(reader);
+                }
+
+                WriteBuffer = BinaryStateIO.ReadByteList(reader);
             }
         }
 
@@ -314,9 +352,132 @@ namespace C64Emulator.Core
             Reset();
         }
 
+        /// <summary>
+        /// Writes the complete IEC drive state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            writer.Write(_mountedImage != null);
+            if (_mountedImage != null)
+            {
+                _mountedImage.SaveState(writer);
+            }
+
+            StateSerializer.WriteObjectFields(
+                writer,
+                this,
+                "_port",
+                "_hardwarePort",
+                "_receiver",
+                "_sender",
+                "_passiveReceiver",
+                "_channels",
+                "_listenBuffer",
+                "_recentAttentionCommands",
+                "_recentCommandTexts",
+                "_ram",
+                "_hardware",
+                "_mountedImage");
+            BinaryStateIO.WriteByteArray(writer, _ram);
+            BinaryStateIO.WriteByteList(writer, _listenBuffer);
+            BinaryStateIO.WriteByteList(writer, _recentAttentionCommands);
+            BinaryStateIO.WriteStringList(writer, _recentCommandTexts);
+            writer.Write(_channels.Count);
+            foreach (KeyValuePair<byte, DriveChannel> channel in _channels)
+            {
+                writer.Write(channel.Key);
+                channel.Value.SaveState(writer);
+            }
+
+            _receiver.SaveState(writer);
+            _sender.SaveState(writer);
+            _passiveReceiver.SaveState(writer);
+            _hardware.SaveState(writer);
+        }
+
+        /// <summary>
+        /// Restores the complete IEC drive state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            _mountedImage = reader.ReadBoolean() ? D64Image.LoadState(reader) : null;
+            StateSerializer.ReadObjectFields(
+                reader,
+                this,
+                "_port",
+                "_hardwarePort",
+                "_receiver",
+                "_sender",
+                "_passiveReceiver",
+                "_channels",
+                "_listenBuffer",
+                "_recentAttentionCommands",
+                "_recentCommandTexts",
+                "_ram",
+                "_hardware",
+                "_mountedImage");
+            byte[] ram = BinaryStateIO.ReadByteArray(reader);
+            if (ram != null)
+            {
+                Array.Copy(ram, _ram, Math.Min(ram.Length, _ram.Length));
+            }
+
+            ReplaceByteList(_listenBuffer, BinaryStateIO.ReadByteList(reader));
+            ReplaceByteList(_recentAttentionCommands, BinaryStateIO.ReadByteList(reader));
+            ReplaceStringList(_recentCommandTexts, BinaryStateIO.ReadStringList(reader));
+            _channels.Clear();
+            int channelCount = reader.ReadInt32();
+            for (int index = 0; index < channelCount; index++)
+            {
+                byte channelNumber = reader.ReadByte();
+                var channel = new DriveChannel();
+                channel.LoadState(reader, _mountedImage);
+                _channels[channelNumber] = channel;
+            }
+
+            _receiver.LoadState(reader);
+            _sender.LoadState(reader);
+            _passiveReceiver.LoadState(reader);
+            _hardware.LoadState(reader, _mountedImage);
+        }
+
         public bool IsMounted
         {
             get { return _mountedImage != null; }
+        }
+
+        /// <summary>
+        /// Replaces a readonly byte list's contents after a savestate restore.
+        /// </summary>
+        private static void ReplaceByteList(List<byte> target, List<byte> source)
+        {
+            target.Clear();
+            if (source == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < source.Count; index++)
+            {
+                target.Add(source[index]);
+            }
+        }
+
+        /// <summary>
+        /// Replaces a readonly string list's contents after a savestate restore.
+        /// </summary>
+        private static void ReplaceStringList(List<string> target, List<string> source)
+        {
+            target.Clear();
+            if (source == null)
+            {
+                return;
+            }
+
+            for (int index = 0; index < source.Count; index++)
+            {
+                target.Add(source[index]);
+            }
         }
 
         public bool IsLedOn
@@ -4290,6 +4451,22 @@ namespace C64Emulator.Core
             }
 
             /// <summary>
+            /// Writes the receiver handshake state into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                StateSerializer.WriteObjectFields(writer, this, "_port");
+            }
+
+            /// <summary>
+            /// Restores the receiver handshake state from a savestate stream.
+            /// </summary>
+            public void LoadState(BinaryReader reader)
+            {
+                StateSerializer.ReadObjectFields(reader, this, "_port");
+            }
+
+            /// <summary>
             /// Lists the supported receive state values.
             /// </summary>
             private enum ReceiveState
@@ -4723,6 +4900,22 @@ namespace C64Emulator.Core
                     _finalAckCount,
                     _sawEoiWaitLow,
                     _sawEoiWaitRelease);
+            }
+
+            /// <summary>
+            /// Writes the sender handshake state into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                StateSerializer.WriteObjectFields(writer, this, "_port");
+            }
+
+            /// <summary>
+            /// Restores the sender handshake state from a savestate stream.
+            /// </summary>
+            public void LoadState(BinaryReader reader)
+            {
+                StateSerializer.ReadObjectFields(reader, this, "_port");
             }
 
             /// <summary>

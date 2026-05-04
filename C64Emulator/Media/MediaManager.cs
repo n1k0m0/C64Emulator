@@ -45,6 +45,33 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes mounted media state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            BinaryStateIO.WriteByteArray(writer, _mountedPrgBytes);
+            BinaryStateIO.WriteString(writer, _mountedPrgName);
+            writer.Write(_mountedD64 != null);
+            if (_mountedD64 != null)
+            {
+                _mountedD64.SaveState(writer);
+            }
+
+            WriteMountedMediaInfo(writer, _mountedMedia);
+        }
+
+        /// <summary>
+        /// Restores mounted media state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            _mountedPrgBytes = BinaryStateIO.ReadByteArray(reader);
+            _mountedPrgName = BinaryStateIO.ReadString(reader);
+            _mountedD64 = reader.ReadBoolean() ? D64Image.LoadState(reader) : null;
+            _mountedMedia = ReadMountedMediaInfo(reader);
+        }
+
+        /// <summary>
         /// Handles the mount operation.
         /// </summary>
         public MediaMountResult Mount(string path)
@@ -159,6 +186,30 @@ namespace C64Emulator.Core
             }
 
             return cleaned;
+        }
+
+        /// <summary>
+        /// Writes mounted media overlay metadata.
+        /// </summary>
+        private static void WriteMountedMediaInfo(BinaryWriter writer, MountedMediaInfo mediaInfo)
+        {
+            mediaInfo = mediaInfo ?? MountedMediaInfo.None;
+            writer.Write((int)mediaInfo.Kind);
+            BinaryStateIO.WriteString(writer, mediaInfo.ShortLabel);
+            BinaryStateIO.WriteString(writer, mediaInfo.DisplayName);
+            BinaryStateIO.WriteString(writer, mediaInfo.HostPath);
+        }
+
+        /// <summary>
+        /// Reads mounted media overlay metadata.
+        /// </summary>
+        private static MountedMediaInfo ReadMountedMediaInfo(BinaryReader reader)
+        {
+            var kind = (MountedMediaKind)reader.ReadInt32();
+            string shortLabel = BinaryStateIO.ReadString(reader) ?? "NONE";
+            string displayName = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            string hostPath = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            return new MountedMediaInfo(kind, shortLabel, displayName, hostPath);
         }
     }
 }

@@ -174,6 +174,30 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes the complete 1541 bus state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism");
+            _serialVia.SaveState(writer);
+            _diskVia.SaveState(writer);
+            _mechanism.SaveState(writer);
+        }
+
+        /// <summary>
+        /// Restores the complete 1541 bus state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader, D64Image mountedImage)
+        {
+            StateSerializer.ReadObjectFields(reader, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism");
+            _serialVia.LoadState(reader);
+            _diskVia.LoadState(reader);
+            _mechanism.LoadState(reader, mountedImage);
+            RefreshSerialLineLevels(true);
+            ApplySerialOutputs();
+        }
+
+        /// <summary>
         /// Writes ram.
         /// </summary>
         public void WriteRam(ushort address, byte value)

@@ -155,6 +155,34 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Recreates a D64 image from bytes stored inside a savestate.
+        /// </summary>
+        public static D64Image LoadState(BinaryReader reader)
+        {
+            string hostPath = BinaryStateIO.ReadString(reader);
+            int trackCount = reader.ReadInt32();
+            byte[] data = BinaryStateIO.ReadByteArray(reader);
+            byte[] errorInfo = BinaryStateIO.ReadByteArray(reader);
+            if (data == null)
+            {
+                throw new InvalidDataException("Savestate disk image is missing data.");
+            }
+
+            return new D64Image(hostPath, data, errorInfo, trackCount);
+        }
+
+        /// <summary>
+        /// Writes all disk image bytes into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            BinaryStateIO.WriteString(writer, HostPath);
+            writer.Write(TrackCount);
+            BinaryStateIO.WriteByteArray(writer, _data);
+            BinaryStateIO.WriteByteArray(writer, _errorInfo);
+        }
+
+        /// <summary>
         /// Attempts to resolve load and reports whether it succeeded.
         /// </summary>
         public bool TryResolveLoad(string filename, out MediaLoadData loadData)
@@ -976,6 +1004,65 @@ namespace C64Emulator.Core
             public int BytesRead
             {
                 get { return _bytesRead; }
+            }
+
+            /// <summary>
+            /// Writes the current sequential reader position into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                BinaryStateIO.WriteIntSet(writer, _visitedSectors);
+                writer.Write(_track);
+                writer.Write(_sector);
+                BinaryStateIO.WriteByteArray(writer, _sectorBytes);
+                writer.Write(_index);
+                writer.Write(_lastSectorLength);
+                writer.Write(_finished);
+                writer.Write(_bytesRead);
+                writer.Write(_aborted);
+            }
+
+            /// <summary>
+            /// Restores a sequential reader position from a savestate stream.
+            /// </summary>
+            public static SequentialFileReader LoadState(D64Image image, BinaryReader reader)
+            {
+                var result = new SequentialFileReader(image, 0, 0);
+                HashSet<int> visitedSectors = BinaryStateIO.ReadIntSet(reader);
+                result._visitedSectors.Clear();
+                if (visitedSectors != null)
+                {
+                    foreach (int sectorKey in visitedSectors)
+                    {
+                        result._visitedSectors.Add(sectorKey);
+                    }
+                }
+
+                result._track = reader.ReadInt32();
+                result._sector = reader.ReadInt32();
+                result._sectorBytes = BinaryStateIO.ReadByteArray(reader);
+                result._index = reader.ReadInt32();
+                result._lastSectorLength = reader.ReadInt32();
+                result._finished = reader.ReadBoolean();
+                result._bytesRead = reader.ReadInt32();
+                result._aborted = reader.ReadBoolean();
+                return result;
+            }
+
+            /// <summary>
+            /// Skips a serialized sequential reader state.
+            /// </summary>
+            public static void SkipState(BinaryReader reader)
+            {
+                BinaryStateIO.ReadIntSet(reader);
+                reader.ReadInt32();
+                reader.ReadInt32();
+                BinaryStateIO.ReadByteArray(reader);
+                reader.ReadInt32();
+                reader.ReadInt32();
+                reader.ReadBoolean();
+                reader.ReadInt32();
+                reader.ReadBoolean();
             }
 
             /// <summary>

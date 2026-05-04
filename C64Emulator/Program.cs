@@ -32,6 +32,15 @@ namespace C64Emulator
         [STAThread]
         static void Main(string[] args)
         {
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--self-test-cpu", StringComparison.OrdinalIgnoreCase))
+            {
+                string logPath = args.Length >= 2
+                    ? args[1]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cpu_self_test.log");
+                RunCpuSelfTest(logPath);
+                return;
+            }
+
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--probe-iec-load", StringComparison.OrdinalIgnoreCase))
             {
                 string logPath = args.Length >= 3
@@ -57,6 +66,18 @@ namespace C64Emulator
             {
                 window.Run();
             }
+        }
+
+        /// <summary>
+        /// Runs the built-in CPU opcode self-test routine.
+        /// </summary>
+        private static void RunCpuSelfTest(string logPath)
+        {
+            var log = new StringWriter();
+            int failures = CpuOpcodeSelfTest.Run(log);
+            File.WriteAllText(logPath, log.ToString());
+            Console.Write(log.ToString());
+            Environment.ExitCode = failures == 0 ? 0 : 1;
         }
 
         /// <summary>

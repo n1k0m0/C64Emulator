@@ -14,6 +14,7 @@
    limitations under the License.
 */
 using System.Collections.Generic;
+using System.IO;
 using OpenTK.Input;
 
 namespace C64Emulator.Core
@@ -247,6 +248,22 @@ namespace C64Emulator.Core
                         ? value
                         : JoystickPort.Port2;
             }
+        }
+
+        /// <summary>
+        /// Writes the complete CIA state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this, "_keyMap");
+        }
+
+        /// <summary>
+        /// Restores the complete CIA state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            StateSerializer.ReadObjectFields(reader, this, "_keyMap");
         }
 
         /// <summary>

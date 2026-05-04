@@ -14,6 +14,7 @@
    limitations under the License.
 */
 using System;
+using System.IO;
 
 namespace C64Emulator.Core
 {
@@ -497,6 +498,24 @@ namespace C64Emulator.Core
 
             SetCa2Level(true);
             SetCb2Level(true);
+            NotifyPortA();
+            NotifyPortB();
+        }
+
+        /// <summary>
+        /// Writes the complete VIA state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this);
+        }
+
+        /// <summary>
+        /// Restores the complete VIA state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            StateSerializer.ReadObjectFields(reader, this);
             NotifyPortA();
             NotifyPortB();
         }

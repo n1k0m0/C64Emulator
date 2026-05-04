@@ -59,6 +59,7 @@
     <Compile Include="Machine\\ICpuBus.cs" />
     <Compile Include="Machine\\SystemBus.cs" />
     <Compile Include="Cpu\\Cpu6510.cs" />
+    <Compile Include="Cpu\\CpuOpcodeSelfTest.cs" />
     <Compile Include="Cpu\\CpuState.cs" />
     <Compile Include="Cpu\\CpuTraceEntry.cs" />
     <Compile Include="Cpu\\CpuTraceHarness.cs" />
@@ -89,6 +90,10 @@
     <Compile Include="Drive1541\\Drive1541Hardware.cs" />
     <Compile Include="Drive1541\\Drive1541Mechanism.cs" />
     <Compile Include="Drive1541\\DriveVia6522.cs" />
+    <Compile Include="SaveStates\\BinaryStateIO.cs" />
+    <Compile Include="SaveStates\\SaveStateFile.cs" />
+    <Compile Include="SaveStates\\SaveStateMetadata.cs" />
+    <Compile Include="SaveStates\\StateSerializer.cs" />
     <Compile Include="C64Window.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

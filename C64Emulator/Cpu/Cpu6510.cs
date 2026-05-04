@@ -309,11 +309,104 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes the complete CPU execution state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            writer.Write(_enableKernalIecHooks);
+            writer.Write((int)_state);
+            WriteInstructionContext(writer, _context);
+            writer.Write(_pc);
+            writer.Write(_lastOpcodeAddress);
+            BinaryStateIO.WriteString(writer, _currentInstructionName);
+            writer.Write(_interruptVector);
+            writer.Write(_interruptIsNmi);
+            writer.Write(_nmiPending);
+            writer.Write(_lastNmiLevel);
+            writer.Write(_soPending);
+            writer.Write(_skipIrqPollOnce);
+            writer.Write(_cpuCycleCount);
+            BinaryStateIO.WriteString(writer, _lastIecHookName);
+            writer.Write(_lastIecHookSuccess);
+            writer.Write(_a);
+            writer.Write(_x);
+            writer.Write(_y);
+            writer.Write(_sp);
+            writer.Write(_sr);
+        }
+
+        /// <summary>
+        /// Restores the complete CPU execution state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            _enableKernalIecHooks = reader.ReadBoolean() && _iecKernalBridge != null;
+            _state = (CpuState)reader.ReadInt32();
+            _context = ReadInstructionContext(reader);
+            _pc = reader.ReadUInt16();
+            _lastOpcodeAddress = reader.ReadUInt16();
+            _currentInstructionName = BinaryStateIO.ReadString(reader);
+            _interruptVector = reader.ReadUInt16();
+            _interruptIsNmi = reader.ReadBoolean();
+            _nmiPending = reader.ReadBoolean();
+            _lastNmiLevel = reader.ReadBoolean();
+            _soPending = reader.ReadBoolean();
+            _skipIrqPollOnce = reader.ReadBoolean();
+            _cpuCycleCount = reader.ReadInt64();
+            _lastIecHookName = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            _lastIecHookSuccess = reader.ReadBoolean();
+            _a = reader.ReadByte();
+            _x = reader.ReadByte();
+            _y = reader.ReadByte();
+            _sp = reader.ReadByte();
+            _sr = reader.ReadByte();
+            _currentStepper = _state == CpuState.ExecuteInstruction ? InstructionDecoder.Decode(_context.Opcode) : null;
+            _accessPredictionMode = false;
+            _predictedAccessType = CpuTraceAccessType.None;
+            _currentTraceEntry = default(CpuTraceEntry);
+            _traceEntryActive = false;
+            TraceEnabled = false;
+        }
+
+        /// <summary>
         /// Handles the assert so operation.
         /// </summary>
         public void AssertSo()
         {
             _soPending = true;
+        }
+
+        /// <summary>
+        /// Writes an instruction context into a savestate stream.
+        /// </summary>
+        private static void WriteInstructionContext(BinaryWriter writer, InstructionContext context)
+        {
+            writer.Write(context.Opcode);
+            writer.Write(context.StepIndex);
+            writer.Write(context.Address);
+            writer.Write(context.Address2);
+            writer.Write(context.Operand);
+            writer.Write(context.Operand2);
+            writer.Write(context.PageCrossed);
+            writer.Write(context.BranchTaken);
+        }
+
+        /// <summary>
+        /// Reads an instruction context from a savestate stream.
+        /// </summary>
+        private static InstructionContext ReadInstructionContext(BinaryReader reader)
+        {
+            return new InstructionContext
+            {
+                Opcode = reader.ReadByte(),
+                StepIndex = reader.ReadInt32(),
+                Address = reader.ReadUInt16(),
+                Address2 = reader.ReadUInt16(),
+                Operand = reader.ReadByte(),
+                Operand2 = reader.ReadByte(),
+                PageCrossed = reader.ReadBoolean(),
+                BranchTaken = reader.ReadBoolean()
+            };
         }
 
         /// <summary>
@@ -723,23 +816,27 @@ namespace C64Emulator.Core
                     _context.StepIndex++;
                     return;
                 case 1:
-                    Push((byte)((_pc >> 8) & 0xFF));
+                    DummyRead(_pc);
                     _context.StepIndex++;
                     return;
                 case 2:
-                    Push((byte)(_pc & 0xFF));
+                    Push((byte)((_pc >> 8) & 0xFF));
                     _context.StepIndex++;
                     return;
                 case 3:
+                    Push((byte)(_pc & 0xFF));
+                    _context.StepIndex++;
+                    return;
+                case 4:
                     Push((byte)((_sr | 0x20) & (_interruptIsNmi ? 0xEF : 0xEF)));
                     SetFlag(0x04, true);
                     _context.StepIndex++;
                     return;
-                case 4:
+                case 5:
                     _context.Address = Read(_interruptVector);
                     _context.StepIndex++;
                     return;
-                case 5:
+                case 6:
                     _context.Address |= (ushort)(Read((ushort)(_interruptVector + 1)) << 8);
                     _pc = _context.Address;
                     _state = CpuState.FetchOpcode;

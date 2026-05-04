@@ -15,6 +15,7 @@
 */
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace C64Emulator.Core
 {
@@ -36,6 +37,8 @@ namespace C64Emulator.Core
     {
         private readonly List<Action<IecBusLine, bool>> _lineChangeListeners =
             new List<Action<IecBusLine, bool>>();
+        private Action<IecBusLine, bool>[] _lineChangeListenerSnapshot =
+            new Action<IecBusLine, bool>[0];
 
         /// <summary>
         /// Represents the participant state component.
@@ -50,6 +53,10 @@ namespace C64Emulator.Core
 
         private readonly Dictionary<string, ParticipantState> _participants =
             new Dictionary<string, ParticipantState>(StringComparer.OrdinalIgnoreCase);
+        private int _atnLowCount;
+        private int _clockLowCount;
+        private int _dataLowCount;
+        private int _serviceRequestLowCount;
 
         /// <summary>
         /// Creates port.
@@ -75,42 +82,7 @@ namespace C64Emulator.Core
         /// </summary>
         public bool IsLineLow(IecBusLine line)
         {
-            foreach (ParticipantState participant in _participants.Values)
-            {
-                switch (line)
-                {
-                    case IecBusLine.Atn:
-                        if (participant.AtnLow)
-                        {
-                            return true;
-                        }
-
-                        break;
-                    case IecBusLine.Clock:
-                        if (participant.ClockLow)
-                        {
-                            return true;
-                        }
-
-                        break;
-                    case IecBusLine.Data:
-                        if (participant.DataLow)
-                        {
-                            return true;
-                        }
-
-                        break;
-                    case IecBusLine.ServiceRequest:
-                        if (participant.ServiceRequestLow)
-                        {
-                            return true;
-                        }
-
-                        break;
-                }
-            }
-
-            return false;
+            return GetAggregateLineState(line);
         }
 
         /// <summary>
@@ -132,6 +104,7 @@ namespace C64Emulator.Core
             }
 
             _lineChangeListeners.Add(listener);
+            _lineChangeListenerSnapshot = _lineChangeListeners.ToArray();
         }
 
         /// <summary>
@@ -166,6 +139,65 @@ namespace C64Emulator.Core
             }
 
             return owners.Count == 0 ? "-" : string.Join(",", owners);
+        }
+
+        /// <summary>
+        /// Writes all IEC participant line states into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            writer.Write(_participants.Count);
+            foreach (KeyValuePair<string, ParticipantState> entry in _participants)
+            {
+                writer.Write(entry.Key);
+                writer.Write(entry.Value.AtnLow);
+                writer.Write(entry.Value.ClockLow);
+                writer.Write(entry.Value.DataLow);
+                writer.Write(entry.Value.ServiceRequestLow);
+            }
+        }
+
+        /// <summary>
+        /// Restores all IEC participant line states from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            bool oldAtnLow = IsLineLow(IecBusLine.Atn);
+            bool oldClockLow = IsLineLow(IecBusLine.Clock);
+            bool oldDataLow = IsLineLow(IecBusLine.Data);
+            bool oldServiceRequestLow = IsLineLow(IecBusLine.ServiceRequest);
+
+            foreach (ParticipantState participant in _participants.Values)
+            {
+                participant.AtnLow = false;
+                participant.ClockLow = false;
+                participant.DataLow = false;
+                participant.ServiceRequestLow = false;
+            }
+
+            int count = reader.ReadInt32();
+            for (int index = 0; index < count; index++)
+            {
+                string owner = reader.ReadString();
+                bool atnLow = reader.ReadBoolean();
+                bool clockLow = reader.ReadBoolean();
+                bool dataLow = reader.ReadBoolean();
+                bool serviceRequestLow = reader.ReadBoolean();
+                ParticipantState participant;
+                if (_participants.TryGetValue(owner, out participant))
+                {
+                    participant.AtnLow = atnLow;
+                    participant.ClockLow = clockLow;
+                    participant.DataLow = dataLow;
+                    participant.ServiceRequestLow = serviceRequestLow;
+                }
+            }
+
+            RecomputeAggregateCounts();
+            NotifyIfRestoredLineChanged(IecBusLine.Atn, oldAtnLow);
+            NotifyIfRestoredLineChanged(IecBusLine.Clock, oldClockLow);
+            NotifyIfRestoredLineChanged(IecBusLine.Data, oldDataLow);
+            NotifyIfRestoredLineChanged(IecBusLine.ServiceRequest, oldServiceRequestLow);
         }
 
         /// <summary>
@@ -205,26 +237,10 @@ namespace C64Emulator.Core
                 throw new InvalidOperationException("Unknown IEC bus participant.");
             }
 
-            bool wasLow = IsLineLow(line);
-
-            switch (line)
-            {
-                case IecBusLine.Atn:
-                    participant.AtnLow = driveLow;
-                    break;
-                case IecBusLine.Clock:
-                    participant.ClockLow = driveLow;
-                    break;
-                case IecBusLine.Data:
-                    participant.DataLow = driveLow;
-                    break;
-                case IecBusLine.ServiceRequest:
-                    participant.ServiceRequestLow = driveLow;
-                    break;
-            }
-
-            bool isLow = IsLineLow(line);
-            if (wasLow != isLow)
+            bool wasLow = GetAggregateLineState(line);
+            bool changed = ApplyParticipantLineState(participant, line, driveLow);
+            bool isLow = GetAggregateLineState(line);
+            if (changed && wasLow != isLow)
             {
                 NotifyLineChanged(line, isLow);
             }
@@ -246,29 +262,29 @@ namespace C64Emulator.Core
                 throw new InvalidOperationException("Unknown IEC bus participant.");
             }
 
-            bool oldAtnLow = IsLineLow(IecBusLine.Atn);
-            bool oldClockLow = IsLineLow(IecBusLine.Clock);
-            bool oldDataLow = IsLineLow(IecBusLine.Data);
-            bool oldServiceRequestLow = IsLineLow(IecBusLine.ServiceRequest);
+            bool oldAtnLow = GetAggregateLineState(IecBusLine.Atn);
+            bool oldClockLow = GetAggregateLineState(IecBusLine.Clock);
+            bool oldDataLow = GetAggregateLineState(IecBusLine.Data);
+            bool oldServiceRequestLow = GetAggregateLineState(IecBusLine.ServiceRequest);
 
             if (atnLow.HasValue)
             {
-                participant.AtnLow = atnLow.Value;
+                ApplyParticipantLineState(participant, IecBusLine.Atn, atnLow.Value);
             }
 
             if (clockLow.HasValue)
             {
-                participant.ClockLow = clockLow.Value;
+                ApplyParticipantLineState(participant, IecBusLine.Clock, clockLow.Value);
             }
 
             if (dataLow.HasValue)
             {
-                participant.DataLow = dataLow.Value;
+                ApplyParticipantLineState(participant, IecBusLine.Data, dataLow.Value);
             }
 
             if (serviceRequestLow.HasValue)
             {
-                participant.ServiceRequestLow = serviceRequestLow.Value;
+                ApplyParticipantLineState(participant, IecBusLine.ServiceRequest, serviceRequestLow.Value);
             }
 
             NotifyIfChanged(IecBusLine.Atn, oldAtnLow);
@@ -282,10 +298,123 @@ namespace C64Emulator.Core
         /// </summary>
         private void NotifyIfChanged(IecBusLine line, bool oldIsLow)
         {
-            bool isLow = IsLineLow(line);
+            bool isLow = GetAggregateLineState(line);
             if (oldIsLow != isLow)
             {
                 NotifyLineChanged(line, isLow);
+            }
+        }
+
+        /// <summary>
+        /// Notifies listeners after a bulk savestate restore if a line changed.
+        /// </summary>
+        private void NotifyIfRestoredLineChanged(IecBusLine line, bool oldIsLow)
+        {
+            bool isLow = GetAggregateLineState(line);
+            if (oldIsLow != isLow)
+            {
+                NotifyLineChanged(line, isLow);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds cached wired-AND line counts from participant states.
+        /// </summary>
+        private void RecomputeAggregateCounts()
+        {
+            _atnLowCount = 0;
+            _clockLowCount = 0;
+            _dataLowCount = 0;
+            _serviceRequestLowCount = 0;
+            foreach (ParticipantState participant in _participants.Values)
+            {
+                if (participant.AtnLow)
+                {
+                    _atnLowCount++;
+                }
+
+                if (participant.ClockLow)
+                {
+                    _clockLowCount++;
+                }
+
+                if (participant.DataLow)
+                {
+                    _dataLowCount++;
+                }
+
+                if (participant.ServiceRequestLow)
+                {
+                    _serviceRequestLowCount++;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the current wired-AND state of a bus line.
+        /// </summary>
+        private bool GetAggregateLineState(IecBusLine line)
+        {
+            switch (line)
+            {
+                case IecBusLine.Atn:
+                    return _atnLowCount > 0;
+                case IecBusLine.Clock:
+                    return _clockLowCount > 0;
+                case IecBusLine.Data:
+                    return _dataLowCount > 0;
+                case IecBusLine.ServiceRequest:
+                    return _serviceRequestLowCount > 0;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Updates one participant output and keeps the cached bus aggregate in sync.
+        /// </summary>
+        private bool ApplyParticipantLineState(ParticipantState participant, IecBusLine line, bool driveLow)
+        {
+            switch (line)
+            {
+                case IecBusLine.Atn:
+                    if (participant.AtnLow == driveLow)
+                    {
+                        return false;
+                    }
+
+                    participant.AtnLow = driveLow;
+                    _atnLowCount += driveLow ? 1 : -1;
+                    return true;
+                case IecBusLine.Clock:
+                    if (participant.ClockLow == driveLow)
+                    {
+                        return false;
+                    }
+
+                    participant.ClockLow = driveLow;
+                    _clockLowCount += driveLow ? 1 : -1;
+                    return true;
+                case IecBusLine.Data:
+                    if (participant.DataLow == driveLow)
+                    {
+                        return false;
+                    }
+
+                    participant.DataLow = driveLow;
+                    _dataLowCount += driveLow ? 1 : -1;
+                    return true;
+                case IecBusLine.ServiceRequest:
+                    if (participant.ServiceRequestLow == driveLow)
+                    {
+                        return false;
+                    }
+
+                    participant.ServiceRequestLow = driveLow;
+                    _serviceRequestLowCount += driveLow ? 1 : -1;
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -294,12 +423,12 @@ namespace C64Emulator.Core
         /// </summary>
         private void NotifyLineChanged(IecBusLine line, bool isLow)
         {
-            if (_lineChangeListeners.Count == 0)
+            Action<IecBusLine, bool>[] listeners = _lineChangeListenerSnapshot;
+            if (listeners.Length == 0)
             {
                 return;
             }
 
-            Action<IecBusLine, bool>[] listeners = _lineChangeListeners.ToArray();
             for (int index = 0; index < listeners.Length; index++)
             {
                 listeners[index](line, isLow);

@@ -40,6 +40,8 @@ namespace C64Emulator
         }
 
         private const int MaxCycleBatch = 2048;
+        private const int NormalCycleBatch = 512;
+        private const long WaitCycleQuantum = 256;
         private const double SleepThresholdSeconds = 0.002;
         private const double SleepSafetyMarginSeconds = 0.0005;
         private const float VolumeStep = 0.05f;
@@ -48,6 +50,7 @@ namespace C64Emulator
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int MediaBrowserVisibleRows = 9;
+        private const int SaveOverlayVisibleRows = 8;
         private const double DriveFooterVisibleHoldSeconds = 1.2;
         private const double DriveFooterFadeOutSeconds = 0.6;
         private const double TurboToastHoldSeconds = 0.85;
@@ -68,6 +71,7 @@ namespace C64Emulator
         private bool _audioOverlayVisible;
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
+        private volatile bool _saveOverlayVisible;
         private volatile bool _turboMode;
         private volatile bool _turboTimingResetPending;
         private bool _windowFullscreen;
@@ -78,9 +82,13 @@ namespace C64Emulator
         private int _mediaBrowserSelection;
         private int _mediaBrowserScroll;
         private int _mediaBrowserTargetDrive = 8;
+        private int _saveOverlaySelection;
+        private int _saveOverlayScroll;
         private string _mediaBrowserCurrentDirectory;
         private List<MediaBrowserEntry> _mediaBrowserEntries = new List<MediaBrowserEntry>();
+        private List<SaveStateMetadata> _saveStateEntries = new List<SaveStateMetadata>();
         private string _overlayStatusText = "READY";
+        private string _saveOverlayStatusText = "F12 SAVE MENU";
         private string _turboToastText = string.Empty;
         private double _smoothedMhz;
         private double _driveFooterVisibility;
@@ -112,6 +120,7 @@ namespace C64Emulator
             _windowFullscreen = false;
             _confirmationAction = ConfirmationAction.None;
             _resetConfirmVisible = false;
+            _saveOverlayVisible = false;
             _turboToastSecondsRemaining = 0.0;
         }
 
@@ -214,6 +223,12 @@ namespace C64Emulator
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
+                    if (_saveOverlayVisible)
+                    {
+                        Thread.Sleep(5);
+                        continue;
+                    }
+
                     if (_turboMode)
                     {
                         _system.RunCycles(MaxCycleBatch);
@@ -237,7 +252,7 @@ namespace C64Emulator
                         continue;
                     }
 
-                    int batchSize = (int)Math.Min(cyclesBehind, MaxCycleBatch);
+                    int batchSize = (int)Math.Min(cyclesBehind, NormalCycleBatch);
                     _system.RunCycles(batchSize);
                 }
             }
@@ -329,7 +344,11 @@ namespace C64Emulator
                 drive10Mounted, drive10LedOn, drive10Active,
                 drive11Mounted, drive11LedOn, drive11Active);
 
-            if (_audioOverlayVisible)
+            if (_saveOverlayVisible)
+            {
+                DrawSaveOverlay();
+            }
+            else if (_audioOverlayVisible)
             {
                 DrawAudioOverlay(sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo);
             }
@@ -382,6 +401,18 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
         {
+            if (keyEventArgs.Key == Key.F12)
+            {
+                ToggleSaveOverlay();
+                return;
+            }
+
+            if (_saveOverlayVisible)
+            {
+                HandleSaveOverlayKeyDown(keyEventArgs.Key);
+                return;
+            }
+
             if (keyEventArgs.Key == Key.F10)
             {
                 bool newVisibility = !_audioOverlayVisible;
@@ -440,6 +471,11 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyUp(SharpPixels.KeyEventArgs keyEventArgs)
         {
+            if (keyEventArgs.Key == Key.F12 || _saveOverlayVisible)
+            {
+                return;
+            }
+
             if (keyEventArgs.Key == Key.F10 || keyEventArgs.Key == Key.F9 || keyEventArgs.Key == Key.F11)
             {
                 return;
@@ -461,6 +497,278 @@ namespace C64Emulator
             }
 
             _system.KeyUp(keyEventArgs.Key);
+        }
+
+        /// <summary>
+        /// Toggles the savestate overlay.
+        /// </summary>
+        private void ToggleSaveOverlay()
+        {
+            if (_saveOverlayVisible)
+            {
+                CloseSaveOverlay();
+                return;
+            }
+
+            OpenSaveOverlay();
+        }
+
+        /// <summary>
+        /// Opens the savestate overlay and pauses the emulation loop.
+        /// </summary>
+        private void OpenSaveOverlay()
+        {
+            _audioOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            _saveOverlayStatusText = "PAUSED";
+            _saveOverlayVisible = true;
+            ReloadSaveStateEntries();
+        }
+
+        /// <summary>
+        /// Closes the savestate overlay and resumes normal timing.
+        /// </summary>
+        private void CloseSaveOverlay()
+        {
+            _saveOverlayVisible = false;
+            _saveOverlayStatusText = "F12 SAVE MENU";
+            ResetEmulationTiming();
+        }
+
+        /// <summary>
+        /// Handles savestate overlay key input.
+        /// </summary>
+        private bool HandleSaveOverlayKeyDown(Key key)
+        {
+            switch (key)
+            {
+                case Key.Up:
+                    MoveSaveOverlaySelection(-1);
+                    return true;
+                case Key.Down:
+                    MoveSaveOverlaySelection(1);
+                    return true;
+                case Key.F5:
+                case Key.S:
+                    CreateSaveState();
+                    return true;
+                case Key.Enter:
+                case Key.L:
+                    LoadSelectedSaveState();
+                    return true;
+                case Key.Delete:
+                case Key.BackSpace:
+                    DeleteSelectedSaveState();
+                    return true;
+                case Key.Escape:
+                    CloseSaveOverlay();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Creates a complete savestate file from the current machine state.
+        /// </summary>
+        private void CreateSaveState()
+        {
+            try
+            {
+                string saveDirectory = GetSaveDirectory();
+                string savePath = SaveStateFile.CreateSavePath(saveDirectory);
+                uint[] screenshotPixels = new uint[_frameSnapshot.Length];
+                Array.Copy(_frameSnapshot, screenshotPixels, screenshotPixels.Length);
+
+                SaveStateFile.Write(savePath, _system, screenshotPixels, _system.Model.VisibleWidth, _system.Model.VisibleHeight);
+                ReloadSaveStateEntries();
+                SelectSaveStatePath(savePath);
+                _saveOverlayStatusText = "SAVED " + Path.GetFileName(savePath).ToUpperInvariant();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                _saveOverlayStatusText = "SAVE FAILED";
+            }
+        }
+
+        /// <summary>
+        /// Loads the currently selected savestate.
+        /// </summary>
+        private void LoadSelectedSaveState()
+        {
+            if (_saveStateEntries.Count == 0)
+            {
+                _saveOverlayStatusText = "NO SAVE SELECTED";
+                return;
+            }
+
+            try
+            {
+                SaveStateMetadata entry = _saveStateEntries[_saveOverlaySelection];
+                SaveStateFile.Load(entry.Path, _system);
+                lock (_system.SyncRoot)
+                {
+                    Array.Copy(_system.FrameBuffer.Pixels, _frameSnapshot, _frameSnapshot.Length);
+                }
+
+                _saveOverlayVisible = false;
+                _overlayStatusText = "SAVE LOADED";
+                _saveOverlayStatusText = "SAVE LOADED";
+                ResetEmulationTiming();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                _saveOverlayStatusText = "LOAD FAILED";
+            }
+        }
+
+        /// <summary>
+        /// Deletes the currently selected savestate file.
+        /// </summary>
+        private void DeleteSelectedSaveState()
+        {
+            if (_saveStateEntries.Count == 0)
+            {
+                _saveOverlayStatusText = "NO SAVE SELECTED";
+                return;
+            }
+
+            try
+            {
+                SaveStateMetadata entry = _saveStateEntries[_saveOverlaySelection];
+                File.Delete(entry.Path);
+                _saveOverlayStatusText = "SAVE DELETED";
+                ReloadSaveStateEntries();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                _saveOverlayStatusText = "DELETE FAILED";
+            }
+        }
+
+        /// <summary>
+        /// Reloads savestate metadata from the host saves directory.
+        /// </summary>
+        private void ReloadSaveStateEntries()
+        {
+            var entries = new List<SaveStateMetadata>();
+            try
+            {
+                string saveDirectory = GetSaveDirectory();
+                Directory.CreateDirectory(saveDirectory);
+                string[] files = Directory.GetFiles(saveDirectory, SaveStateFile.SearchPattern, SearchOption.TopDirectoryOnly);
+                foreach (string file in files)
+                {
+                    try
+                    {
+                        entries.Add(SaveStateFile.ReadMetadata(file));
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine(ex);
+                    }
+                }
+
+                entries.Sort((left, right) => right.CreatedLocalTime.CompareTo(left.CreatedLocalTime));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                _saveOverlayStatusText = "SAVE DIR FAILED";
+            }
+
+            _saveStateEntries = entries;
+            if (_saveOverlaySelection >= _saveStateEntries.Count)
+            {
+                _saveOverlaySelection = Math.Max(0, _saveStateEntries.Count - 1);
+            }
+
+            if (_saveOverlaySelection < 0)
+            {
+                _saveOverlaySelection = 0;
+            }
+
+            ClampSaveOverlayScroll();
+        }
+
+        /// <summary>
+        /// Selects a savestate path in the overlay list.
+        /// </summary>
+        private void SelectSaveStatePath(string path)
+        {
+            for (int index = 0; index < _saveStateEntries.Count; index++)
+            {
+                if (string.Equals(_saveStateEntries[index].Path, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    _saveOverlaySelection = index;
+                    ClampSaveOverlayScroll();
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Moves the savestate overlay list selection.
+        /// </summary>
+        private void MoveSaveOverlaySelection(int delta)
+        {
+            if (_saveStateEntries.Count == 0)
+            {
+                return;
+            }
+
+            _saveOverlaySelection += delta;
+            if (_saveOverlaySelection < 0)
+            {
+                _saveOverlaySelection = 0;
+            }
+
+            if (_saveOverlaySelection >= _saveStateEntries.Count)
+            {
+                _saveOverlaySelection = _saveStateEntries.Count - 1;
+            }
+
+            ClampSaveOverlayScroll();
+        }
+
+        /// <summary>
+        /// Keeps the savestate overlay scroll position around the current selection.
+        /// </summary>
+        private void ClampSaveOverlayScroll()
+        {
+            if (_saveOverlaySelection < _saveOverlayScroll)
+            {
+                _saveOverlayScroll = _saveOverlaySelection;
+            }
+
+            int maxVisibleStart = Math.Max(0, _saveStateEntries.Count - SaveOverlayVisibleRows);
+            int visibleEnd = _saveOverlayScroll + SaveOverlayVisibleRows - 1;
+            if (_saveOverlaySelection > visibleEnd)
+            {
+                _saveOverlayScroll = _saveOverlaySelection - (SaveOverlayVisibleRows - 1);
+            }
+
+            if (_saveOverlayScroll > maxVisibleStart)
+            {
+                _saveOverlayScroll = maxVisibleStart;
+            }
+
+            if (_saveOverlayScroll < 0)
+            {
+                _saveOverlayScroll = 0;
+            }
+        }
+
+        /// <summary>
+        /// Gets the savestate directory next to the emulator executable.
+        /// </summary>
+        private static string GetSaveDirectory()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "saves");
         }
 
         /// <summary>
@@ -641,6 +949,133 @@ namespace C64Emulator
             DrawLine(x, y, x, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawLine(x + width - 1, y, x + width - 1, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawOverlayText(x + 16, y + 10, _turboToastText, 2, textRed, textGreen, textBlue);
+        }
+
+        /// <summary>
+        /// Draws the savestate overlay.
+        /// </summary>
+        private void DrawSaveOverlay()
+        {
+            int overlayWidth = Math.Min(PixelsWidth - 24, 360);
+            int overlayHeight = Math.Min(PixelsHeight - 28, 240);
+            int overlayX = (PixelsWidth - overlayWidth) / 2;
+            int overlayY = (PixelsHeight - overlayHeight) / 2;
+
+            DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 8, 10, 18, 232);
+            DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 182, 214, 108);
+            DrawLine(overlayX, overlayY + overlayHeight - 1, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 182, 214, 108);
+            DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 182, 214, 108);
+            DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 182, 214, 108);
+
+            DrawOverlayText(overlayX + 14, overlayY + 12, "SAVE STATES", 2, 240, 248, 255);
+            DrawOverlayText(overlayX + 14, overlayY + 31, "S/F5 SAVE  ENTER/L LOAD  DEL DELETE  F12/ESC CLOSE", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 14, overlayY + 43, "STATUS " + FormatOverlayValue(_saveOverlayStatusText, 45), 1, 182, 214, 108);
+
+            int listX = overlayX + 14;
+            int listY = overlayY + 62;
+            int listWidth = Math.Max(120, overlayWidth - 156);
+            DrawFilledRectangleWithAlpha(listX - 4, listY - 4, listWidth + 8, 112, 20, 24, 38, 210);
+
+            if (_saveStateEntries.Count == 0)
+            {
+                DrawOverlayText(listX, listY + 12, "NO SAVES YET", 2, 255, 243, 168);
+                DrawOverlayText(listX, listY + 34, "PRESS S TO CREATE ONE", 1, 232, 238, 244);
+            }
+            else
+            {
+                for (int row = 0; row < SaveOverlayVisibleRows; row++)
+                {
+                    int index = _saveOverlayScroll + row;
+                    if (index >= _saveStateEntries.Count)
+                    {
+                        break;
+                    }
+
+                    SaveStateMetadata entry = _saveStateEntries[index];
+                    bool selected = index == _saveOverlaySelection;
+                    byte red = selected ? (byte)255 : (byte)232;
+                    byte green = selected ? (byte)243 : (byte)238;
+                    byte blue = selected ? (byte)168 : (byte)244;
+                    string listText = FormatSaveListEntry(entry, Math.Max(10, (listWidth / 6) - 3));
+                    DrawOverlayText(listX, listY + (row * 13), (selected ? "> " : "  ") + listText, 1, red, green, blue);
+                }
+            }
+
+            int thumbnailX = overlayX + overlayWidth - 130;
+            int thumbnailY = overlayY + 68;
+            int thumbnailWidth = 112;
+            int thumbnailHeight = 80;
+            DrawLine(thumbnailX - 1, thumbnailY - 1, thumbnailX + thumbnailWidth, thumbnailY - 1, 115, 142, 196);
+            DrawLine(thumbnailX - 1, thumbnailY + thumbnailHeight, thumbnailX + thumbnailWidth, thumbnailY + thumbnailHeight, 115, 142, 196);
+            DrawLine(thumbnailX - 1, thumbnailY - 1, thumbnailX - 1, thumbnailY + thumbnailHeight, 115, 142, 196);
+            DrawLine(thumbnailX + thumbnailWidth, thumbnailY - 1, thumbnailX + thumbnailWidth, thumbnailY + thumbnailHeight, 115, 142, 196);
+
+            if (_saveStateEntries.Count > 0)
+            {
+                SaveStateMetadata selectedEntry = _saveStateEntries[_saveOverlaySelection];
+                DrawArgbPixelsToRectangle(
+                    selectedEntry.ScreenshotPixels,
+                    selectedEntry.ScreenshotWidth,
+                    selectedEntry.ScreenshotHeight,
+                    thumbnailX,
+                    thumbnailY,
+                    thumbnailWidth,
+                    thumbnailHeight);
+
+                DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 8, selectedEntry.CreatedLocalTime.ToString("yyyy-MM-dd"), 1, 232, 238, 244);
+                DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 19, selectedEntry.CreatedLocalTime.ToString("HH:mm:ss"), 1, 232, 238, 244);
+                DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 31, FormatOverlayValue(Path.GetFileName(selectedEntry.Path), 18), 1, 182, 214, 108);
+            }
+            else
+            {
+                DrawFilledRectangle(thumbnailX, thumbnailY, thumbnailWidth, thumbnailHeight, 24, 24, 32);
+                DrawOverlayText(thumbnailX + 20, thumbnailY + 34, "NO IMAGE", 1, 115, 142, 196);
+            }
+        }
+
+        /// <summary>
+        /// Draws ARGB pixels into an arbitrary rectangle using nearest-neighbor sampling.
+        /// </summary>
+        private void DrawArgbPixelsToRectangle(uint[] sourcePixels, int sourceWidth, int sourceHeight, int x, int y, int width, int height)
+        {
+            if (sourcePixels == null || sourceWidth <= 0 || sourceHeight <= 0 || width <= 0 || height <= 0)
+            {
+                DrawFilledRectangle(x, y, Math.Max(0, width), Math.Max(0, height), 24, 24, 32);
+                return;
+            }
+
+            int requiredPixels = sourceWidth * sourceHeight;
+            if (sourcePixels.Length < requiredPixels)
+            {
+                DrawFilledRectangle(x, y, width, height, 24, 24, 32);
+                return;
+            }
+
+            for (int targetY = 0; targetY < height; targetY++)
+            {
+                int sourceY = (targetY * sourceHeight) / height;
+                int sourceRow = sourceY * sourceWidth;
+                for (int targetX = 0; targetX < width; targetX++)
+                {
+                    int sourceX = (targetX * sourceWidth) / width;
+                    uint argb = sourcePixels[sourceRow + sourceX];
+                    DrawPixel(
+                        x + targetX,
+                        y + targetY,
+                        (byte)((argb >> 16) & 0xFF),
+                        (byte)((argb >> 8) & 0xFF),
+                        (byte)(argb & 0xFF));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Formats a savestate row for the overlay list.
+        /// </summary>
+        private static string FormatSaveListEntry(SaveStateMetadata entry, int maxLength)
+        {
+            string text = entry.CreatedLocalTime.ToString("MM-dd HH:mm:ss") + " " + Path.GetFileNameWithoutExtension(entry.Path);
+            return FormatOverlayValue(text, maxLength);
         }
 
         /// <summary>
@@ -1789,7 +2224,7 @@ namespace C64Emulator
         /// </summary>
         private void WaitUntilNextCycle(CancellationToken cancellationToken, long currentCycle)
         {
-            long nextCycle = currentCycle + 1;
+            long nextCycle = currentCycle + WaitCycleQuantum;
             while (!cancellationToken.IsCancellationRequested)
             {
                 double desiredCycles = _emulationBaseCycle + (_emulationStopwatch.ElapsedTicks * _cyclesPerStopwatchTick);
@@ -1810,7 +2245,13 @@ namespace C64Emulator
                     }
                 }
 
-                Thread.SpinWait(96);
+                if (remainingSeconds >= 0.00025)
+                {
+                    Thread.Sleep(0);
+                    continue;
+                }
+
+                Thread.SpinWait(32);
             }
         }
 

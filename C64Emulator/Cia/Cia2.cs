@@ -13,6 +13,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+using System.IO;
+
 namespace C64Emulator.Core
 {
     /// <summary>
@@ -223,6 +225,23 @@ namespace C64Emulator.Core
         public byte VicBankSelect
         {
             get { return (byte)(ReadLocalPortA() & 0x03); }
+        }
+
+        /// <summary>
+        /// Writes the complete CIA state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this, "_iecBusPort", "<BeforeIecPortAccess>k__BackingField");
+        }
+
+        /// <summary>
+        /// Restores the complete CIA state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            StateSerializer.ReadObjectFields(reader, this, "_iecBusPort", "<BeforeIecPortAccess>k__BackingField");
+            UpdateIecOutputs(false);
         }
 
         /// <summary>

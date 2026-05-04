@@ -13,6 +13,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+using System.IO;
+
 namespace C64Emulator.Core
 {
     /// <summary>
@@ -199,6 +201,24 @@ namespace C64Emulator.Core
             _rasterLine = 0;
             _cycleInLine = 0;
             _globalCycle = 0;
+        }
+
+        /// <summary>
+        /// Writes the complete VIC-II state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            _busPlan.SaveState(writer);
+            StateSerializer.WriteObjectFields(writer, this, "_bus", "_frameBuffer", "_model", "_busPlan");
+        }
+
+        /// <summary>
+        /// Restores the complete VIC-II state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            _busPlan.LoadState(reader);
+            StateSerializer.ReadObjectFields(reader, this, "_bus", "_frameBuffer", "_model", "_busPlan");
         }
 
         /// <summary>
@@ -536,12 +556,11 @@ namespace C64Emulator.Core
                 int beamX = beamXStart + dot;
                 int frameX = beamX - CropLeft;
                 int frameY = beamY - CropTop;
-                PixelResult currentPixel = ComposePixel(frameX, frameY);
-                PixelResult outputPixel = DelayGraphicsPixel(currentPixel);
+                PixelResult outputPixel = ComposePixel(frameX, frameY);
 
                 if ((uint)frameX < (uint)_model.VisibleWidth && (uint)frameY < (uint)_model.VisibleHeight)
                 {
-                    _frameBuffer.SetPixel(frameX, frameY, outputPixel.Color);
+                    _frameBuffer.SetPixelUnchecked(frameX, frameY, outputPixel.Color);
                 }
             }
         }
@@ -552,7 +571,7 @@ namespace C64Emulator.Core
         private PixelResult ComposePixel(int frameX, int frameY)
         {
             uint borderColor = Palette[_registers[0x20] & 0x0F];
-            PixelResult result = new PixelResult
+            PixelResult borderPixel = new PixelResult
             {
                 Color = borderColor,
                 GraphicsForeground = false
@@ -561,17 +580,40 @@ namespace C64Emulator.Core
             UpdateHorizontalBorderState(frameX, frameY);
 
             int activeDisplayLeft = _lineDisplayLeftFrame;
-            if (_lineDisplayEnabled &&
+            bool currentGraphicsVisible = _lineDisplayEnabled &&
                 !_horizontalBorderActive &&
                 !_verticalBorderActive &&
                 frameY >= _lineDisplayTopFrame &&
-                frameY < _lineDisplayBottomFrame)
+                frameY < _lineDisplayBottomFrame;
+
+            int sourceFrameX = frameX + GraphicsOutputDelayPixels;
+            bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY);
+            PixelResult graphicsPixel = sourceGraphicsVisible
+                ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - _lineDisplayTopFrame)
+                : CreateBackgroundPixel(GetBackgroundColor(0));
+            PixelResult delayedGraphicsPixel = DelayGraphicsPixel(graphicsPixel);
+            PixelResult result = currentGraphicsVisible ? delayedGraphicsPixel : borderPixel;
+
+            if (!sourceGraphicsVisible)
             {
-                result = ComputeGraphicsPixel(frameX - activeDisplayLeft, frameY - _lineDisplayTopFrame);
+                _graphicsSequencerCellLoaded = false;
             }
 
             ApplySprites(ref result, frameX, frameY);
             return result;
+        }
+
+        /// <summary>
+        /// Returns whether the delayed graphics shifter should sample this frame position.
+        /// </summary>
+        private bool IsGraphicsSourceVisible(int frameX, int frameY)
+        {
+            return _lineDisplayEnabled &&
+                !_verticalBorderActive &&
+                frameX >= _lineDisplayLeftFrame &&
+                frameX < _lineDisplayRightFrame &&
+                frameY >= _lineDisplayTopFrame &&
+                frameY < _lineDisplayBottomFrame;
         }
 
         /// <summary>
@@ -793,6 +835,11 @@ namespace C64Emulator.Core
         private void ApplySprites(ref PixelResult result, int frameX, int frameY)
         {
             if (!IsInsideActiveDisplayArea(frameX, frameY))
+            {
+                return;
+            }
+
+            if (_registers[0x15] == 0)
             {
                 return;
             }

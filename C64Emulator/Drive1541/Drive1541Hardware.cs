@@ -135,6 +135,32 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes the complete drive hardware state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            writer.Write(_customCodeActive);
+            writer.Write(_bootCyclesRemaining);
+            writer.Write(_diskMounted);
+            writer.Write(_customReceivePreambleCycles);
+            _bus.SaveState(writer);
+            _cpu.SaveState(writer);
+        }
+
+        /// <summary>
+        /// Restores the complete drive hardware state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader, D64Image mountedImage)
+        {
+            _customCodeActive = reader.ReadBoolean();
+            _bootCyclesRemaining = reader.ReadInt32();
+            _diskMounted = reader.ReadBoolean();
+            _customReceivePreambleCycles = reader.ReadInt32();
+            _bus.LoadState(reader, mountedImage);
+            _cpu.LoadState(reader);
+        }
+
+        /// <summary>
         /// Handles the upload memory operation.
         /// </summary>
         public void UploadMemory(ushort address, byte[] bytes)

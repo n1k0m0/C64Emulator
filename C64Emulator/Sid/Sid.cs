@@ -14,6 +14,7 @@
    limitations under the License.
 */
 using System;
+using System.IO;
 
 namespace C64Emulator.Core
 {
@@ -142,6 +143,44 @@ namespace C64Emulator.Core
             for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
             {
                 _voices[voiceIndex].Reset((uint)(0x7FFFF8u ^ (uint)(voiceIndex * 0x1F1F1Fu)));
+            }
+        }
+
+        /// <summary>
+        /// Writes the complete SID state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            BinaryStateIO.WriteByteArray(writer, _registers);
+            StateSerializer.WriteObjectFields(writer, this, "_registers", "_voices", "_audioOutput");
+            writer.Write(_voices.Length);
+            for (int voiceIndex = 0; voiceIndex < _voices.Length; voiceIndex++)
+            {
+                _voices[voiceIndex].SaveState(writer);
+            }
+        }
+
+        /// <summary>
+        /// Restores the complete SID state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            byte[] registers = BinaryStateIO.ReadByteArray(reader);
+            if (registers != null)
+            {
+                Array.Copy(registers, _registers, Math.Min(registers.Length, _registers.Length));
+            }
+
+            StateSerializer.ReadObjectFields(reader, this, "_registers", "_voices", "_audioOutput");
+            int voiceCount = reader.ReadInt32();
+            for (int voiceIndex = 0; voiceIndex < voiceCount && voiceIndex < _voices.Length; voiceIndex++)
+            {
+                _voices[voiceIndex].LoadState(reader);
+            }
+
+            for (int voiceIndex = _voices.Length; voiceIndex < voiceCount; voiceIndex++)
+            {
+                SidVoice.SkipState(reader);
             }
         }
 
@@ -676,6 +715,31 @@ namespace C64Emulator.Core
             public byte GetEnvelopeByte()
             {
                 return (byte)Clamp(_envelope * 255.0f, 0.0f, 255.0f);
+            }
+
+            /// <summary>
+            /// Writes the complete SID voice state into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                StateSerializer.WriteObjectFields(writer, this);
+            }
+
+            /// <summary>
+            /// Restores the complete SID voice state from a savestate stream.
+            /// </summary>
+            public void LoadState(BinaryReader reader)
+            {
+                StateSerializer.ReadObjectFields(reader, this);
+            }
+
+            /// <summary>
+            /// Skips one serialized voice state.
+            /// </summary>
+            public static void SkipState(BinaryReader reader)
+            {
+                var temporary = new SidVoice(0x7FFFF8u);
+                temporary.LoadState(reader);
             }
 
             /// <summary>

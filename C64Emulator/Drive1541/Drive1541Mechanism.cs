@@ -14,6 +14,7 @@
    limitations under the License.
 */
 using System;
+using System.IO;
 
 namespace C64Emulator.Core
 {
@@ -125,6 +126,23 @@ namespace C64Emulator.Core
             _diskImage = null;
             _diskSwapCyclesRemaining = DiskSwapCyclesDiskEjecting + DiskSwapCyclesNoDisk;
             ReloadTrackStream();
+        }
+
+        /// <summary>
+        /// Writes the complete disk mechanism state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this, "_diskImage");
+        }
+
+        /// <summary>
+        /// Restores the complete disk mechanism state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader, D64Image diskImage)
+        {
+            _diskImage = diskImage;
+            StateSerializer.ReadObjectFields(reader, this, "_diskImage");
         }
 
         /// <summary>

@@ -182,6 +182,74 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Writes the complete emulated machine state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            lock (_syncRoot)
+            {
+                _bus.SaveState(writer);
+                _cpu.SaveState(writer);
+                _vic.SaveState(writer);
+                _cia1.SaveState(writer);
+                _cia2.SaveState(writer);
+                _sid.SaveState(writer);
+                _frameBuffer.SaveState(writer);
+                _drive8.SaveState(writer);
+                _drive9.SaveState(writer);
+                _drive10.SaveState(writer);
+                _drive11.SaveState(writer);
+                _iecBus.SaveState(writer);
+                _mediaManager.SaveState(writer);
+                WriteMountedMediaInfo(writer, _lastMountedMedia);
+                WriteMountedDrivePaths(writer);
+                WritePressedHostKeys(writer);
+                writer.Write(_lastMirroredPollKey.HasValue);
+                if (_lastMirroredPollKey.HasValue)
+                {
+                    writer.Write((int)_lastMirroredPollKey.Value);
+                }
+
+                writer.Write(_pollMirrorRepeatDelayCycles);
+                writer.Write(_drive1541TargetCycles);
+                writer.Write(_drive1541ExecutedCycles);
+                writer.Write(_catchingUpDrivesForIecAccess);
+            }
+        }
+
+        /// <summary>
+        /// Restores the complete emulated machine state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            lock (_syncRoot)
+            {
+                _bus.LoadState(reader);
+                _cpu.LoadState(reader);
+                _vic.LoadState(reader);
+                _cia1.LoadState(reader);
+                _cia2.LoadState(reader);
+                _sid.LoadState(reader);
+                _frameBuffer.LoadState(reader);
+                _drive8.LoadState(reader);
+                _drive9.LoadState(reader);
+                _drive10.LoadState(reader);
+                _drive11.LoadState(reader);
+                _iecBus.LoadState(reader);
+                _mediaManager.LoadState(reader);
+                _lastMountedMedia = ReadMountedMediaInfo(reader);
+                ReadMountedDrivePaths(reader);
+                ReadPressedHostKeys(reader);
+                _lastMirroredPollKey = reader.ReadBoolean() ? (Key?)((Key)reader.ReadInt32()) : null;
+                _pollMirrorRepeatDelayCycles = reader.ReadInt32();
+                _drive1541TargetCycles = reader.ReadDouble();
+                _drive1541ExecutedCycles = reader.ReadDouble();
+                _catchingUpDrivesForIecAccess = reader.ReadBoolean();
+                _iecKernalBridge.Reset();
+            }
+        }
+
         public FrameBuffer FrameBuffer
         {
             get { return _frameBuffer; }
@@ -688,6 +756,86 @@ namespace C64Emulator.Core
             _drive1541ExecutedCycles = 0.0;
             _catchingUpDrivesForIecAccess = false;
             _cpu.Reset(_bus.ReadResetVector());
+        }
+
+        /// <summary>
+        /// Writes mounted media overlay metadata into a savestate stream.
+        /// </summary>
+        private static void WriteMountedMediaInfo(BinaryWriter writer, MountedMediaInfo mediaInfo)
+        {
+            mediaInfo = mediaInfo ?? MountedMediaInfo.None;
+            writer.Write((int)mediaInfo.Kind);
+            BinaryStateIO.WriteString(writer, mediaInfo.ShortLabel);
+            BinaryStateIO.WriteString(writer, mediaInfo.DisplayName);
+            BinaryStateIO.WriteString(writer, mediaInfo.HostPath);
+        }
+
+        /// <summary>
+        /// Reads mounted media overlay metadata from a savestate stream.
+        /// </summary>
+        private static MountedMediaInfo ReadMountedMediaInfo(BinaryReader reader)
+        {
+            var kind = (MountedMediaKind)reader.ReadInt32();
+            string shortLabel = BinaryStateIO.ReadString(reader) ?? "NONE";
+            string displayName = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            string hostPath = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            return new MountedMediaInfo(kind, shortLabel, displayName, hostPath);
+        }
+
+        /// <summary>
+        /// Writes mounted drive host paths.
+        /// </summary>
+        private void WriteMountedDrivePaths(BinaryWriter writer)
+        {
+            writer.Write(_mountedDrivePaths.Count);
+            foreach (KeyValuePair<int, string> entry in _mountedDrivePaths)
+            {
+                writer.Write(entry.Key);
+                BinaryStateIO.WriteString(writer, entry.Value);
+            }
+        }
+
+        /// <summary>
+        /// Reads mounted drive host paths.
+        /// </summary>
+        private void ReadMountedDrivePaths(BinaryReader reader)
+        {
+            _mountedDrivePaths.Clear();
+            int count = reader.ReadInt32();
+            for (int index = 0; index < count; index++)
+            {
+                int drive = reader.ReadInt32();
+                string path = BinaryStateIO.ReadString(reader);
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    _mountedDrivePaths[drive] = path;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Writes currently pressed host keys.
+        /// </summary>
+        private void WritePressedHostKeys(BinaryWriter writer)
+        {
+            writer.Write(_pressedHostKeys.Count);
+            foreach (Key key in _pressedHostKeys)
+            {
+                writer.Write((int)key);
+            }
+        }
+
+        /// <summary>
+        /// Reads currently pressed host keys.
+        /// </summary>
+        private void ReadPressedHostKeys(BinaryReader reader)
+        {
+            _pressedHostKeys.Clear();
+            int count = reader.ReadInt32();
+            for (int index = 0; index < count; index++)
+            {
+                _pressedHostKeys.Add((Key)reader.ReadInt32());
+            }
         }
 
         /// <summary>

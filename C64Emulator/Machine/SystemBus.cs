@@ -181,6 +181,22 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes the complete system bus state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            StateSerializer.WriteObjectFields(writer, this, "_vic", "_cia1", "_cia2", "_sid");
+        }
+
+        /// <summary>
+        /// Restores the complete system bus state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            StateSerializer.ReadObjectFields(reader, this, "_vic", "_cia1", "_cia2", "_sid");
+        }
+
+        /// <summary>
         /// Handles the cpu read operation.
         /// </summary>
         public byte CpuRead(ushort address)

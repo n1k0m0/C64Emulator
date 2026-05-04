@@ -13,6 +13,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+using System.IO;
+
 namespace C64Emulator.Core
 {
     /// <summary>
@@ -57,6 +59,14 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Sets a pixel after the caller has already checked the coordinates.
+        /// </summary>
+        public void SetPixelUnchecked(int x, int y, uint argb)
+        {
+            Pixels[y * Width + x] = argb;
+        }
+
+        /// <summary>
         /// Handles the clear operation.
         /// </summary>
         public void Clear(uint argb)
@@ -64,6 +74,30 @@ namespace C64Emulator.Core
             for (var i = 0; i < Pixels.Length; i++)
             {
                 Pixels[i] = argb;
+            }
+        }
+
+        /// <summary>
+        /// Writes the framebuffer contents into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            writer.Write(Width);
+            writer.Write(Height);
+            BinaryStateIO.WriteUIntArray(writer, Pixels);
+        }
+
+        /// <summary>
+        /// Restores the framebuffer contents from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            int width = reader.ReadInt32();
+            int height = reader.ReadInt32();
+            uint[] pixels = BinaryStateIO.ReadUIntArray(reader);
+            if (width == Width && height == Height && pixels != null && pixels.Length == Pixels.Length)
+            {
+                System.Array.Copy(pixels, Pixels, Pixels.Length);
             }
         }
     }
