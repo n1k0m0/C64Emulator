@@ -13,10 +13,11 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-using OpenTK;
-using OpenTK.Graphics;
-using OpenTK.Graphics.ES30;
-using OpenTK.Input;
+using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
+using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using SharpPixels.Shaders;
 using System;
 using System.Collections.Generic;
@@ -25,6 +26,9 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Key = OpenTK.Input.Key;
+using KeyModifiers = OpenTK.Input.KeyModifiers;
+using MouseState = OpenTK.Input.MouseState;
 
 namespace SharpPixels
 {
@@ -120,6 +124,7 @@ namespace SharpPixels
         private KeyModifiers modifiersPressed;
 
 
+        private int _vertexArrayObject;
         private int _vertexBufferObject;
         private int _textureHandle;
         private int _texCoordLocation;
@@ -164,7 +169,17 @@ namespace SharpPixels
         /// <summary>
         /// Handles the sharp pixels window operation.
         /// </summary>
-        public SharpPixelsWindow(int width, int height, string title) : base(width, height, GraphicsMode.Default, title)
+        public SharpPixelsWindow(int width, int height, string title)
+            : base(
+                GameWindowSettings.Default,
+                new NativeWindowSettings
+                {
+                    ClientSize = new Vector2i(width, height),
+                    Title = title,
+                    API = ContextAPI.OpenGL,
+                    APIVersion = new Version(3, 3),
+                    Profile = ContextProfile.Core
+                })
         {
             PixelsWidth = width;
             PixelsHeight = height;
@@ -194,11 +209,11 @@ namespace SharpPixels
         /// <summary>
         /// Handles the on load operation.
         /// </summary>
-        protected override void OnLoad(EventArgs e)
+        protected override void OnLoad()
         {             
             GL.ClearColor(0f, 0f, 0f, 1.0f);
             
-            CursorVisible = false;            
+            CursorState = CursorState.Hidden;
 
             //add mouse and keyboard handlers
             MouseMove += SharpPixels_MouseMove;
@@ -216,10 +231,17 @@ namespace SharpPixels
                 }
             }
 
+            _vertexArrayObject = GL.GenVertexArray();
+            GL.BindVertexArray(_vertexArrayObject);
+
             _vertexBufferObject = GL.GenBuffer();
             _textureHandle = GL.GenTexture();
             _shader = new Shader(Properties.Resources.vert, Properties.Resources.frag);
-            _shader.Compile();
+            if (!_shader.Compile())
+            {
+                throw new InvalidOperationException("SharpPixels could not compile the OpenGL shader program.");
+            }
+
             _shader.Use();
             _texCoordLocation = GL.GetAttribLocation(_shader.Handle, "aTexCoord");
             _textureUniformLocation = GL.GetUniformLocation(_shader.Handle, "texture0");
@@ -236,7 +258,7 @@ namespace SharpPixels
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-            GL.TexImage2D(TextureTarget2d.Texture2D, 0, TextureComponentCount.Rgba, PixelsWidth, PixelsHeight, 0, OpenTK.Graphics.ES30.PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, PixelsWidth, PixelsHeight, 0, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
             GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
@@ -252,17 +274,27 @@ namespace SharpPixels
 
             //ToggleFullscreen();
 
-            base.OnLoad(e);
+            base.OnLoad();
         }
         
 
         /// <summary>
         /// Handles the on unload operation.
         /// </summary>
-        protected override void OnUnload(EventArgs e)
+        protected override void OnUnload()
         {
+            GL.BindVertexArray(0);
             GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
-            GL.DeleteBuffer(_vertexBufferObject);
+            if (_vertexBufferObject != 0)
+            {
+                GL.DeleteBuffer(_vertexBufferObject);
+            }
+
+            if (_vertexArrayObject != 0)
+            {
+                GL.DeleteVertexArray(_vertexArrayObject);
+            }
+
             if (_textureHandle != 0)
             {
                 GL.DeleteTexture(_textureHandle);
@@ -286,7 +318,7 @@ namespace SharpPixels
                 }
             }
 
-            base.OnUnload(e);
+            base.OnUnload();
         }
 
         /// <summary>
@@ -300,10 +332,11 @@ namespace SharpPixels
 
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
-            GL.TexSubImage2D(TextureTarget2d.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.ES30.PixelFormat.Rgba, PixelType.UnsignedByte, _pixelBufferPointer);
+            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, _pixelBufferPointer);
 
             _shader.Use();
-            
+
+            GL.BindVertexArray(_vertexArrayObject);
             GL.DrawArrays(PrimitiveType.Triangles, 0, vertices.Length / 5);
 
             // Calls OnUserKeyPress method for all pressed keys
@@ -343,16 +376,16 @@ namespace SharpPixels
             
             _fpsCounter++;         
 
-            Context.SwapBuffers();
+            SwapBuffers();
             base.OnRenderFrame(frameEventArgs);
         }
 
         /// <summary>
         /// Handles the on resize operation.
         /// </summary>
-        protected override void OnResize(EventArgs e)
+        protected override void OnResize(ResizeEventArgs e)
         {
-            GL.Viewport(0, 0, Width, Height);
+            GL.Viewport(0, 0, ClientSize.X, ClientSize.Y);
             base.OnResize(e);
         }
 
@@ -401,9 +434,9 @@ namespace SharpPixels
         /// </summary>
         /// <param name="sender">Event sender.</param>
         /// <param name="e">Event arguments.</param>
-        private void SharpPixels_MouseMove(object sender, MouseMoveEventArgs e)
+        private void SharpPixels_MouseMove(MouseMoveEventArgs e)
         {
-            OnUserMouseMove(e.Position.X, e.Position.Y);
+            OnUserMouseMove((int)e.Position.X, (int)e.Position.Y);
         }
 
         /// <summary>
@@ -412,9 +445,9 @@ namespace SharpPixels
         /// </summary>
         /// <param name="sender">Event sender.</param>
         /// <param name="e">Event arguments.</param>
-        private void SharpPixels_MouseClick(object sender, MouseButtonEventArgs e)
+        private void SharpPixels_MouseClick(MouseButtonEventArgs e)
         {
-            OnUserMouseClick(e.Position.X, e.Position.Y, e.Mouse);
+            OnUserMouseClick((int)MousePosition.X, (int)MousePosition.Y, new MouseState((int)MousePosition.X, (int)MousePosition.Y));
         }
 
         /// <summary>
@@ -422,13 +455,14 @@ namespace SharpPixels
         /// </summary>
         /// <param name="sender">Event sender.</param>
         /// <param name="e">Event arguments.</param>
-        private void SharpPixels_KeyUp(object sender, KeyboardKeyEventArgs e)
+        private void SharpPixels_KeyUp(KeyboardKeyEventArgs e)
         {
-            if (keysPressed.Contains(e.Key))
+            Key key = ConvertKey(e.Key);
+            if (keysPressed.Contains(key))
             {
-                keysPressed.Remove(e.Key);
-                modifiersPressed = e.Modifiers;
-                OnUserKeyUp(new KeyEventArgs(e.Key, e.Modifiers));
+                keysPressed.Remove(key);
+                modifiersPressed = ConvertModifiers(e.Modifiers);
+                OnUserKeyUp(new KeyEventArgs(key, modifiersPressed));
             }
         }
 
@@ -437,14 +471,140 @@ namespace SharpPixels
         /// </summary>
         /// <param name="sender">Event sender.</param>
         /// <param name="e">Event arguments.</param>
-        private void SharpPixels_KeyDown(object sender, KeyboardKeyEventArgs e)
+        private void SharpPixels_KeyDown(KeyboardKeyEventArgs e)
         {
-            if(!keysPressed.Contains(e.Key))
+            Key key = ConvertKey(e.Key);
+            if(key != Key.Unknown && !keysPressed.Contains(key))
             {
-                keysPressed.Add(e.Key);
-                modifiersPressed = e.Modifiers;
-                OnUserKeyDown(new KeyEventArgs(e.Key, e.Modifiers));
+                keysPressed.Add(key);
+                modifiersPressed = ConvertModifiers(e.Modifiers);
+                OnUserKeyDown(new KeyEventArgs(key, modifiersPressed));
             }
+        }
+
+        /// <summary>
+        /// Converts OpenTK 4 key values to the compatibility key enum used by the emulator core.
+        /// </summary>
+        private static Key ConvertKey(Keys key)
+        {
+            switch (key)
+            {
+                case Keys.A: return Key.A;
+                case Keys.B: return Key.B;
+                case Keys.C: return Key.C;
+                case Keys.D: return Key.D;
+                case Keys.E: return Key.E;
+                case Keys.F: return Key.F;
+                case Keys.G: return Key.G;
+                case Keys.H: return Key.H;
+                case Keys.I: return Key.I;
+                case Keys.J: return Key.J;
+                case Keys.K: return Key.K;
+                case Keys.L: return Key.L;
+                case Keys.M: return Key.M;
+                case Keys.N: return Key.N;
+                case Keys.O: return Key.O;
+                case Keys.P: return Key.P;
+                case Keys.Q: return Key.Q;
+                case Keys.R: return Key.R;
+                case Keys.S: return Key.S;
+                case Keys.T: return Key.T;
+                case Keys.U: return Key.U;
+                case Keys.V: return Key.V;
+                case Keys.W: return Key.W;
+                case Keys.X: return Key.X;
+                case Keys.Y: return Key.Y;
+                case Keys.Z: return Key.Z;
+                case Keys.D0:
+                case Keys.KeyPad0: return Key.Number0;
+                case Keys.D1:
+                case Keys.KeyPad1: return Key.Number1;
+                case Keys.D2:
+                case Keys.KeyPad2: return Key.Number2;
+                case Keys.D3:
+                case Keys.KeyPad3: return Key.Number3;
+                case Keys.D4:
+                case Keys.KeyPad4: return Key.Number4;
+                case Keys.D5:
+                case Keys.KeyPad5: return Key.Number5;
+                case Keys.D6:
+                case Keys.KeyPad6: return Key.Number6;
+                case Keys.D7:
+                case Keys.KeyPad7: return Key.Number7;
+                case Keys.D8:
+                case Keys.KeyPad8: return Key.Number8;
+                case Keys.D9:
+                case Keys.KeyPad9: return Key.Number9;
+                case Keys.LeftControl: return Key.ControlLeft;
+                case Keys.RightControl: return Key.LControl;
+                case Keys.LeftShift: return Key.ShiftLeft;
+                case Keys.RightShift: return Key.ShiftRight;
+                case Keys.LeftAlt: return Key.AltLeft;
+                case Keys.RightAlt: return Key.LAlt;
+                case Keys.Space: return Key.Space;
+                case Keys.Enter:
+                case Keys.KeyPadEnter: return Key.Enter;
+                case Keys.Backspace: return Key.BackSpace;
+                case Keys.Comma: return Key.Comma;
+                case Keys.Period: return Key.Period;
+                case Keys.Minus:
+                case Keys.KeyPadSubtract: return Key.Minus;
+                case Keys.Slash: return Key.Slash;
+                case Keys.Apostrophe: return Key.Quote;
+                case Keys.Semicolon: return Key.Semicolon;
+                case Keys.Equal:
+                case Keys.KeyPadAdd: return Key.Plus;
+                case Keys.Backslash: return Key.BackSlash;
+                case Keys.KeyPadMultiply: return Key.KeypadMultiply;
+                case Keys.LeftBracket: return Key.BracketLeft;
+                case Keys.RightBracket: return Key.BracketRight;
+                case Keys.Home: return Key.Home;
+                case Keys.Up: return Key.Up;
+                case Keys.Down: return Key.Down;
+                case Keys.Left: return Key.Left;
+                case Keys.Right: return Key.Right;
+                case Keys.Escape: return Key.Escape;
+                case Keys.Tab: return Key.Tab;
+                case Keys.Delete: return Key.Delete;
+                case Keys.F1: return Key.F1;
+                case Keys.F3: return Key.F3;
+                case Keys.F5: return Key.F5;
+                case Keys.F7: return Key.F7;
+                case Keys.F9: return Key.F9;
+                case Keys.F10: return Key.F10;
+                case Keys.F11: return Key.F11;
+                case Keys.F12: return Key.F12;
+                default: return Key.Unknown;
+            }
+        }
+
+        /// <summary>
+        /// Converts OpenTK 4 modifier flags to the compatibility modifier enum used by SharpPixels.
+        /// </summary>
+        private static KeyModifiers ConvertModifiers(OpenTK.Windowing.GraphicsLibraryFramework.KeyModifiers modifiers)
+        {
+            KeyModifiers result = 0;
+            if ((modifiers & OpenTK.Windowing.GraphicsLibraryFramework.KeyModifiers.Alt) != 0)
+            {
+                result |= KeyModifiers.Alt;
+            }
+
+            if ((modifiers & OpenTK.Windowing.GraphicsLibraryFramework.KeyModifiers.Control) != 0)
+            {
+                result |= KeyModifiers.Control;
+            }
+
+            if ((modifiers & OpenTK.Windowing.GraphicsLibraryFramework.KeyModifiers.Shift) != 0)
+            {
+                result |= KeyModifiers.Shift;
+            }
+
+            if ((modifiers & OpenTK.Windowing.GraphicsLibraryFramework.KeyModifiers.Super) != 0)
+            {
+                result |= KeyModifiers.Command;
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -1878,7 +2038,7 @@ namespace SharpPixels
             {
                 WindowBorder = WindowBorder.Resizable;
                 WindowState = WindowState.Normal;
-                ClientSize = new Size(PixelsWidth, PixelsHeight);
+                ClientSize = new Vector2i(PixelsWidth, PixelsHeight);
             }
             else
             {

@@ -60,18 +60,22 @@ C64Emulator/
   Iec/           IEC bus and high-level drive protocol bridge
   Drive1541/     1541 drive hardware, VIA, bus, and disk mechanism
   Properties/
-  lib/
 SharpPixels/
   SharpPixels.csproj
+  Input/         OpenTK input compatibility types used by the emulator
   Shaders/
 ```
 
 ## Requirements
 
 - Windows.
-- Visual Studio or MSBuild with .NET Framework project support.
-- .NET Framework 4.7.2 Developer Pack if it is not already installed.
-- .NET SDK for command-line builds with `dotnet build`.
+- .NET 10 SDK or newer.
+- Visual Studio or a compatible `dotnet` CLI/MSBuild installation with .NET 10 support.
+
+## Dependencies
+
+- `OpenTK` 4.9.4 for the OpenGL windowing/rendering path in `SharpPixels`.
+- `NAudio` 2.3.0 for SID audio output.
 
 ## Build
 

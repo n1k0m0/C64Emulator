@@ -1,154 +1,59 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{C47943D0-E1B3-4AE1-8129-E5BB3F7BE70C}</ProjectGuid>
     <OutputType>WinExe</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>C64Emulator</RootNamespace>
     <AssemblyName>C64Emulator</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <TargetFrameworkProfile />
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ApplicationIcon>commodore_logo.ico</ApplicationIcon>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <DebugSymbols>true</DebugSymbols>
     <OutputPath>bin\x64\Debug\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <DebugType>full</DebugType>
-    <PlatformTarget>x64</PlatformTarget>
-    <LangVersion>7.3</LangVersion>
-    <ErrorReport>prompt</ErrorReport>
-    <Prefer32Bit>true</Prefer32Bit>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <OutputPath>bin\x64\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <Optimize>true</Optimize>
     <DebugType>pdbonly</DebugType>
-    <PlatformTarget>x64</PlatformTarget>
-    <LangVersion>7.3</LangVersion>
-    <ErrorReport>prompt</ErrorReport>
-    <Prefer32Bit>true</Prefer32Bit>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="OpenTK, Version=3.2.0.0, Culture=neutral, PublicKeyToken=bad199fe84eb3df4, processorArchitecture=MSIL">
-      <HintPath>lib\OpenTK.dll</HintPath>
-    </Reference>
-    <Reference Include="NAudio">
-      <HintPath>lib\NAudio.dll</HintPath>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Deployment" />
-    <Reference Include="System.Drawing" />
-    <Reference Include="System.Windows.Forms" />
-    <Reference Include="System.Xml" />
+    <Compile Remove="Properties\Settings.Designer.cs" />
+    <None Remove="c64-character.bin" />
   </ItemGroup>
+
   <ItemGroup>
-    <Compile Include="Machine\\C64Model.cs" />
-    <Compile Include="Machine\\C64System.cs" />
-    <Compile Include="Machine\\ICpuBus.cs" />
-    <Compile Include="Machine\\SystemBus.cs" />
-    <Compile Include="Cpu\\Cpu6510.cs" />
-    <Compile Include="Cpu\\CpuOpcodeSelfTest.cs" />
-    <Compile Include="Cpu\\CpuState.cs" />
-    <Compile Include="Cpu\\CpuTraceEntry.cs" />
-    <Compile Include="Cpu\\CpuTraceHarness.cs" />
-    <Compile Include="Cpu\\CpuTraceRecorder.cs" />
-    <Compile Include="Cpu\\InstructionContext.cs" />
-    <Compile Include="Cpu\\InstructionDecoder.cs" />
-    <Compile Include="Cpu\\InstructionSteps.cs" />
-    <Compile Include="Vic\\FrameBuffer.cs" />
-    <Compile Include="Vic\\Vic2.cs" />
-    <Compile Include="Vic\\VicBusPlan.cs" />
-    <Compile Include="Vic\\VicTiming.cs" />
-    <Compile Include="Sid\\Sid.cs" />
-    <Compile Include="Sid\\SidAudioOutput.cs" />
-    <Compile Include="Cia\\Cia1.cs" />
-    <Compile Include="Cia\\Cia2.cs" />
-    <Compile Include="Input\\JoystickPort.cs" />
-    <Compile Include="Media\\D64Image.cs" />
-    <Compile Include="Media\\MediaLoadData.cs" />
-    <Compile Include="Media\\MediaManager.cs" />
-    <Compile Include="Media\\MediaMountResult.cs" />
-    <Compile Include="Media\\MountedMediaInfo.cs" />
-    <Compile Include="Media\\MountedMediaKind.cs" />
-    <Compile Include="Media\\PrgLoader.cs" />
-    <Compile Include="Iec\\IecBus.cs" />
-    <Compile Include="Iec\\IecDrive1541.cs" />
-    <Compile Include="Iec\\IecKernalBridge.cs" />
-    <Compile Include="Drive1541\\Drive1541Bus.cs" />
-    <Compile Include="Drive1541\\Drive1541Hardware.cs" />
-    <Compile Include="Drive1541\\Drive1541Mechanism.cs" />
-    <Compile Include="Drive1541\\DriveVia6522.cs" />
-    <Compile Include="SaveStates\\BinaryStateIO.cs" />
-    <Compile Include="SaveStates\\SaveStateFile.cs" />
-    <Compile Include="SaveStates\\SaveStateMetadata.cs" />
-    <Compile Include="SaveStates\\StateSerializer.cs" />
-    <Compile Include="C64Window.cs" />
-    <Compile Include="Program.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <EmbeddedResource Include="Properties\Resources.resx">
-      <Generator>ResXFileCodeGenerator</Generator>
-      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
-      <SubType>Designer</SubType>
-    </EmbeddedResource>
-    <Compile Include="Properties\Resources.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Resources.resx</DependentUpon>
-      <DesignTime>True</DesignTime>
-    </Compile>
-    <None Include="c64-basic-kernal.bin">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="1541-c000-rom.bin">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="1541-e000-rom.bin">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <EmbeddedResource Include="c64-character.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </EmbeddedResource>
-    <None Include="OpenTK.dll.config" />
-    <None Include="packages.config" />
-    <None Include="Properties\Settings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    <None Update="1541-c000-rom.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <Compile Include="Properties\Settings.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Settings.settings</DependentUpon>
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-    </Compile>
+    <None Update="1541-e000-rom.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="c64-basic-kernal.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
+
   <ItemGroup>
-    <None Include="App.config" />
+    <ProjectReference Include="..\SharpPixels\SharpPixels.csproj" />
   </ItemGroup>
+
   <ItemGroup>
-    <None Include="commodore_logo.ico" />
+    <PackageReference Include="NAudio" Version="2.3.0" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\SharpPixels\SharpPixels.csproj">
-      <Project>{6e1717bd-5415-4847-9333-fe47b6d1a6ca}</Project>
-      <Name>SharpPixels</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
-       Other similar extension points exist, see Microsoft.Common.targets.
-  <Target Name="BeforeBuild">
-  </Target>
-  <Target Name="AfterBuild">
-  </Target>
-  -->
 </Project>

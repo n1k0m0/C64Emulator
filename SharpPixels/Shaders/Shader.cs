@@ -13,7 +13,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-using OpenTK.Graphics.ES20;
+using OpenTK.Graphics.OpenGL4;
 using System;
 
 namespace SharpPixels.Shaders
@@ -54,21 +54,19 @@ namespace SharpPixels.Shaders
             GL.ShaderSource(fragmentShader, _fragmentShaderSource);
 
             GL.CompileShader(vertexShader);
+            GL.CompileShader(fragmentShader);
 
-            string infoLogVert = GL.GetShaderInfoLog(vertexShader);
-            if (infoLogVert != string.Empty)
+            if (!CheckShaderCompileStatus(vertexShader, "vertex"))
             {
-                Console.WriteLine(infoLogVert);
+                GL.DeleteShader(fragmentShader);
+                GL.DeleteShader(vertexShader);
                 return false;
             }
 
-            GL.CompileShader(fragmentShader);
-
-            string infoLogFrag = GL.GetShaderInfoLog(fragmentShader);
-
-            if (infoLogFrag != string.Empty)
+            if (!CheckShaderCompileStatus(fragmentShader, "fragment"))
             {
-                Console.WriteLine(infoLogFrag);
+                GL.DeleteShader(fragmentShader);
+                GL.DeleteShader(vertexShader);
                 return false;
             }
 
@@ -79,12 +77,65 @@ namespace SharpPixels.Shaders
 
             GL.LinkProgram(Handle);
 
+            if (!CheckProgramLinkStatus(Handle))
+            {
+                GL.DetachShader(Handle, vertexShader);
+                GL.DetachShader(Handle, fragmentShader);
+                GL.DeleteShader(fragmentShader);
+                GL.DeleteShader(vertexShader);
+                GL.DeleteProgram(Handle);
+                Handle = 0;
+                return false;
+            }
+
             GL.DetachShader(Handle, vertexShader);
             GL.DetachShader(Handle, fragmentShader);
             GL.DeleteShader(fragmentShader);
             GL.DeleteShader(vertexShader);
 
             return true;
+        }
+
+        /// <summary>
+        /// Checks whether a shader compiled successfully and prints driver diagnostics when available.
+        /// </summary>
+        private static bool CheckShaderCompileStatus(int shader, string shaderName)
+        {
+            GL.GetShader(shader, ShaderParameter.CompileStatus, out int status);
+            string infoLog = GL.GetShaderInfoLog(shader);
+            if (!string.IsNullOrWhiteSpace(infoLog))
+            {
+                Console.WriteLine(infoLog);
+            }
+
+            if (status == (int)All.True)
+            {
+                return true;
+            }
+
+            Console.WriteLine("Failed to compile " + shaderName + " shader.");
+            return false;
+        }
+
+        /// <summary>
+        /// Checks whether a shader program linked successfully and prints driver diagnostics when available.
+        /// </summary>
+        private static bool CheckProgramLinkStatus(int program)
+        {
+            GL.GetProgram(program, GetProgramParameterName.LinkStatus, out int status);
+            string infoLog = GL.GetProgramInfoLog(program);
+            if (!string.IsNullOrWhiteSpace(infoLog))
+            {
+                Console.WriteLine(infoLog);
+            }
+
+            if (status == (int)All.True)
+            {
+                return true;
+            }
+
+            Console.WriteLine("Failed to link shader program.");
+            return false;
         }
 
         /// <summary>
