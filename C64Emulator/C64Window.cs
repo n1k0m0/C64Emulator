@@ -68,7 +68,7 @@ namespace C64Emulator
         private Task _emulationTask;
         private long _emulationBaseCycle;
         private long _lastRenderedCycle;
-        private bool _audioOverlayVisible;
+        private volatile bool _audioOverlayVisible;
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
         private volatile bool _saveOverlayVisible;
@@ -223,7 +223,7 @@ namespace C64Emulator
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    if (_saveOverlayVisible)
+                    if (_saveOverlayVisible || _audioOverlayVisible)
                     {
                         Thread.Sleep(5);
                         continue;
@@ -415,17 +415,7 @@ namespace C64Emulator
 
             if (keyEventArgs.Key == Key.F10)
             {
-                bool newVisibility = !_audioOverlayVisible;
-                _audioOverlayVisible = newVisibility;
-                if (!newVisibility)
-                {
-                    _mediaBrowserVisible = false;
-                    _resetConfirmVisible = false;
-                }
-                else
-                {
-                    ClampAudioOverlayScroll();
-                }
+                ToggleAudioOverlay();
                 return;
             }
 
@@ -511,6 +501,41 @@ namespace C64Emulator
             }
 
             OpenSaveOverlay();
+        }
+
+        /// <summary>
+        /// Toggles the settings overlay and pauses or resumes emulation timing.
+        /// </summary>
+        private void ToggleAudioOverlay()
+        {
+            if (_audioOverlayVisible)
+            {
+                CloseAudioOverlay();
+            }
+            else
+            {
+                OpenAudioOverlay();
+            }
+        }
+
+        /// <summary>
+        /// Opens the settings overlay and pauses the emulation loop.
+        /// </summary>
+        private void OpenAudioOverlay()
+        {
+            _audioOverlayVisible = true;
+            ClampAudioOverlayScroll();
+        }
+
+        /// <summary>
+        /// Closes the settings overlay and resumes normal timing.
+        /// </summary>
+        private void CloseAudioOverlay()
+        {
+            _audioOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            ResetEmulationTiming();
         }
 
         /// <summary>
@@ -1357,11 +1382,11 @@ namespace C64Emulator
                     }
                     else
                     {
-                        _audioOverlayVisible = false;
+                        CloseAudioOverlay();
                     }
                     return true;
                 case Key.Escape:
-                    _audioOverlayVisible = false;
+                    CloseAudioOverlay();
                     return true;
                 default:
                     return false;

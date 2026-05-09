@@ -30,7 +30,7 @@ A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering front
 | Key | Action |
 | --- | --- |
 | `F9` | Toggle turbo mode. |
-| `F10` | Open the settings/media overlay. |
+| `F10` | Open the settings/media overlay. The emulator pauses while this menu is open. |
 | `F11` | Toggle fullscreen mode. |
 | `F12` | Open the savestate overlay. The emulator pauses while this menu is open. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
