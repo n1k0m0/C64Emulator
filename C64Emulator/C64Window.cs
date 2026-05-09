@@ -1034,7 +1034,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Draws ARGB pixels into an arbitrary rectangle using nearest-neighbor sampling.
+        /// Draws ARGB pixels into an arbitrary rectangle using point-sampled stretching.
         /// </summary>
         private void DrawArgbPixelsToRectangle(uint[] sourcePixels, int sourceWidth, int sourceHeight, int x, int y, int width, int height)
         {
@@ -1051,13 +1051,15 @@ namespace C64Emulator
                 return;
             }
 
+            GetPreviewCropRectangle(sourcePixels, sourceWidth, sourceHeight, out int cropX, out int cropY, out int cropWidth, out int cropHeight);
+
             for (int targetY = 0; targetY < height; targetY++)
             {
-                int sourceY = (targetY * sourceHeight) / height;
+                int sourceY = cropY + Math.Min(cropHeight - 1, ((targetY * cropHeight) + (height / 2)) / height);
                 int sourceRow = sourceY * sourceWidth;
                 for (int targetX = 0; targetX < width; targetX++)
                 {
-                    int sourceX = (targetX * sourceWidth) / width;
+                    int sourceX = cropX + Math.Min(cropWidth - 1, ((targetX * cropWidth) + (width / 2)) / width);
                     uint argb = sourcePixels[sourceRow + sourceX];
                     DrawPixel(
                         x + targetX,
@@ -1067,6 +1069,87 @@ namespace C64Emulator
                         (byte)(argb & 0xFF));
                 }
             }
+        }
+
+        /// <summary>
+        /// Finds the non-border area of a savestate preview frame.
+        /// </summary>
+        private static void GetPreviewCropRectangle(uint[] sourcePixels, int sourceWidth, int sourceHeight, out int cropX, out int cropY, out int cropWidth, out int cropHeight)
+        {
+            uint borderColor = sourcePixels[0];
+            int left = sourceWidth;
+            int top = sourceHeight;
+            int right = -1;
+            int bottom = -1;
+
+            for (int y = 0; y < sourceHeight; y++)
+            {
+                int row = y * sourceWidth;
+                for (int x = 0; x < sourceWidth; x++)
+                {
+                    if (IsPreviewContentPixel(sourcePixels[row + x], borderColor))
+                    {
+                        if (x < left)
+                        {
+                            left = x;
+                        }
+
+                        if (x > right)
+                        {
+                            right = x;
+                        }
+
+                        if (y < top)
+                        {
+                            top = y;
+                        }
+
+                        if (y > bottom)
+                        {
+                            bottom = y;
+                        }
+                    }
+                }
+            }
+
+            if (right < left || bottom < top)
+            {
+                cropX = 0;
+                cropY = 0;
+                cropWidth = sourceWidth;
+                cropHeight = sourceHeight;
+                return;
+            }
+
+            int detectedWidth = right - left + 1;
+            int detectedHeight = bottom - top + 1;
+            int detectedArea = detectedWidth * detectedHeight;
+            int minimumUsefulArea = (sourceWidth * sourceHeight) / 4;
+
+            if (detectedArea < minimumUsefulArea)
+            {
+                cropX = 0;
+                cropY = 0;
+                cropWidth = sourceWidth;
+                cropHeight = sourceHeight;
+                return;
+            }
+
+            cropX = left;
+            cropY = top;
+            cropWidth = detectedWidth;
+            cropHeight = detectedHeight;
+        }
+
+        /// <summary>
+        /// Returns whether the pixel differs from the surrounding border color.
+        /// </summary>
+        private static bool IsPreviewContentPixel(uint argb, uint borderColor)
+        {
+            int redDifference = Math.Abs((int)((argb >> 16) & 0xFF) - (int)((borderColor >> 16) & 0xFF));
+            int greenDifference = Math.Abs((int)((argb >> 8) & 0xFF) - (int)((borderColor >> 8) & 0xFF));
+            int blueDifference = Math.Abs((int)(argb & 0xFF) - (int)(borderColor & 0xFF));
+            return redDifference > 2 || greenDifference > 2 || blueDifference > 2;
         }
 
         /// <summary>
