@@ -59,6 +59,8 @@ namespace C64Emulator.Core
         private int _pollMirrorRepeatDelayCycles;
         private double _drive1541TargetCycles;
         private double _drive1541ExecutedCycles;
+        private bool _forceSoftwareIecTransport = true;
+        private bool _enableInputInjection = true;
         private bool _catchingUpDrivesForIecAccess;
 
         /// <summary>
@@ -99,7 +101,7 @@ namespace C64Emulator.Core
             ApplyIecTransportMode();
 
             _bus.InitializeMemory();
-            _bus.LoadRoms(Directory.GetCurrentDirectory());
+            _bus.LoadRoms(null);
             Reset();
         }
 
@@ -168,6 +170,27 @@ namespace C64Emulator.Core
                 }
 
                 return resetMessage;
+            }
+        }
+
+        /// <summary>
+        /// Performs a C64-side reset while preserving RAM and inserted host media.
+        /// </summary>
+        public string WarmReset()
+        {
+            lock (_syncRoot)
+            {
+                _cia1.Reset();
+                _cia2.Reset();
+                _vic.Reset();
+                _sid.Reset();
+                _iecKernalBridge.Reset();
+                _pressedHostKeys.Clear();
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                _catchingUpDrivesForIecAccess = false;
+                _cpu.Reset(_bus.ReadResetVector());
+                return "WARM RESET COMPLETE";
             }
         }
 
@@ -291,6 +314,66 @@ namespace C64Emulator.Core
                 {
                     _cpu.EnableKernalIecHooks = value;
                     ApplyIecTransportMode();
+                }
+            }
+        }
+
+        public bool EnableLoadHack
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _cpu.EnableLoadHack;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _cpu.EnableLoadHack = value;
+                }
+            }
+        }
+
+        public bool ForceSoftwareIecTransport
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _forceSoftwareIecTransport;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _forceSoftwareIecTransport = value;
+                    ApplyIecTransportMode();
+                }
+            }
+        }
+
+        public bool EnableInputInjection
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _enableInputInjection;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _enableInputInjection = value;
+                    if (!_enableInputInjection)
+                    {
+                        _lastMirroredPollKey = null;
+                        _pollMirrorRepeatDelayCycles = 0;
+                    }
                 }
             }
         }
@@ -456,6 +539,28 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets compact CIA debug information.
+        /// </summary>
+        public string GetCiaDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return "cia1={" + _cia1.GetDebugInfo() + "} cia2={" + _cia2.GetDebugInfo() + "}";
+            }
+        }
+
+        /// <summary>
+        /// Gets compact SID debug information.
+        /// </summary>
+        public string GetSidDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return _sid.GetDebugInfo();
+            }
+        }
+
+        /// <summary>
         /// Gets the cpu debug info value.
         /// </summary>
         public string GetCpuDebugInfo()
@@ -612,6 +717,17 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Sets the active-low joystick state supplied by a host gamepad.
+        /// </summary>
+        public void SetGamepadJoystickState(byte activeLowJoystickState)
+        {
+            lock (_syncRoot)
+            {
+                _cia1.SetGamepadJoystickState(activeLowJoystickState);
+            }
+        }
+
         public MountedMediaInfo MountedMedia
         {
             get
@@ -737,7 +853,7 @@ namespace C64Emulator.Core
         private void ResetCore()
         {
             _bus.InitializeMemory();
-            _bus.LoadRoms(Directory.GetCurrentDirectory());
+            _bus.LoadRoms(null);
             _cia1.Reset();
             _cia2.Reset();
             _vic.Reset();
@@ -1050,7 +1166,7 @@ namespace C64Emulator.Core
             // This still goes over the IEC bus and no longer uses KERNAL hooks;
             // uploaded/custom drive code hands over to the hardware/ROM side
             // explicitly once the loader requests it.
-            bool forceSoftwareTransport = true;
+            bool forceSoftwareTransport = _forceSoftwareIecTransport;
             _drive8.ForceSoftwareTransport = forceSoftwareTransport;
             _drive9.ForceSoftwareTransport = forceSoftwareTransport;
             _drive10.ForceSoftwareTransport = forceSoftwareTransport;
@@ -1267,7 +1383,7 @@ namespace C64Emulator.Core
         /// </summary>
         private bool CanMirrorHostInputIntoKeyboardBuffer()
         {
-            return (_cpu.SR & 0x04) != 0 && IsLikelyIntroKeyboardPollLoop();
+            return _enableInputInjection && (_cpu.SR & 0x04) != 0 && IsLikelyIntroKeyboardPollLoop();
         }
 
         /// <summary>

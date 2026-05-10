@@ -351,45 +351,22 @@ namespace C64Emulator.Core
         /// </summary>
         private void LoadAvailableRomHalves()
         {
-            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            string rootDirectory = Directory.GetCurrentDirectory();
+            string lower = RomPathResolver.FindFirstExisting(new[]
+            {
+                "1541-c000-rom.bin",
+                "1541-c000.325302-01.bin"
+            });
 
-            string lower = FindFirstExisting(
-                Path.Combine(baseDirectory, "1541-c000-rom.bin"),
-                Path.Combine(baseDirectory, "1541-c000.325302-01.bin"),
-                Path.Combine(rootDirectory, "1541-c000-rom.bin"),
-                Path.Combine(rootDirectory, "1541-c000.325302-01.bin"));
-
-            string upper = FindFirstExisting(
-                Path.Combine(baseDirectory, "1541-e000-rom.bin"),
-                Path.Combine(baseDirectory, "1541-e000.901229-01.bin"),
-                Path.Combine(baseDirectory, "1541-e000.901229-05.bin"),
-                Path.Combine(baseDirectory, "1541-e000.901229-03.bin"),
-                Path.Combine(baseDirectory, "1540-e000.325303-01.bin"),
-                Path.Combine(rootDirectory, "1541-e000-rom.bin"),
-                Path.Combine(rootDirectory, "1541-e000.901229-01.bin"),
-                Path.Combine(rootDirectory, "1541-e000.901229-05.bin"),
-                Path.Combine(rootDirectory, "1541-e000.901229-03.bin"),
-                Path.Combine(rootDirectory, "1540-e000.325303-01.bin"));
+            string upper = RomPathResolver.FindFirstExisting(new[]
+            {
+                "1541-e000-rom.bin",
+                "1541-e000.901229-01.bin",
+                "1541-e000.901229-05.bin",
+                "1541-e000.901229-03.bin",
+                "1540-e000.325303-01.bin"
+            });
 
             _bus.TryLoadRomHalves(lower, upper);
-        }
-
-        /// <summary>
-        /// Finds first existing.
-        /// </summary>
-        private static string FindFirstExisting(params string[] candidates)
-        {
-            for (int index = 0; index < candidates.Length; index++)
-            {
-                string candidate = candidates[index];
-                if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-
-            return null;
         }
 
         /// <summary>

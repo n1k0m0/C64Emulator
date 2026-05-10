@@ -725,7 +725,7 @@ namespace C64Emulator.Core
         public string GetDebugInfo()
         {
             return string.Format(
-                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} payloadRx={15} payloadTx={16} armRx={17} armTx={18} attn={19} probeHold={20}:{21} ch={22} listenSA={23:X2} talkSA={24:X2} talkIdx={25}/{26} sender={27} receiver={28} bus={29} recent={30} open0={31} open15={32} atnEdges={33}/{34} attnBeg={35} attnEnd={36} attnCmds={37} swClk={38} swData={39} pendArmed={40} pendWaitAtn={41} pendWait={42} pendIdle={43}",
+                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} deviceAttn={15} payloadRx={16} payloadTx={17} armRx={18} armTx={19} attn={20} probeHold={21}:{22} ch={23} listenSA={24:X2} talkSA={25:X2} talkIdx={26}/{27} sender={28} receiver={29} bus={30} recent={31} open0={32} open15={33} atnEdges={34}/{35} attnBeg={36} attnEnd={37} attnCmds={38} swClk={39} swData={40} pendArmed={41} pendWaitAtn={42} pendWait={43} pendIdle={44}",
                 _mountedImage != null,
                 _hardware.HasCustomCodeActive,
                 _hardware.IsBooting,
@@ -741,6 +741,7 @@ namespace C64Emulator.Core
                 _lastMemoryWriteLength,
                 _deviceListening,
                 _deviceTalking,
+                _deviceAttentioned,
                 _payloadReceiveArmed,
                 _payloadSendArmed,
                 _armPayloadReceiveAfterAttention,

@@ -67,6 +67,7 @@ namespace C64Emulator.Core
         private readonly ICpuBus _bus;
         private readonly IecKernalBridge _iecKernalBridge;
         private readonly MediaManager _mediaManager;
+        private bool _enableLoadHack = true;
         private bool _enableKernalIecHooks;
         private CpuState _state = CpuState.FetchOpcode;
         private InstructionStepper _currentStepper;
@@ -117,6 +118,12 @@ namespace C64Emulator.Core
         {
             get { return _enableKernalIecHooks; }
             set { _enableKernalIecHooks = value && _iecKernalBridge != null; }
+        }
+
+        public bool EnableLoadHack
+        {
+            get { return _enableLoadHack; }
+            set { _enableLoadHack = value; }
         }
 
         /// <summary>
@@ -866,7 +873,7 @@ namespace C64Emulator.Core
         /// </summary>
         private bool TryHandleLoadHack()
         {
-            if (_accessPredictionMode)
+            if (!_enableLoadHack || _accessPredictionMode)
             {
                 return false;
             }

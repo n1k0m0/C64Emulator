@@ -123,6 +123,26 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets compact debug information for the SID.
+        /// </summary>
+        public string GetDebugInfo()
+        {
+            int cutoff = ((_registers[0x16] << 3) | (_registers[0x15] & 0x07)) & 0x07FF;
+            return string.Format(
+                "model={0} vol={1:X1} fc={2:X3} res={3:X1} mode={4:X2} osc3={5:X2} env3={6:X2} v0={7} v1={8} v2={9}",
+                _chipModel == SidChipModel.Mos6581 ? "6581" : "8580",
+                _registers[0x18] & 0x0F,
+                cutoff,
+                (_registers[0x17] >> 4) & 0x0F,
+                _registers[0x18],
+                _oscillator3Value,
+                _envelope3Value,
+                _voices[0].GetDebugInfo(),
+                _voices[1].GetDebugInfo(),
+                _voices[2].GetDebugInfo());
+        }
+
+        /// <summary>
         /// Resets the component to its power-on or idle state.
         /// </summary>
         public void Reset()
@@ -715,6 +735,20 @@ namespace C64Emulator.Core
             public byte GetEnvelopeByte()
             {
                 return (byte)Clamp(_envelope * 255.0f, 0.0f, 255.0f);
+            }
+
+            /// <summary>
+            /// Gets compact debug information for this voice.
+            /// </summary>
+            public string GetDebugInfo()
+            {
+                return string.Format(
+                    "f={0:X4} pw={1:X3} c={2:X2} e={3:X2} s={4}",
+                    FrequencyRegister,
+                    PulseWidthRegister,
+                    Control,
+                    GetEnvelopeByte(),
+                    _envelopeStage);
             }
 
             /// <summary>

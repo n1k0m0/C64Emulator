@@ -42,6 +42,8 @@ namespace C64Emulator.Core
         private byte _interruptFlags;
         private byte _joystickPort1State = 0x1F;
         private byte _joystickPort2State = 0x1F;
+        private byte _gamepadJoystickPort1State = 0x1F;
+        private byte _gamepadJoystickPort2State = 0x1F;
         private JoystickPort _activeJoystickPort = JoystickPort.Port2;
         private byte _serialDataRegister;
         private int _todCycleAccumulator;
@@ -76,6 +78,8 @@ namespace C64Emulator.Core
             _interruptFlags = 0;
             _joystickPort1State = 0x1F;
             _joystickPort2State = 0x1F;
+            _gamepadJoystickPort1State = 0x1F;
+            _gamepadJoystickPort2State = 0x1F;
             _serialDataRegister = 0;
             _todCycleAccumulator = 0;
             _todTenths = 0;
@@ -251,6 +255,51 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets compact debug information for CIA1.
+        /// </summary>
+        public string GetDebugInfo()
+        {
+            return string.Format(
+                "pra={0:X2} prb={1:X2} ddra={2:X2} ddrb={3:X2} ta={4:X4}/{5:X4} tb={6:X4}/{7:X4} icr={8:X2}/{9:X2} tod={10:X2}:{11:X2}:{12:X2}.{13:X1} joy={14}/{15}",
+                ReadPortA(),
+                ReadPortB(),
+                _registers[0x02],
+                _registers[0x03],
+                _timerACounter,
+                _timerALatch,
+                _timerBCounter,
+                _timerBLatch,
+                _interruptFlags,
+                _interruptMask,
+                _todHours,
+                _todMinutes,
+                _todSeconds,
+                _todTenths,
+                _joystickPort1State & _gamepadJoystickPort1State,
+                _joystickPort2State & _gamepadJoystickPort2State);
+        }
+
+        /// <summary>
+        /// Sets the host gamepad joystick state using C64 active-low joystick bits.
+        /// </summary>
+        public void SetGamepadJoystickState(byte activeLowJoystickState)
+        {
+            activeLowJoystickState = (byte)(activeLowJoystickState | 0xE0);
+            _gamepadJoystickPort1State = 0x1F;
+            _gamepadJoystickPort2State = 0x1F;
+
+            if (_activeJoystickPort == JoystickPort.Port1 || _activeJoystickPort == JoystickPort.Both)
+            {
+                _gamepadJoystickPort1State = activeLowJoystickState;
+            }
+
+            if (_activeJoystickPort == JoystickPort.Port2 || _activeJoystickPort == JoystickPort.Both)
+            {
+                _gamepadJoystickPort2State = activeLowJoystickState;
+            }
+        }
+
+        /// <summary>
         /// Writes the complete CIA state into a savestate stream.
         /// </summary>
         public void SaveState(BinaryWriter writer)
@@ -405,7 +454,7 @@ namespace C64Emulator.Core
                 }
             }
 
-            result = (byte)(result & (_joystickPort2State | 0xE0));
+            result = (byte)(result & ((_joystickPort2State & _gamepadJoystickPort2State) | 0xE0));
             return result;
         }
 
@@ -433,7 +482,7 @@ namespace C64Emulator.Core
                 }
             }
 
-            result = (byte)(result & (_joystickPort1State | 0xE0));
+            result = (byte)(result & ((_joystickPort1State & _gamepadJoystickPort1State) | 0xE0));
             return result;
         }
 

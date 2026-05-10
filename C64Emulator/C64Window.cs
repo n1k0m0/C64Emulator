@@ -22,6 +22,8 @@ using System.Threading.Tasks;
 using C64Emulator.Core;
 using OpenTK.Input;
 using SharpPixels;
+using Hat = OpenTK.Windowing.Common.Input.Hat;
+using JoystickState = OpenTK.Windowing.GraphicsLibraryFramework.JoystickState;
 
 namespace C64Emulator
 {
@@ -39,6 +41,25 @@ namespace C64Emulator
             Reset
         }
 
+        /// <summary>
+        /// Lists the supported presentation filters.
+        /// </summary>
+        private enum VideoFilterMode
+        {
+            Sharp,
+            Crt
+        }
+
+        /// <summary>
+        /// Lists the supported reset behaviors.
+        /// </summary>
+        private enum ResetMode
+        {
+            Warm,
+            Reload,
+            Power
+        }
+
         private const int MaxCycleBatch = 2048;
         private const int NormalCycleBatch = 512;
         private const long WaitCycleQuantum = 256;
@@ -46,7 +67,7 @@ namespace C64Emulator
         private const double SleepSafetyMarginSeconds = 0.0005;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 8;
+        private const int AudioOverlayItemCount = 14;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int MediaBrowserVisibleRows = 9;
@@ -75,8 +96,14 @@ namespace C64Emulator
         private volatile bool _turboMode;
         private volatile bool _turboTimingResetPending;
         private bool _windowFullscreen;
+        private bool _gamepadEnabled = true;
+        private bool _gamepadConnected;
+        private bool _debugOverlayVisible;
         private bool _resetConfirmYesSelected = true;
         private ConfirmationAction _confirmationAction;
+        private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
+        private ResetMode _resetMode = ResetMode.Warm;
+        private byte _lastGamepadJoystickState = 0x1F;
         private int _audioOverlaySelection;
         private int _audioOverlayScroll;
         private int _mediaBrowserSelection;
@@ -286,6 +313,8 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserUpdate(double time)
         {
+            PollGamepadInput();
+
             long currentCycle;
             ushort currentPc;
             byte currentOpcode;
@@ -294,6 +323,16 @@ namespace C64Emulator
             SidChipModel sidChipModel;
             JoystickPort joystickPort;
             MountedMediaInfo mountedMediaInfo;
+            bool enableLoadHack;
+            bool forceSoftwareIecTransport;
+            bool enableInputInjection;
+            VicTiming timing;
+            string memoryDebugInfo = string.Empty;
+            string cpuDebugInfo = string.Empty;
+            string ciaDebugInfo = string.Empty;
+            string sidDebugInfo = string.Empty;
+            string iecDebugInfo = string.Empty;
+            string drive8DebugInfo = string.Empty;
             bool drive8Mounted;
             bool drive8LedOn;
             bool drive8Active;
@@ -308,7 +347,8 @@ namespace C64Emulator
             bool drive11Active;
             lock (_system.SyncRoot)
             {
-                currentCycle = _system.Timing.GlobalCycle;
+                timing = _system.Timing;
+                currentCycle = timing.GlobalCycle;
                 currentPc = _system.Cpu.PC;
                 currentOpcode = _system.Cpu.CurrentOpcode;
                 sidMasterVolume = _system.SidMasterVolume;
@@ -316,6 +356,9 @@ namespace C64Emulator
                 sidChipModel = _system.CurrentSidChipModel;
                 joystickPort = _system.CurrentJoystickPort;
                 mountedMediaInfo = _system.MountedMedia;
+                enableLoadHack = _system.EnableLoadHack;
+                forceSoftwareIecTransport = _system.ForceSoftwareIecTransport;
+                enableInputInjection = _system.EnableInputInjection;
                 drive8Mounted = _system.IsDriveMounted(8);
                 drive8LedOn = _system.IsDriveLedOn(8);
                 drive8Active = _system.IsDriveActive(8);
@@ -328,6 +371,16 @@ namespace C64Emulator
                 drive11Mounted = _system.IsDriveMounted(11);
                 drive11LedOn = _system.IsDriveLedOn(11);
                 drive11Active = _system.IsDriveActive(11);
+                if (_debugOverlayVisible)
+                {
+                    memoryDebugInfo = _system.GetMemoryConfigDebugInfo();
+                    cpuDebugInfo = _system.GetCpuDebugInfo();
+                    ciaDebugInfo = _system.GetCiaDebugInfo();
+                    sidDebugInfo = _system.GetSidDebugInfo();
+                    iecDebugInfo = _system.GetIecDebugInfo();
+                    drive8DebugInfo = _system.GetDriveDebugInfo(8);
+                }
+
                 Array.Copy(_system.FrameBuffer.Pixels, _frameSnapshot, _frameSnapshot.Length);
             }
 
@@ -350,11 +403,16 @@ namespace C64Emulator
             }
             else if (_audioOverlayVisible)
             {
-                DrawAudioOverlay(sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo);
+                DrawAudioOverlay(sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
             }
             else
             {
                 DrawTurboToast();
+            }
+
+            if (_debugOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
+            {
+                DrawDebugOverlay(timing, currentPc, currentOpcode, memoryDebugInfo, cpuDebugInfo, ciaDebugInfo, sidDebugInfo, iecDebugInfo, drive8DebugInfo);
             }
 
             long cyclesThisFrame = currentCycle - _lastRenderedCycle;
@@ -397,6 +455,14 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Handles media files dropped onto the emulator window.
+        /// </summary>
+        public override void OnUserFileDrop(string[] fileNames)
+        {
+            MountDroppedMedia(fileNames);
+        }
+
+        /// <summary>
         /// Handles the on user key down operation.
         /// </summary>
         public override void OnUserKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
@@ -428,6 +494,12 @@ namespace C64Emulator
             if (keyEventArgs.Key == Key.F11)
             {
                 ToggleDisplayMode();
+                return;
+            }
+
+            if (keyEventArgs.Key == Key.F8)
+            {
+                ToggleDebugOverlay();
                 return;
             }
 
@@ -466,7 +538,7 @@ namespace C64Emulator
                 return;
             }
 
-            if (keyEventArgs.Key == Key.F10 || keyEventArgs.Key == Key.F9 || keyEventArgs.Key == Key.F11)
+            if (keyEventArgs.Key == Key.F10 || keyEventArgs.Key == Key.F9 || keyEventArgs.Key == Key.F11 || keyEventArgs.Key == Key.F8)
             {
                 return;
             }
@@ -836,6 +908,209 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Toggles the live developer debug overlay.
+        /// </summary>
+        private void ToggleDebugOverlay()
+        {
+            _debugOverlayVisible = !_debugOverlayVisible;
+            _overlayStatusText = _debugOverlayVisible ? "DEBUG OVERLAY ON" : "DEBUG OVERLAY OFF";
+            ShowTurboToast(_overlayStatusText);
+        }
+
+        /// <summary>
+        /// Toggles the host gamepad joystick input.
+        /// </summary>
+        private void ToggleGamepadInput()
+        {
+            _gamepadEnabled = !_gamepadEnabled;
+            if (!_gamepadEnabled)
+            {
+                _lastGamepadJoystickState = 0x1F;
+                _gamepadConnected = false;
+                _system.SetGamepadJoystickState(0x1F);
+            }
+
+            _overlayStatusText = _gamepadEnabled ? "GAMEPAD ON" : "GAMEPAD OFF";
+        }
+
+        /// <summary>
+        /// Cycles the video presentation filter.
+        /// </summary>
+        private void CycleVideoFilter()
+        {
+            _videoFilterMode = _videoFilterMode == VideoFilterMode.Sharp
+                ? VideoFilterMode.Crt
+                : VideoFilterMode.Sharp;
+            _overlayStatusText = "FILTER " + FormatVideoFilter(_videoFilterMode);
+        }
+
+        /// <summary>
+        /// Cycles the reset behavior used by the reset action.
+        /// </summary>
+        private void CycleResetMode()
+        {
+            switch (_resetMode)
+            {
+                case ResetMode.Warm:
+                    _resetMode = ResetMode.Reload;
+                    break;
+                case ResetMode.Reload:
+                    _resetMode = ResetMode.Power;
+                    break;
+                default:
+                    _resetMode = ResetMode.Warm;
+                    break;
+            }
+
+            _overlayStatusText = "RESET " + FormatResetMode(_resetMode);
+        }
+
+        /// <summary>
+        /// Polls the first active host joystick/gamepad and mirrors it into the active C64 joystick port.
+        /// </summary>
+        private void PollGamepadInput()
+        {
+            if (!_gamepadEnabled)
+            {
+                return;
+            }
+
+            byte joystickState = 0x1F;
+            bool connected = false;
+            for (int index = 0; index < JoystickStates.Count; index++)
+            {
+                JoystickState joystick = JoystickStates[index];
+                if (joystick == null)
+                {
+                    continue;
+                }
+
+                if (joystick.AxisCount <= 0 && joystick.ButtonCount <= 0 && joystick.HatCount <= 0)
+                {
+                    continue;
+                }
+
+                connected = true;
+                try
+                {
+                    joystickState = ReadJoystickState(joystick);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                    continue;
+                }
+
+                if ((joystickState & 0x1F) != 0x1F)
+                {
+                    break;
+                }
+            }
+
+            _gamepadConnected = connected;
+            if (!connected)
+            {
+                joystickState = 0x1F;
+            }
+
+            if (joystickState != _lastGamepadJoystickState)
+            {
+                _lastGamepadJoystickState = joystickState;
+                _system.SetGamepadJoystickState(joystickState);
+            }
+        }
+
+        /// <summary>
+        /// Reads a C64 active-low joystick state from an OpenTK joystick snapshot.
+        /// </summary>
+        private static byte ReadJoystickState(JoystickState joystick)
+        {
+            const float deadZone = 0.45f;
+            byte state = 0x1F;
+
+            if (joystick.AxisCount >= 2)
+            {
+                float xAxis = joystick.GetAxis(0);
+                float yAxis = joystick.GetAxis(1);
+                if (xAxis < -deadZone)
+                {
+                    state = (byte)(state & ~0x04);
+                }
+                else if (xAxis > deadZone)
+                {
+                    state = (byte)(state & ~0x08);
+                }
+
+                if (yAxis < -deadZone)
+                {
+                    state = (byte)(state & ~0x01);
+                }
+                else if (yAxis > deadZone)
+                {
+                    state = (byte)(state & ~0x02);
+                }
+            }
+
+            if (joystick.HatCount > 0)
+            {
+                Hat hat = joystick.GetHat(0);
+                if (IsHatUp(hat))
+                {
+                    state = (byte)(state & ~0x01);
+                }
+
+                if (IsHatDown(hat))
+                {
+                    state = (byte)(state & ~0x02);
+                }
+
+                if (IsHatLeft(hat))
+                {
+                    state = (byte)(state & ~0x04);
+                }
+
+                if (IsHatRight(hat))
+                {
+                    state = (byte)(state & ~0x08);
+                }
+            }
+
+            if (IsJoystickButtonDown(joystick, 0) ||
+                IsJoystickButtonDown(joystick, 1) ||
+                IsJoystickButtonDown(joystick, 5))
+            {
+                state = (byte)(state & ~0x10);
+            }
+
+            return state;
+        }
+
+        private static bool IsJoystickButtonDown(JoystickState joystick, int index)
+        {
+            return index >= 0 && index < joystick.ButtonCount && joystick.IsButtonDown(index);
+        }
+
+        private static bool IsHatUp(Hat hat)
+        {
+            return hat == Hat.Up || hat == Hat.LeftUp || hat == Hat.RightUp;
+        }
+
+        private static bool IsHatDown(Hat hat)
+        {
+            return hat == Hat.Down || hat == Hat.LeftDown || hat == Hat.RightDown;
+        }
+
+        private static bool IsHatLeft(Hat hat)
+        {
+            return hat == Hat.Left || hat == Hat.LeftUp || hat == Hat.LeftDown;
+        }
+
+        private static bool IsHatRight(Hat hat)
+        {
+            return hat == Hat.Right || hat == Hat.RightUp || hat == Hat.RightDown;
+        }
+
+        /// <summary>
         /// Draws frame.
         /// </summary>
         private void DrawFrame(uint[] pixels, int width, int height)
@@ -860,11 +1135,104 @@ namespace C64Emulator
                 int offsetX = (PixelsWidth - scaledWidth) / 2;
                 int offsetY = (PixelsHeight - scaledHeight) / 2;
                 DrawFrameMargins(offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
-                DrawArgbPixelsScaled(pixels, width, height, offsetX, offsetY, integerScale);
+                if (_videoFilterMode == VideoFilterMode.Crt)
+                {
+                    DrawArgbPixelsScaledCrt(pixels, width, height, offsetX, offsetY, integerScale);
+                }
+                else
+                {
+                    DrawArgbPixelsScaled(pixels, width, height, offsetX, offsetY, integerScale);
+                }
+
                 return;
             }
 
-            DrawArgbPixelsStretched(pixels, width, height);
+            if (_videoFilterMode == VideoFilterMode.Crt)
+            {
+                DrawArgbPixelsStretchedCrt(pixels, width, height);
+            }
+            else
+            {
+                DrawArgbPixelsStretched(pixels, width, height);
+            }
+        }
+
+        /// <summary>
+        /// Draws ARGB pixels with a lightweight CRT-style phosphor blur and scanline pass.
+        /// </summary>
+        private void DrawArgbPixelsScaledCrt(uint[] pixels, int width, int height, int offsetX, int offsetY, int scale)
+        {
+            if (pixels == null || pixels.Length < width * height || scale <= 0)
+            {
+                return;
+            }
+
+            for (int sourceY = 0; sourceY < height; sourceY++)
+            {
+                int sourceRow = sourceY * width;
+                for (int sourceX = 0; sourceX < width; sourceX++)
+                {
+                    uint color = BlendCrtSourcePixel(pixels, sourceRow, sourceX, width);
+                    for (int yRepeat = 0; yRepeat < scale; yRepeat++)
+                    {
+                        int targetY = offsetY + (sourceY * scale) + yRepeat;
+                        bool scanline = ((targetY - offsetY) & 1) != 0;
+                        for (int xRepeat = 0; xRepeat < scale; xRepeat++)
+                        {
+                            DrawCrtPixel(offsetX + (sourceX * scale) + xRepeat, targetY, color, scanline);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draws stretched ARGB pixels with the CRT-style filter.
+        /// </summary>
+        private void DrawArgbPixelsStretchedCrt(uint[] pixels, int width, int height)
+        {
+            if (pixels == null || pixels.Length < width * height)
+            {
+                return;
+            }
+
+            for (int y = 0; y < PixelsHeight; y++)
+            {
+                int sourceY = (y * height) / PixelsHeight;
+                int sourceRow = sourceY * width;
+                bool scanline = (y & 1) != 0;
+                for (int x = 0; x < PixelsWidth; x++)
+                {
+                    int sourceX = (x * width) / PixelsWidth;
+                    DrawCrtPixel(x, y, BlendCrtSourcePixel(pixels, sourceRow, sourceX, width), scanline);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Blends a source pixel with its horizontal neighbours for a soft composite-video feel.
+        /// </summary>
+        private static uint BlendCrtSourcePixel(uint[] pixels, int sourceRow, int sourceX, int width)
+        {
+            uint center = pixels[sourceRow + sourceX];
+            uint left = pixels[sourceRow + Math.Max(0, sourceX - 1)];
+            uint right = pixels[sourceRow + Math.Min(width - 1, sourceX + 1)];
+            int red = ((((int)(center >> 16) & 0xFF) * 6) + ((int)(left >> 16) & 0xFF) + ((int)(right >> 16) & 0xFF)) >> 3;
+            int green = ((((int)(center >> 8) & 0xFF) * 6) + ((int)(left >> 8) & 0xFF) + ((int)(right >> 8) & 0xFF)) >> 3;
+            int blue = (((int)(center & 0xFF) * 6) + (int)(left & 0xFF) + (int)(right & 0xFF)) >> 3;
+            return (uint)((red << 16) | (green << 8) | blue);
+        }
+
+        /// <summary>
+        /// Draws one filtered output pixel.
+        /// </summary>
+        private void DrawCrtPixel(int x, int y, uint rgb, bool scanline)
+        {
+            int multiplier = scanline ? 76 : 108;
+            byte red = ClampToByte((((int)(rgb >> 16) & 0xFF) * multiplier) / 100);
+            byte green = ClampToByte((((int)(rgb >> 8) & 0xFF) * multiplier) / 100);
+            byte blue = ClampToByte(((int)(rgb & 0xFF) * multiplier) / 100);
+            DrawPixel(x, y, red, green, blue);
         }
 
         /// <summary>
@@ -974,6 +1342,50 @@ namespace C64Emulator
             DrawLine(x, y, x, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawLine(x + width - 1, y, x + width - 1, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawOverlayText(x + 16, y + 10, _turboToastText, 2, textRed, textGreen, textBlue);
+        }
+
+        /// <summary>
+        /// Draws a compact live developer overlay.
+        /// </summary>
+        private void DrawDebugOverlay(
+            VicTiming timing,
+            ushort currentPc,
+            byte currentOpcode,
+            string memoryDebugInfo,
+            string cpuDebugInfo,
+            string ciaDebugInfo,
+            string sidDebugInfo,
+            string iecDebugInfo,
+            string drive8DebugInfo)
+        {
+            int overlayX = 6;
+            int overlayY = 6;
+            int overlayWidth = Math.Min(PixelsWidth - 12, 390);
+            int overlayHeight = 102;
+            DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 4, 8, 12, 210);
+            DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 115, 142, 196);
+            DrawLine(overlayX, overlayY + overlayHeight - 1, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 115, 142, 196);
+            DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 115, 142, 196);
+            DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 115, 142, 196);
+
+            DrawOverlayText(overlayX + 8, overlayY + 7, "DEBUG F8", 1, 255, 243, 168);
+            DrawOverlayText(overlayX + 8, overlayY + 19, string.Format("CYC {0} RASTER {1}:{2} BA {3}/{4}",
+                timing.GlobalCycle,
+                timing.RasterLine,
+                timing.CycleInLine,
+                timing.BusRequestPending ? "P" : "-",
+                timing.CpuBlocked ? "BLK" : "RUN"), 1, 232, 238, 244);
+            DrawOverlayText(overlayX + 8, overlayY + 31, string.Format("PC {0:X4} OP {1:X2} BAD {2} PHI {3}/{4}",
+                currentPc,
+                currentOpcode,
+                timing.BadLine ? "Y" : "N",
+                timing.Phi1Action,
+                timing.Phi2Action), 1, 232, 238, 244);
+            DrawOverlayText(overlayX + 8, overlayY + 43, "MEM " + FormatOverlayValue(memoryDebugInfo, 56), 1, 182, 214, 108);
+            DrawOverlayText(overlayX + 8, overlayY + 55, "CPU " + FormatOverlayValue(cpuDebugInfo, 56), 1, 182, 214, 108);
+            DrawOverlayText(overlayX + 8, overlayY + 67, "CIA " + FormatOverlayValue(ciaDebugInfo, 56), 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 8, overlayY + 79, "SID " + FormatOverlayValue(sidDebugInfo, 56), 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 8, overlayY + 91, "IEC " + FormatOverlayValue(iecDebugInfo + " " + drive8DebugInfo, 56), 1, 192, 210, 225);
         }
 
         /// <summary>
@@ -1374,9 +1786,33 @@ namespace C64Emulator
                     }
                     else if (_audioOverlaySelection == 6)
                     {
-                        ToggleTurboMode();
+                        CycleVideoFilter();
                     }
                     else if (_audioOverlaySelection == 7)
+                    {
+                        ToggleTurboMode();
+                    }
+                    else if (_audioOverlaySelection == 8)
+                    {
+                        ToggleGamepadInput();
+                    }
+                    else if (_audioOverlaySelection == 9)
+                    {
+                        ToggleLoadHack();
+                    }
+                    else if (_audioOverlaySelection == 10)
+                    {
+                        ToggleSoftwareIecTransport();
+                    }
+                    else if (_audioOverlaySelection == 11)
+                    {
+                        ToggleInputInjection();
+                    }
+                    else if (_audioOverlaySelection == 12)
+                    {
+                        CycleResetMode();
+                    }
+                    else if (_audioOverlaySelection == 13)
                     {
                         OpenResetConfirmation();
                     }
@@ -1465,11 +1901,47 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 6)
             {
-                ToggleTurboMode();
+                CycleVideoFilter();
                 return;
             }
 
             if (_audioOverlaySelection == 7)
+            {
+                ToggleTurboMode();
+                return;
+            }
+
+            if (_audioOverlaySelection == 8)
+            {
+                ToggleGamepadInput();
+                return;
+            }
+
+            if (_audioOverlaySelection == 9)
+            {
+                ToggleLoadHack();
+                return;
+            }
+
+            if (_audioOverlaySelection == 10)
+            {
+                ToggleSoftwareIecTransport();
+                return;
+            }
+
+            if (_audioOverlaySelection == 11)
+            {
+                ToggleInputInjection();
+                return;
+            }
+
+            if (_audioOverlaySelection == 12)
+            {
+                CycleResetMode();
+                return;
+            }
+
+            if (_audioOverlaySelection == 13)
             {
                 if (direction >= 0)
                 {
@@ -1479,6 +1951,33 @@ namespace C64Emulator
                 return;
             }
 
+        }
+
+        /// <summary>
+        /// Toggles the direct KERNAL LOAD compatibility path.
+        /// </summary>
+        private void ToggleLoadHack()
+        {
+            _system.EnableLoadHack = !_system.EnableLoadHack;
+            _overlayStatusText = _system.EnableLoadHack ? "LOAD HACK ON" : "LOAD HACK OFF";
+        }
+
+        /// <summary>
+        /// Toggles the high-level software IEC transport for standard DOS traffic.
+        /// </summary>
+        private void ToggleSoftwareIecTransport()
+        {
+            _system.ForceSoftwareIecTransport = !_system.ForceSoftwareIecTransport;
+            _overlayStatusText = _system.ForceSoftwareIecTransport ? "IEC SW ON" : "IEC SW OFF";
+        }
+
+        /// <summary>
+        /// Toggles host-side input injection for known intro polling loops.
+        /// </summary>
+        private void ToggleInputInjection()
+        {
+            _system.EnableInputInjection = !_system.EnableInputInjection;
+            _overlayStatusText = _system.EnableInputInjection ? "INPUT INJECT ON" : "INPUT INJECT OFF";
         }
 
         /// <summary>
@@ -1583,7 +2082,7 @@ namespace C64Emulator
         /// <summary>
         /// Draws audio overlay.
         /// </summary>
-        private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo)
+        private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
             int overlayWidth = 280;
             int overlayHeight = 236;
@@ -1598,7 +2097,7 @@ namespace C64Emulator
 
             DrawOverlayText(overlayX + 16, overlayY + 14, "SETTINGS", 2, 240, 248, 255);
             DrawOverlayText(overlayX + 16, overlayY + 32, "F9 TURBO  F10 CLOSE  F11 FULLSCREEN", 1, 192, 210, 225);
-            DrawAudioOverlayMenu(overlayX + 18, overlayY + 52, overlayWidth - 36, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo);
+            DrawAudioOverlayMenu(overlayX + 18, overlayY + 52, overlayWidth - 36, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
             DrawOverlayText(overlayX + 18, overlayY + 212, "MOUNTED " + FormatOverlayValue(mountedMediaInfo.DisplayName, 24), 1, 232, 238, 244);
             DrawOverlayText(overlayX + 18, overlayY + 222, "STATUS  " + FormatOverlayValue(_overlayStatusText, 24), 1, 182, 214, 108);
 
@@ -1616,7 +2115,7 @@ namespace C64Emulator
         /// <summary>
         /// Draws audio overlay menu.
         /// </summary>
-        private void DrawAudioOverlayMenu(int x, int y, int width, float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo)
+        private void DrawAudioOverlayMenu(int x, int y, int width, float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
             ClampAudioOverlayScroll();
 
@@ -1629,7 +2128,7 @@ namespace C64Emulator
                 }
 
                 int itemY = y + (row * AudioOverlayRowSpacing);
-                DrawAudioOverlayMenuItem(menuIndex, x, itemY, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo);
+                DrawAudioOverlayMenuItem(menuIndex, x, itemY, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
             }
 
             if (AudioOverlayItemCount > AudioOverlayVisibleRows)
@@ -1641,7 +2140,7 @@ namespace C64Emulator
         /// <summary>
         /// Draws audio overlay menu item.
         /// </summary>
-        private void DrawAudioOverlayMenuItem(int menuIndex, int x, int y, float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo)
+        private void DrawAudioOverlayMenuItem(int menuIndex, int x, int y, float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
             switch (menuIndex)
             {
@@ -1664,9 +2163,27 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex);
                     break;
                 case 6:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", _videoFilterMode == VideoFilterMode.Crt ? 1.0f : 0.0f, FormatVideoFilter(_videoFilterMode), "SHARP", "CRT", _audioOverlaySelection == menuIndex);
                     break;
                 case 7:
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex);
+                    break;
+                case 8:
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex);
+                    break;
+                case 9:
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    break;
+                case 10:
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    break;
+                case 11:
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    break;
+                case 12:
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex);
+                    break;
+                case 13:
                     DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex);
                     break;
             }
@@ -1735,6 +2252,72 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Formats video filter mode.
+        /// </summary>
+        private static string FormatVideoFilter(VideoFilterMode mode)
+        {
+            return mode == VideoFilterMode.Crt ? "CRT" : "SHARP";
+        }
+
+        /// <summary>
+        /// Formats gamepad status.
+        /// </summary>
+        private string FormatGamepadState()
+        {
+            if (!_gamepadEnabled)
+            {
+                return "OFF";
+            }
+
+            return _gamepadConnected ? "ACTIVE" : "WAITING";
+        }
+
+        /// <summary>
+        /// Gets the gamepad fill value.
+        /// </summary>
+        private float GetGamepadFill()
+        {
+            if (!_gamepadEnabled)
+            {
+                return 0.0f;
+            }
+
+            return _gamepadConnected ? 1.0f : 0.5f;
+        }
+
+        /// <summary>
+        /// Formats reset mode.
+        /// </summary>
+        private static string FormatResetMode(ResetMode resetMode)
+        {
+            switch (resetMode)
+            {
+                case ResetMode.Reload:
+                    return "RELOAD";
+                case ResetMode.Power:
+                    return "POWER";
+                default:
+                    return "WARM";
+            }
+        }
+
+        /// <summary>
+        /// Gets reset mode fill.
+        /// </summary>
+        private static float GetResetModeFill(ResetMode resetMode)
+        {
+            switch (resetMode)
+            {
+                case ResetMode.Reload:
+                    return 0.5f;
+                case ResetMode.Power:
+                    return 1.0f;
+                default:
+                    return 0.0f;
+            }
+        }
+
+        /// <summary>
         /// Gets the media fill value.
         /// </summary>
         private static float GetMediaFill(MountedMediaInfo mountedMediaInfo)
@@ -1790,6 +2373,47 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Mounts the first supported host media file dropped onto the window.
+        /// </summary>
+        private void MountDroppedMedia(string[] fileNames)
+        {
+            if (fileNames == null || fileNames.Length == 0)
+            {
+                return;
+            }
+
+            for (int index = 0; index < fileNames.Length; index++)
+            {
+                string path = fileNames[index];
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    continue;
+                }
+
+                string extension = Path.GetExtension(path);
+                if (!string.Equals(extension, ".prg", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                _mediaBrowserVisible = false;
+                _resetConfirmVisible = false;
+                _saveOverlayVisible = false;
+                int targetDrive = string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase)
+                    ? _mediaBrowserTargetDrive
+                    : 8;
+                _overlayStatusText = _system.MountMedia(path, targetDrive);
+                ResetEmulationTiming();
+                ShowTurboToast(_overlayStatusText);
+                return;
+            }
+
+            _overlayStatusText = "DROP PRG OR D64";
+            ShowTurboToast(_overlayStatusText);
+        }
+
+        /// <summary>
         /// Opens reset confirmation.
         /// </summary>
         private void OpenResetConfirmation()
@@ -1806,7 +2430,7 @@ namespace C64Emulator
             _resetConfirmVisible = true;
             _resetConfirmYesSelected = true;
             _confirmationAction = confirmationAction;
-            _overlayStatusText = "CONFIRM RESET";
+            _overlayStatusText = "CONFIRM " + FormatResetMode(_resetMode);
         }
 
         /// <summary>
@@ -1838,12 +2462,59 @@ namespace C64Emulator
             switch (confirmationAction)
             {
                 case ConfirmationAction.Reset:
-                    PerformSystemReset();
+                    PerformSelectedReset();
                     break;
                 default:
                     _overlayStatusText = "NO ACTION";
                     break;
             }
+        }
+
+        /// <summary>
+        /// Executes the currently selected reset behavior.
+        /// </summary>
+        private void PerformSelectedReset()
+        {
+            switch (_resetMode)
+            {
+                case ResetMode.Power:
+                    PerformSystemReset();
+                    break;
+                case ResetMode.Reload:
+                    _overlayStatusText = PerformInPlaceSystemReset(_system.ResetAndReloadMedia);
+                    break;
+                default:
+                    _overlayStatusText = PerformInPlaceSystemReset(_system.WarmReset);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Runs an in-place reset while preserving host-facing settings.
+        /// </summary>
+        private string PerformInPlaceSystemReset(Func<string> resetAction)
+        {
+            float sidMasterVolume = _system.SidMasterVolume;
+            float sidNoiseLevel = _system.SidNoiseLevel;
+            SidChipModel sidChipModel = _system.CurrentSidChipModel;
+            JoystickPort joystickPort = _system.CurrentJoystickPort;
+            bool enableKernalIecHooks = _system.EnableKernalIecHooks;
+            bool enableLoadHack = _system.EnableLoadHack;
+            bool forceSoftwareIecTransport = _system.ForceSoftwareIecTransport;
+            bool enableInputInjection = _system.EnableInputInjection;
+
+            string statusText = resetAction();
+            _system.SetSidMasterVolume(sidMasterVolume);
+            _system.SetSidNoiseLevel(sidNoiseLevel);
+            _system.SetSidChipModel(sidChipModel);
+            _system.SetJoystickPort(joystickPort);
+            _system.EnableKernalIecHooks = enableKernalIecHooks;
+            _system.EnableLoadHack = enableLoadHack;
+            _system.ForceSoftwareIecTransport = forceSoftwareIecTransport;
+            _system.EnableInputInjection = enableInputInjection;
+            _lastGamepadJoystickState = 0xFF;
+            _turboTimingResetPending = true;
+            return statusText;
         }
 
         /// <summary>
@@ -1860,6 +2531,9 @@ namespace C64Emulator
             SidChipModel sidChipModel = _system.CurrentSidChipModel;
             JoystickPort joystickPort = _system.CurrentJoystickPort;
             bool enableKernalIecHooks = _system.EnableKernalIecHooks;
+            bool enableLoadHack = _system.EnableLoadHack;
+            bool forceSoftwareIecTransport = _system.ForceSoftwareIecTransport;
+            bool enableInputInjection = _system.EnableInputInjection;
 
             C64System oldSystem = _system;
             oldSystem.Dispose();
@@ -1869,6 +2543,9 @@ namespace C64Emulator
             _system.SetSidChipModel(sidChipModel);
             _system.SetJoystickPort(joystickPort);
             _system.EnableKernalIecHooks = enableKernalIecHooks;
+            _system.EnableLoadHack = enableLoadHack;
+            _system.ForceSoftwareIecTransport = forceSoftwareIecTransport;
+            _system.EnableInputInjection = enableInputInjection;
 
             _turboMode = false;
             _turboTimingResetPending = false;
@@ -1877,6 +2554,7 @@ namespace C64Emulator
             _driveFooterIdleSeconds = 0.0;
             _driveFooterPulsePhase = 0.0;
             _turboToastSecondsRemaining = 0.0;
+            _lastGamepadJoystickState = 0xFF;
             _overlayStatusText = ReloadMountedMediaAfterPowerCycle(mountedMedia, mountedDrivePaths);
             StartEmulation();
         }
@@ -2234,9 +2912,22 @@ namespace C64Emulator
             string title;
             string infoLine1;
             string infoLine2;
-            title = "RESET C64";
-            infoLine1 = hasMountedMedia ? "MOUNTED MEDIA RELOADS" : "NO MEDIA INSERTED";
-            infoLine2 = "SYSTEM RESTARTS";
+            title = "RESET " + FormatResetMode(_resetMode);
+            if (_resetMode == ResetMode.Warm)
+            {
+                infoLine1 = "RAM AND MEDIA STAY";
+                infoLine2 = "CPU RESTARTS";
+            }
+            else if (_resetMode == ResetMode.Reload)
+            {
+                infoLine1 = hasMountedMedia ? "MOUNTED MEDIA RELOADS" : "NO MEDIA INSERTED";
+                infoLine2 = "MACHINE RESTARTS";
+            }
+            else
+            {
+                infoLine1 = hasMountedMedia ? "MEDIA REMOUNTS" : "NO MEDIA INSERTED";
+                infoLine2 = "POWER CYCLE";
+            }
 
             DrawOverlayText(x + 14, y + 10, title, 2, 255, 243, 168);
             DrawOverlayText(x + 14, y + 30, infoLine1, 1, 232, 238, 244);

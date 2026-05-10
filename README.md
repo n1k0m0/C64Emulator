@@ -20,9 +20,12 @@ A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering front
 - CIA1/CIA2 emulation for keyboard, joystick, timers, interrupts, and IEC interaction.
 - IEC bus infrastructure with emulated 1541-compatible drives on device numbers 8 to 11.
 - D64 disk image mounting and PRG direct loading.
+- Drag-and-drop mounting for `.prg` and `.d64` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
+- Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
+- Optional sharp-pixel and CRT-style video presentation filters.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
-- Windowed/fullscreen controls, turbo mode, joystick port switching, and runtime settings overlay.
+- Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
@@ -33,6 +36,9 @@ A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering front
 | `F10` | Open the settings/media overlay. The emulator pauses while this menu is open. |
 | `F11` | Toggle fullscreen mode. |
 | `F12` | Open the savestate overlay. The emulator pauses while this menu is open. |
+| Drag `.prg` / `.d64` onto the window | Load PRG directly or mount D64 into the currently selected target drive. |
+| Gamepad left stick / D-pad | C64 joystick direction for the selected joystick port. |
+| Gamepad A/B/RB | C64 joystick fire. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
 | `Enter` / `L` in savestate menu | Load the selected savestate. |
 | `Del` in savestate menu | Delete the selected savestate. |
@@ -89,11 +95,46 @@ The executable is created at:
 C64Emulator/bin/x64/Release/C64Emulator.exe
 ```
 
+## Diagnostics
+
+The executable also exposes a few headless checks that are useful before accuracy or performance work:
+
+```powershell
+C64Emulator\bin\x64\Release\C64Emulator.exe --check-roms
+C64Emulator\bin\x64\Release\C64Emulator.exe --self-test-cpu C64Emulator\bin\x64\Release\cpu_self_test.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --accuracy-tests C64Emulator\bin\x64\Release\accuracy_tests.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --trace-cycles 20000 C64Emulator\bin\x64\Release\trace_cycles.csv 63
+C64Emulator\bin\x64\Release\C64Emulator.exe --regression-run "" 500000 C64Emulator\bin\x64\Release\regression_boot.log C64Emulator\bin\x64\Release\regression_boot.ppm
+C64Emulator\bin\x64\Release\C64Emulator.exe --benchmark 2000000 C64Emulator\bin\x64\Release\benchmark.log
+```
+
+For a single Phase 1 smoke run after a Release build:
+
+```powershell
+.\scripts\run-phase1-checks.ps1
+```
+
+For the Phase 3 accuracy smoke suite:
+
+```powershell
+.\scripts\run-phase3-checks.ps1
+```
+
+For the Phase 4 developer-tool smoke suite:
+
+```powershell
+.\scripts\run-phase4-checks.ps1
+```
+
+The live emulator also has a compact developer overlay on `F8` with raster/cycle, BA, CPU, memory, CIA, SID, IEC, and drive state.
+
 ## Media Handling
 
 PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM.
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
+
+Media can be selected from the `F10` browser or dropped directly onto the emulator window. Dropped D64 images use the menu's current target drive.
 
 The D64 parser handles the common 35-track layout and extended image sizes where supported by the image parser. Some copy-protected titles or custom fast loaders can still expose gaps in the current 1541 accuracy work.
 

@@ -132,6 +132,9 @@ namespace C64Emulator.Core
         private int _matrixFetchRequestStartCycle;
         private int _matrixFetchStartCycle;
         private int _matrixFetchCpuBlockStartCycle;
+        // Reserved for the next VIC-II sequencer pass. They are serialized today so
+        // current savestates keep their shape while the pending paths are wired up.
+#pragma warning disable 0414
         private int _textVcBase;
         private int _textRc;
         private int _textLineCellY;
@@ -142,6 +145,7 @@ namespace C64Emulator.Core
         private int _bitmapLineCellY;
         private int _bitmapLinePixelRow;
         private bool _previousBitmapDisplayLine;
+#pragma warning restore 0414
         private VicBusSlot _currentBusSlot;
         private bool _displayEnableFrameLatched;
         private bool _lineDisplayEnabled;

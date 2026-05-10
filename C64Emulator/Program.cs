@@ -14,6 +14,8 @@
    limitations under the License.
 */
 using System;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows.Forms;
@@ -41,6 +43,83 @@ namespace C64Emulator
                 return;
             }
 
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--check-roms", StringComparison.OrdinalIgnoreCase))
+            {
+                RunRomCheck();
+                return;
+            }
+
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--benchmark", StringComparison.OrdinalIgnoreCase))
+            {
+                int cycles = 2000000;
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "benchmark.log");
+                if (args.Length >= 2)
+                {
+                    int parsedCycles;
+                    if (int.TryParse(args[1], out parsedCycles) && parsedCycles > 0)
+                    {
+                        cycles = parsedCycles;
+                    }
+                    else
+                    {
+                        logPath = args[1];
+                    }
+                }
+
+                if (args.Length >= 3)
+                {
+                    logPath = args[2];
+                }
+
+                RunBenchmark(cycles, logPath);
+                return;
+            }
+
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--accuracy-tests", StringComparison.OrdinalIgnoreCase))
+            {
+                string logPath = args.Length >= 2
+                    ? args[1]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "accuracy_tests.log");
+                RunAccuracyTests(logPath);
+                return;
+            }
+
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--trace-cycles", StringComparison.OrdinalIgnoreCase))
+            {
+                int cycles = args.Length >= 2 && int.TryParse(args[1], out int parsedCycles) && parsedCycles > 0
+                    ? parsedCycles
+                    : 20000;
+                string logPath = args.Length >= 3
+                    ? args[2]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "trace_cycles.csv");
+                int sampleInterval = args.Length >= 4 && int.TryParse(args[3], out int parsedInterval) && parsedInterval > 0
+                    ? parsedInterval
+                    : 63;
+                RunTraceCycles(cycles, logPath, sampleInterval);
+                return;
+            }
+
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--regression-run", StringComparison.OrdinalIgnoreCase))
+            {
+                string mediaPath = args.Length >= 2 ? args[1] : string.Empty;
+                if (string.Equals(mediaPath, "-", StringComparison.Ordinal))
+                {
+                    mediaPath = string.Empty;
+                }
+
+                int cycles = args.Length >= 3 && int.TryParse(args[2], out int parsedRegressionCycles) && parsedRegressionCycles >= 0
+                    ? parsedRegressionCycles
+                    : 1000000;
+                string logPath = args.Length >= 4
+                    ? args[3]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "regression_run.log");
+                string framePath = args.Length >= 5
+                    ? args[4]
+                    : string.Empty;
+                RunRegression(mediaPath, cycles, logPath, framePath);
+                return;
+            }
+
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--probe-iec-load", StringComparison.OrdinalIgnoreCase))
             {
                 string logPath = args.Length >= 3
@@ -62,9 +141,37 @@ namespace C64Emulator
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))
+            try
             {
-                window.Run();
+                using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))
+                {
+                    window.Run();
+                }
+            }
+            catch (Exception ex)
+            {
+                string crashLogPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "startup_crash.log");
+                try
+                {
+                    File.WriteAllText(crashLogPath, ex.ToString());
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    MessageBox.Show(
+                        "C64 Emulator konnte nicht starten.\r\n\r\nDetails wurden geschrieben nach:\r\n" + crashLogPath + "\r\n\r\n" + ex.Message,
+                        "C64 Emulator Startfehler",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+                catch
+                {
+                }
+
+                Environment.ExitCode = 1;
             }
         }
 
@@ -78,6 +185,127 @@ namespace C64Emulator
             File.WriteAllText(logPath, log.ToString());
             Console.Write(log.ToString());
             Environment.ExitCode = failures == 0 ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Prints the currently resolved ROM files and exits with a failing code if any are missing.
+        /// </summary>
+        private static void RunRomCheck()
+        {
+            string report = RomPathResolver.BuildStatusReport();
+            Console.Write(report);
+            Environment.ExitCode = RomPathResolver.HasCompleteRomSet() ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Runs a headless emulation throughput benchmark.
+        /// </summary>
+        private static void RunBenchmark(int cycles, string logPath)
+        {
+            var log = new StringBuilder();
+            log.AppendLine("C64 BENCHMARK");
+            log.AppendLine("Cycles=" + cycles);
+            log.AppendLine("Started=" + DateTime.Now.ToString("O"));
+
+            try
+            {
+                using (var system = new C64System(C64Model.Pal))
+                {
+                    system.RunCycles(20000);
+                    Stopwatch stopwatch = Stopwatch.StartNew();
+                    system.RunCycles(cycles);
+                    stopwatch.Stop();
+
+                    double seconds = Math.Max(0.000001, stopwatch.Elapsed.TotalSeconds);
+                    double cyclesPerSecond = cycles / seconds;
+                    double realtimeFactor = cyclesPerSecond / C64Model.Pal.CpuHz;
+                    log.AppendFormat(CultureInfo.InvariantCulture, "ElapsedSeconds={0:F6}", seconds).AppendLine();
+                    log.AppendFormat(CultureInfo.InvariantCulture, "CyclesPerSecond={0:F0}", cyclesPerSecond).AppendLine();
+                    log.AppendFormat(CultureInfo.InvariantCulture, "EmulatedMHz={0:F3}", cyclesPerSecond / 1000000.0).AppendLine();
+                    log.AppendFormat(CultureInfo.InvariantCulture, "RealtimeFactor={0:F2}x", realtimeFactor).AppendLine();
+                }
+            }
+            catch (Exception ex)
+            {
+                log.AppendLine("EXCEPTION:");
+                log.AppendLine(ex.ToString());
+                Environment.ExitCode = 1;
+                File.WriteAllText(logPath, log.ToString());
+                Console.Write(log.ToString());
+                return;
+            }
+
+            File.WriteAllText(logPath, log.ToString());
+            Console.Write(log.ToString());
+            Environment.ExitCode = 0;
+        }
+
+        /// <summary>
+        /// Runs the built-in subsystem accuracy smoke tests.
+        /// </summary>
+        private static void RunAccuracyTests(string logPath)
+        {
+            var log = new StringWriter();
+            int failures = AccuracyTestRunner.Run(log);
+            EnsureLogDirectory(logPath);
+            File.WriteAllText(logPath, log.ToString());
+            Console.Write(log.ToString());
+            Environment.ExitCode = failures == 0 ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Ensures the target log directory exists.
+        /// </summary>
+        private static void EnsureLogDirectory(string logPath)
+        {
+            string directory = Path.GetDirectoryName(Path.GetFullPath(logPath));
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+
+        /// <summary>
+        /// Runs a sampled developer trace export.
+        /// </summary>
+        private static void RunTraceCycles(int cycles, string logPath, int sampleInterval)
+        {
+            try
+            {
+                DevTraceExporter.ExportTrace(cycles, sampleInterval, logPath);
+                Console.WriteLine("Trace written: " + Path.GetFullPath(logPath));
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("TRACE EXPORT FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Runs a media regression sample.
+        /// </summary>
+        private static void RunRegression(string mediaPath, int cycles, string logPath, string framePath)
+        {
+            try
+            {
+                DevTraceExporter.RunRegression(mediaPath, cycles, logPath, framePath);
+                Console.WriteLine("Regression log written: " + Path.GetFullPath(logPath));
+                if (!string.IsNullOrWhiteSpace(framePath))
+                {
+                    Console.WriteLine("Frame written: " + Path.GetFullPath(framePath));
+                }
+
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("REGRESSION RUN FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
         }
 
         /// <summary>

@@ -79,7 +79,11 @@ namespace C64Emulator.Core
         private bool _t2CountingPb6ModeOld;
         private bool _t2CountingPb6Mode;
         private bool _t2TimedOut;
+        // Kept in the serialized VIA state for savestate continuity while the
+        // remaining low-byte Timer 2 edge behavior is audited.
+#pragma warning disable 0414
         private bool _t2LowTimedOut;
+#pragma warning restore 0414
         private bool _t2OneShotTriggeredIrq;
         private uint _t2TimedOutCount;
         private byte _pb6Old;

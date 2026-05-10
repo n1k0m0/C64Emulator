@@ -33,6 +33,7 @@ namespace OpenTK.Input
         F3 = 12,
         F5 = 14,
         F7 = 16,
+        F8 = 17,
         F9 = 18,
         F10 = 19,
         F11 = 20,

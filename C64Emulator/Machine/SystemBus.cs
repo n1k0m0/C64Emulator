@@ -162,11 +162,11 @@ namespace C64Emulator.Core
         /// </summary>
         public void LoadRoms(string basePath)
         {
-            var combinedRom = File.ReadAllBytes(Path.Combine(basePath, "c64-basic-kernal.bin"));
+            var combinedRom = File.ReadAllBytes(RomPathResolver.ResolveRequired("c64-basic-kernal.bin", basePath));
             Array.Copy(combinedRom, 0x0000, _basicRom, 0x0000, 0x2000);
             Array.Copy(combinedRom, 0x2000, _kernalRom, 0x0000, 0x2000);
 
-            var charRom = File.ReadAllBytes(Path.Combine(basePath, "c64-character.bin"));
+            var charRom = File.ReadAllBytes(RomPathResolver.ResolveRequired("c64-character.bin", basePath));
             Array.Copy(charRom, 0, _charRom, 0, Math.Min(_charRom.Length, charRom.Length));
         }
 

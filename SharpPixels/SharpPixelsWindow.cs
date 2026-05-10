@@ -220,6 +220,7 @@ namespace SharpPixels
             MouseDown += SharpPixels_MouseClick;
             KeyDown += SharpPixels_KeyDown;
             KeyUp += SharpPixels_KeyUp;
+            FileDrop += SharpPixels_FileDrop;
 
             for (int i = 0; i < 256; i++)
             {
@@ -451,6 +452,15 @@ namespace SharpPixels
         }
 
         /// <summary>
+        /// User dropped one or more files onto the window.
+        /// </summary>
+        /// <param name="e">Event arguments.</param>
+        private void SharpPixels_FileDrop(FileDropEventArgs e)
+        {
+            OnUserFileDrop(e.FileNames);
+        }
+
+        /// <summary>
         /// User released a key, thus, we call the OnUserKeyUp
         /// </summary>
         /// <param name="sender">Event sender.</param>
@@ -570,6 +580,7 @@ namespace SharpPixels
                 case Keys.F3: return Key.F3;
                 case Keys.F5: return Key.F5;
                 case Keys.F7: return Key.F7;
+                case Keys.F8: return Key.F8;
                 case Keys.F9: return Key.F9;
                 case Keys.F10: return Key.F10;
                 case Keys.F11: return Key.F11;
@@ -653,6 +664,12 @@ namespace SharpPixels
         /// Handles the on user key up operation.
         /// </summary>
         public abstract void OnUserKeyUp(KeyEventArgs keyEventArgs);
+        /// <summary>
+        /// Handles host files dropped onto the window.
+        /// </summary>
+        public virtual void OnUserFileDrop(string[] fileNames)
+        {
+        }
 
         #endregion
 
