@@ -80,6 +80,7 @@ namespace C64Emulator
         private static readonly Dictionary<char, byte[]> OverlayFont = CreateOverlayFont();
         private readonly C64Model _model;
         private C64System _system;
+        private readonly EmulatorSettings _loadedSettings;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private CancellationTokenSource _emulationCancellation;
         private Stopwatch _emulationStopwatch = new Stopwatch();
@@ -130,7 +131,10 @@ namespace C64Emulator
         public C64Window(C64Model model, string title) : base(model.VisibleWidth, model.VisibleHeight, title)
         {
             _model = model;
+            _loadedSettings = EmulatorSettingsStore.Load();
             InitializeSystem();
+            ApplyLoadedSettings(_loadedSettings);
+            SaveSettings();
             StartEmulation();
         }
 
@@ -169,6 +173,90 @@ namespace C64Emulator
             {
                 _frameSnapshot = new uint[framePixelCount];
             }
+        }
+
+        /// <summary>
+        /// Applies user settings loaded from the AppData settings file.
+        /// </summary>
+        private void ApplyLoadedSettings(EmulatorSettings settings)
+        {
+            if (settings == null)
+            {
+                return;
+            }
+
+            _system.SetSidMasterVolume(settings.SidMasterVolume);
+            _system.SetSidNoiseLevel(settings.SidNoiseLevel);
+            _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
+            _system.SetJoystickPort(ParseEnum(settings.JoystickPort, JoystickPort.Port2));
+            _system.EnableLoadHack = settings.EnableLoadHack;
+            _system.ForceSoftwareIecTransport = settings.ForceSoftwareIecTransport;
+            _system.EnableInputInjection = settings.EnableInputInjection;
+
+            _videoFilterMode = ParseEnum(settings.VideoFilterMode, VideoFilterMode.Sharp);
+            _resetMode = ParseEnum(settings.ResetMode, ResetMode.Warm);
+            _turboMode = settings.TurboMode;
+            _windowFullscreen = settings.Fullscreen;
+            _gamepadEnabled = settings.GamepadEnabled;
+            _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
+
+            if (!_gamepadEnabled)
+            {
+                _lastGamepadJoystickState = 0x1F;
+                _gamepadConnected = false;
+                _system.SetGamepadJoystickState(0x1F);
+            }
+        }
+
+        /// <summary>
+        /// Saves the current host-facing emulator settings to AppData.
+        /// </summary>
+        private void SaveSettings()
+        {
+            try
+            {
+                EmulatorSettingsStore.Save(CreateSettingsSnapshot());
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
+
+        /// <summary>
+        /// Creates a settings snapshot without including mounted media paths.
+        /// </summary>
+        private EmulatorSettings CreateSettingsSnapshot()
+        {
+            return new EmulatorSettings
+            {
+                Version = 1,
+                SidMasterVolume = _system.SidMasterVolume,
+                SidNoiseLevel = _system.SidNoiseLevel,
+                SidChipModel = _system.CurrentSidChipModel.ToString(),
+                JoystickPort = _system.CurrentJoystickPort.ToString(),
+                VideoFilterMode = _videoFilterMode.ToString(),
+                ResetMode = _resetMode.ToString(),
+                TurboMode = _turboMode,
+                Fullscreen = _windowFullscreen,
+                GamepadEnabled = _gamepadEnabled,
+                EnableLoadHack = _system.EnableLoadHack,
+                ForceSoftwareIecTransport = _system.ForceSoftwareIecTransport,
+                EnableInputInjection = _system.EnableInputInjection,
+                MediaBrowserTargetDrive = _mediaBrowserTargetDrive
+            };
+        }
+
+        private static TEnum ParseEnum<TEnum>(string value, TEnum fallback)
+            where TEnum : struct
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return fallback;
+            }
+
+            TEnum parsed;
+            return Enum.TryParse(value, true, out parsed) ? parsed : fallback;
         }
 
         /// <summary>
@@ -439,6 +527,11 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserInitialize()
         {
+            if (_windowFullscreen)
+            {
+                _windowFullscreen = false;
+                ToggleDisplayMode(false);
+            }
         }
 
         /// <summary>
@@ -889,6 +982,7 @@ namespace C64Emulator
 
             _overlayStatusText = _turboMode ? "TURBO ON" : "TURBO OFF";
             ShowTurboToast(_overlayStatusText);
+            SaveSettings();
         }
 
         /// <summary>
@@ -903,11 +997,15 @@ namespace C64Emulator
         /// <summary>
         /// Handles the toggle display mode operation.
         /// </summary>
-        private void ToggleDisplayMode()
+        private void ToggleDisplayMode(bool saveSettings = true)
         {
             ToggleFullscreen();
             _windowFullscreen = !_windowFullscreen;
             _overlayStatusText = _windowFullscreen ? "FULLSCREEN" : "WINDOW MODE";
+            if (saveSettings)
+            {
+                SaveSettings();
+            }
         }
 
         /// <summary>
@@ -934,6 +1032,7 @@ namespace C64Emulator
             }
 
             _overlayStatusText = _gamepadEnabled ? "GAMEPAD ON" : "GAMEPAD OFF";
+            SaveSettings();
         }
 
         /// <summary>
@@ -955,6 +1054,7 @@ namespace C64Emulator
             }
 
             _overlayStatusText = "FILTER " + FormatVideoFilter(_videoFilterMode);
+            SaveSettings();
         }
 
         /// <summary>
@@ -976,6 +1076,7 @@ namespace C64Emulator
             }
 
             _overlayStatusText = "RESET " + FormatResetMode(_resetMode);
+            SaveSettings();
         }
 
         /// <summary>
@@ -2072,18 +2173,21 @@ namespace C64Emulator
             if (_audioOverlaySelection == 0)
             {
                 _system.SetSidMasterVolume(_system.SidMasterVolume + (direction * VolumeStep));
+                SaveSettings();
                 return;
             }
 
             if (_audioOverlaySelection == 1)
             {
                 _system.SetSidNoiseLevel(_system.SidNoiseLevel + (direction * NoiseStep));
+                SaveSettings();
                 return;
             }
 
             if (_audioOverlaySelection == 2)
             {
                 _system.SetSidChipModel(_system.CurrentSidChipModel == SidChipModel.Mos6581 ? SidChipModel.Mos8580 : SidChipModel.Mos6581);
+                SaveSettings();
                 return;
             }
 
@@ -2091,6 +2195,7 @@ namespace C64Emulator
             {
                 _system.SetJoystickPort(GetNextJoystickPort(_system.CurrentJoystickPort));
                 _overlayStatusText = "JOYSTICK " + FormatJoystickPort(_system.CurrentJoystickPort);
+                SaveSettings();
                 return;
             }
 
@@ -2173,6 +2278,7 @@ namespace C64Emulator
         {
             _system.EnableLoadHack = !_system.EnableLoadHack;
             _overlayStatusText = _system.EnableLoadHack ? "LOAD HACK ON" : "LOAD HACK OFF";
+            SaveSettings();
         }
 
         /// <summary>
@@ -2182,6 +2288,7 @@ namespace C64Emulator
         {
             _system.ForceSoftwareIecTransport = !_system.ForceSoftwareIecTransport;
             _overlayStatusText = _system.ForceSoftwareIecTransport ? "IEC SW ON" : "IEC SW OFF";
+            SaveSettings();
         }
 
         /// <summary>
@@ -2191,6 +2298,7 @@ namespace C64Emulator
         {
             _system.EnableInputInjection = !_system.EnableInputInjection;
             _overlayStatusText = _system.EnableInputInjection ? "INPUT INJECT ON" : "INPUT INJECT OFF";
+            SaveSettings();
         }
 
         /// <summary>
@@ -2262,21 +2370,27 @@ namespace C64Emulator
                     return true;
                 case Key.Left:
                     _mediaBrowserTargetDrive = Math.Max(8, _mediaBrowserTargetDrive - 1);
+                    SaveSettings();
                     return true;
                 case Key.Right:
                     _mediaBrowserTargetDrive = Math.Min(11, _mediaBrowserTargetDrive + 1);
+                    SaveSettings();
                     return true;
                 case Key.Number8:
                     _mediaBrowserTargetDrive = 8;
+                    SaveSettings();
                     return true;
                 case Key.Number9:
                     _mediaBrowserTargetDrive = 9;
+                    SaveSettings();
                     return true;
                 case Key.Number0:
                     _mediaBrowserTargetDrive = 10;
+                    SaveSettings();
                     return true;
                 case Key.Number1:
                     _mediaBrowserTargetDrive = 11;
+                    SaveSettings();
                     return true;
                 case Key.BackSpace:
                     NavigateMediaBrowserUp();
@@ -2792,6 +2906,7 @@ namespace C64Emulator
             _driveFooterPulsePhase = 0.0;
             _turboToastSecondsRemaining = 0.0;
             _lastGamepadJoystickState = 0xFF;
+            SaveSettings();
             _overlayStatusText = ReloadMountedMediaAfterPowerCycle(mountedMedia, mountedDrivePaths);
             StartEmulation();
         }

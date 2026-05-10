@@ -52,5 +52,13 @@ namespace C64Emulator.Core
         {
             return Path.Combine(GetBaseDirectory(), "saves");
         }
+
+        /// <summary>
+        /// Gets the per-user settings file path.
+        /// </summary>
+        public static string GetSettingsPath()
+        {
+            return Path.Combine(GetBaseDirectory(), "settings.json");
+        }
     }
 }

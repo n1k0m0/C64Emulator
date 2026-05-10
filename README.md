@@ -194,6 +194,10 @@ The D64 parser handles the common 35-track layout and extended image sizes where
 
 Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay.
 
+## Settings
+
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, compatibility toggles, and the media browser target drive. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
+
 ## ROM Files
 
 The emulator expects the required C64 and 1541 ROM binary files in `%APPDATA%\C64Emulator\roms`. ROM files in the application/build directory are still accepted for development builds, but the per-user AppData directory is the preferred location for normal use.
