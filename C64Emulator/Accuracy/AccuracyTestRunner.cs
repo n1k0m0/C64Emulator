@@ -61,18 +61,23 @@ namespace C64Emulator.Core
         public static int Run(TextWriter output)
         {
             output.WriteLine("C64 ACCURACY TESTS");
-            output.WriteLine("Scope=internal timing smoke tests; external ROM/golden suites are planned in Phase 3.");
+            output.WriteLine("Scope=internal timing smoke tests plus external golden-suite infrastructure.");
 
             int failures = 0;
+            failures += RunCase(output, "Accuracy profile disables emulator shortcuts", TestAccuracyProfileDisablesShortcuts);
+            failures += RunCase(output, "CPU bus prediction is side-effect free", TestCpuBusPredictionIsSideEffectFree);
             failures += RunCase(output, "VIC frame timing", TestVicFrameTiming);
             failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
             failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
+            failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
+            failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
+            failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
 
             output.WriteLine("Result: " + (failures == 0 ? "OK" : "FAILED"));
@@ -105,6 +110,52 @@ namespace C64Emulator.Core
             }
 
             return context.FailureCount;
+        }
+
+        private static void TestAccuracyProfileDisablesShortcuts(AccuracyContext context)
+        {
+            using (var system = new C64System(C64Model.Pal, C64AccuracyOptions.Accuracy))
+            {
+                C64AccuracyOptions options = system.AccuracyOptions;
+                context.True("LOAD hack is disabled", !system.EnableLoadHack);
+                context.True("KERNAL IEC hooks are disabled", !system.EnableKernalIecHooks);
+                context.True("software IEC transport is disabled", !system.ForceSoftwareIecTransport);
+                context.True("host input injection is disabled", !system.EnableInputInjection);
+                context.True("drive CPU runs continuously", options.RunDriveCpuContinuously);
+            }
+        }
+
+        private static void TestCpuBusPredictionIsSideEffectFree(AccuracyContext context)
+        {
+            var harness = new CpuTraceHarness();
+            const ushort startAddress = 0x0200;
+            harness.Reset(startAddress);
+            harness.Cpu.A = 0x55;
+            harness.LoadProgram(startAddress, 0x8D, 0x20, 0xD0);
+
+            byte busValueBeforePrediction = harness.Bus.LastCpuBusValue;
+            CpuBusAccessPrediction fetch = harness.Cpu.PredictNextCycleAccess();
+            context.Equal("predict opcode fetch type", CpuTraceAccessType.OpcodeFetch, fetch.AccessType);
+            context.Equal("predict opcode fetch address", startAddress, fetch.Address);
+            context.Equal("predict opcode fetch value", (byte)0x8D, fetch.Value);
+            context.Equal("prediction does not advance PC", startAddress, harness.Cpu.PC);
+            context.Equal("prediction does not update CPU bus latch", busValueBeforePrediction, harness.Bus.LastCpuBusValue);
+
+            harness.Cpu.Tick();
+            CpuBusAccessPrediction low = harness.Cpu.PredictNextCycleAccess();
+            context.Equal("predict absolute low operand", (ushort)0x0201, low.Address);
+            context.Equal("predict absolute low value", (byte)0x20, low.Value);
+
+            harness.Cpu.Tick();
+            CpuBusAccessPrediction high = harness.Cpu.PredictNextCycleAccess();
+            context.Equal("predict absolute high operand", (ushort)0x0202, high.Address);
+            context.Equal("predict absolute high value", (byte)0xD0, high.Value);
+
+            harness.Cpu.Tick();
+            CpuBusAccessPrediction write = harness.Cpu.PredictNextCycleAccess();
+            context.Equal("predict absolute write type", CpuTraceAccessType.Write, write.AccessType);
+            context.Equal("predict absolute write address", (ushort)0xD020, write.Address);
+            context.Equal("predict absolute write value", (byte)0x55, write.Value);
         }
 
         private static void TestVicFrameTiming(AccuracyContext context)
@@ -204,6 +255,36 @@ namespace C64Emulator.Core
             context.True("sprite BA pending cycle 57", plan.GetSlot(56).BusRequestPending);
         }
 
+        private static void TestVicBadlinePipelineGatesCAccesses(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 13; cycle++)
+            {
+                vic.Tick();
+            }
+
+            vic.PrepareCycle();
+            VicPipelineState cycle14 = vic.GetPipelineState();
+            context.True("badline detected on matching raster", vic.GetTiming().BadLine);
+            context.True("graphics display state starts on badline", cycle14.GraphicsDisplayState);
+            context.True("matrix fetch sequence starts on badline", cycle14.MatrixFetchStartedThisLine);
+            context.Equal("badline request start cycle", 12, cycle14.MatrixFetchRequestStartCycle);
+            context.Equal("badline c-access start cycle", 15, cycle14.MatrixFetchStartCycle);
+            context.Equal("badline CPU block start cycle", 15, cycle14.MatrixFetchCpuBlockStartCycle);
+            context.True("cycle 14 keeps BA pending", vic.HasBusRequestPendingThisCycle());
+            context.True("cycle 14 does not block CPU yet", !vic.RequiresBusThisCycle());
+            vic.FinishCycle();
+
+            vic.PrepareCycle();
+            context.Equal("cycle 15 uses matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 15 blocks CPU", vic.RequiresBusThisCycle());
+            vic.FinishCycle();
+        }
+
         private static void TestCiaTimerATiming(AccuracyContext context)
         {
             var cia = new Cia1();
@@ -225,6 +306,35 @@ namespace C64Emulator.Core
             cia.Tick();
             cia.Tick();
             context.Equal("timer A one-shot stops", 0x08, cia.Read(0x0E));
+        }
+
+        private static void TestCiaTimerForceLoadParity(AccuracyContext context)
+        {
+            var cia1 = new Cia1();
+            var cia2 = new Cia2();
+
+            cia1.Write(0x04, 0x00);
+            cia1.Write(0x05, 0x00);
+            cia1.Write(0x0E, 0x10);
+            cia2.Write(0x04, 0x00);
+            cia2.Write(0x05, 0x00);
+            cia2.Write(0x0E, 0x10);
+
+            context.Equal("CIA1 force-load zero low", 0x00, cia1.Read(0x04));
+            context.Equal("CIA1 force-load zero high", 0x00, cia1.Read(0x05));
+            context.Equal("CIA2 force-load zero low", 0x00, cia2.Read(0x04));
+            context.Equal("CIA2 force-load zero high", 0x00, cia2.Read(0x05));
+
+            cia1.Write(0x0D, 0x81);
+            cia1.Write(0x0E, 0x01);
+            cia2.Write(0x0D, 0x81);
+            cia2.Write(0x0E, 0x01);
+            cia1.Tick();
+            cia2.Tick();
+            context.True("CIA1 latch-zero timer does not underflow immediately after start", !cia1.IsIrqAsserted());
+            context.True("CIA2 latch-zero timer does not underflow immediately after start", !cia2.IsNmiAsserted());
+            context.Equal("CIA1 latch-zero first tick low", 0xFE, cia1.Read(0x04));
+            context.Equal("CIA2 latch-zero first tick low", 0xFE, cia2.Read(0x04));
         }
 
         private static void TestCiaTimerBCountsTimerA(AccuracyContext context)
@@ -300,6 +410,26 @@ namespace C64Emulator.Core
                 context.True("ROM transport mode can be selected", !system.ForceSoftwareIecTransport);
                 system.ForceSoftwareIecTransport = true;
                 context.True("software IEC transport can be restored", system.ForceSoftwareIecTransport);
+            }
+        }
+
+        private static void TestDriveAccuracySchedulerRunsContinuously(AccuracyContext context)
+        {
+            using (var compatibility = new C64System(C64Model.Pal))
+            using (var accuracy = new C64System(C64Model.Pal, C64AccuracyOptions.Accuracy))
+            {
+                DriveSchedulerState compatibilityStart = compatibility.GetDriveSchedulerState(8);
+                compatibility.RunCycles(12);
+                DriveSchedulerState compatibilityEnd = compatibility.GetDriveSchedulerState(8);
+                context.True("compatibility drive CPU remains parked without active work", compatibilityStart.ProgramCounter == compatibilityEnd.ProgramCounter);
+                context.True("compatibility drive scheduler is not continuous", !compatibilityEnd.RunHardwareContinuously);
+
+                DriveSchedulerState accuracyStart = accuracy.GetDriveSchedulerState(8);
+                accuracy.RunCycles(12);
+                DriveSchedulerState accuracyEnd = accuracy.GetDriveSchedulerState(8);
+                context.True("accuracy drive scheduler is continuous", accuracyEnd.RunHardwareContinuously);
+                context.True("accuracy drive clock executes cycles", accuracyEnd.ExecutedCycles > accuracyStart.ExecutedCycles);
+                context.True("accuracy drive CPU advances while idle", accuracyStart.ProgramCounter != accuracyEnd.ProgramCounter);
             }
         }
 

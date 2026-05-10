@@ -182,26 +182,19 @@ namespace C64Emulator.Core
                     _serialDataRegister = value;
                     break;
                 case 0x0D:
-                    if ((value & 0x80) != 0)
-                    {
-                        _interruptMask |= (byte)(value & 0x1F);
-                    }
-                    else
-                    {
-                        _interruptMask &= (byte)~(value & 0x1F);
-                    }
+                    _interruptMask = Cia6526TimerRules.ApplyInterruptMaskWrite(_interruptMask, value);
                     break;
                 case 0x0E:
                     if ((value & 0x10) != 0)
                     {
-                        _timerACounter = _timerALatch;
+                        _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
                         _registers[0x0E] &= 0xEF;
                     }
                     break;
                 case 0x0F:
                     if ((value & 0x10) != 0)
                     {
-                        _timerBCounter = _timerBLatch != 0 ? _timerBLatch : (ushort)0xFFFF;
+                        _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
                         _registers[0x0F] &= 0xEF;
                     }
                     break;
@@ -327,7 +320,7 @@ namespace C64Emulator.Core
 
             if (_timerACounter == 0)
             {
-                _timerACounter = _timerALatch != 0 ? _timerALatch : (ushort)0xFFFF;
+                _timerACounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerALatch);
             }
 
             _timerACounter--;
@@ -339,7 +332,7 @@ namespace C64Emulator.Core
             _interruptFlags |= 0x01;
             if ((_registers[0x0E] & 0x08) == 0)
             {
-                _timerACounter = _timerALatch != 0 ? _timerALatch : (ushort)0xFFFF;
+                _timerACounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerALatch);
             }
             else
             {
@@ -359,16 +352,14 @@ namespace C64Emulator.Core
                 return;
             }
 
-            int source = (_registers[0x0F] >> 5) & 0x03;
-            bool shouldCount = source == 0 || ((source == 2 || source == 3) && timerAUnderflow);
-            if (!shouldCount)
+            if (!Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow))
             {
                 return;
             }
 
             if (_timerBCounter == 0)
             {
-                _timerBCounter = _timerBLatch != 0 ? _timerBLatch : (ushort)0xFFFF;
+                _timerBCounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerBLatch);
             }
 
             _timerBCounter--;
@@ -380,7 +371,7 @@ namespace C64Emulator.Core
             _interruptFlags |= 0x02;
             if ((_registers[0x0F] & 0x08) == 0)
             {
-                _timerBCounter = _timerBLatch != 0 ? _timerBLatch : (ushort)0xFFFF;
+                _timerBCounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerBLatch);
             }
             else
             {

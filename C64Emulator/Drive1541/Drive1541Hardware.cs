@@ -76,6 +76,7 @@ namespace C64Emulator.Core
         private int _bootCyclesRemaining;
         private bool _diskMounted;
         private int _customReceivePreambleCycles;
+        private bool _runCpuContinuously;
 
         /// <summary>
         /// Handles the drive1541 hardware operation.
@@ -260,7 +261,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void Tick()
         {
-            if (_customCodeActive || _bootCyclesRemaining > 0 || _bus.SerialOutputsEnabled)
+            if (_runCpuContinuously || _customCodeActive || _bootCyclesRemaining > 0 || _bus.SerialOutputsEnabled)
             {
                 _bus.Tick();
                 if (_bus.ConsumeSoPulse())
@@ -290,6 +291,12 @@ namespace C64Emulator.Core
                     }
                 }
             }
+        }
+
+        public bool RunCpuContinuously
+        {
+            get { return _runCpuContinuously; }
+            set { _runCpuContinuously = value; }
         }
 
         public bool HasCustomCodeActive

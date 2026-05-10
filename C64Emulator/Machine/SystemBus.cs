@@ -253,6 +253,47 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Reads the CPU-visible value without mutating bus latches or I/O registers.
+        /// </summary>
+        public byte PeekCpuRead(ushort address)
+        {
+            if (address == 0)
+            {
+                return _ram[0];
+            }
+
+            if (address == 1)
+            {
+                return GetProcessorPortValue();
+            }
+
+            if (address >= 0xA000 && address <= 0xBFFF && IsBasicRomVisible())
+            {
+                return _basicRom[address - 0xA000];
+            }
+
+            if (address >= 0xD000 && address <= 0xDFFF)
+            {
+                if (IsIoVisible())
+                {
+                    return PeekIo(address);
+                }
+
+                if (IsCharacterRomVisibleToCpu())
+                {
+                    return _charRom[address - 0xD000];
+                }
+            }
+
+            if (address >= 0xE000 && address <= 0xFFFF && IsKernalRomVisible())
+            {
+                return _kernalRom[address - 0xE000];
+            }
+
+            return _ram[address];
+        }
+
+        /// <summary>
         /// Handles the cpu write operation.
         /// </summary>
         public void CpuWrite(ushort address, byte value)
@@ -426,6 +467,19 @@ namespace C64Emulator.Core
             if (address >= 0xDD00 && address <= 0xDDFF && _cia2 != null)
             {
                 return _cia2.Read((ushort)(address & 0x000F));
+            }
+
+            return _ioRam[address - 0xD000];
+        }
+
+        /// <summary>
+        /// Peeks io without triggering read side effects.
+        /// </summary>
+        private byte PeekIo(ushort address)
+        {
+            if (address >= 0xD800 && address <= 0xDBFF)
+            {
+                return ReadColorRam((ushort)(address - 0xD800));
             }
 
             return _ioRam[address - 0xD000];

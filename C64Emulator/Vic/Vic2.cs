@@ -459,6 +459,44 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Captures the current graphics pipeline state for diagnostics.
+        /// </summary>
+        public VicPipelineState GetPipelineState()
+        {
+            return new VicPipelineState
+            {
+                GraphicsDisplayState = _graphicsDisplayState,
+                MatrixFetchStartedThisLine = _matrixFetchStartedThisLine,
+                MatrixFetchRequestStartCycle = _matrixFetchRequestStartCycle,
+                MatrixFetchStartCycle = _matrixFetchStartCycle,
+                MatrixFetchCpuBlockStartCycle = _matrixFetchCpuBlockStartCycle,
+                VideoMatrixValid = _videoMatrixValid,
+                VideoMatrixCellY = _videoMatrixCellY,
+                VideoMatrixBitmapMode = _videoMatrixBitmapMode,
+                VideoPatternValid = _videoPatternValid,
+                VideoPatternCellY = _videoPatternCellY,
+                VideoPatternPixelRow = _videoPatternPixelRow,
+                VideoPatternBitmapMode = _videoPatternBitmapMode,
+                GraphicsVc = _graphicsVc,
+                GraphicsVcBase = _graphicsVcBase,
+                GraphicsVmli = _graphicsVmli,
+                GraphicsRc = _graphicsRc,
+                GraphicsLineMatrixBaseIndex = _graphicsLineMatrixBaseIndex,
+                GraphicsLineCellY = _graphicsLineCellY,
+                GraphicsLinePixelRow = _graphicsLinePixelRow,
+                LineDisplayEnabled = _lineDisplayEnabled,
+                LineBitmapMode = _lineBitmapMode,
+                LineExtendedColorMode = _lineExtendedColorMode,
+                LineMulticolorMode = _lineMulticolorMode,
+                LineXScroll = _lineXScroll,
+                LineYScroll = _lineYScroll,
+                DisplaySourceScreenBase = _displaySourceScreenBaseAbsolute,
+                DisplaySourceCharacterBase = _displaySourceCharacterBaseAbsolute,
+                DisplaySourceBitmapBase = _displaySourceBitmapBaseAbsolute
+            };
+        }
+
+        /// <summary>
         /// Returns whether irq asserted is true.
         /// </summary>
         public bool IsIrqAsserted()

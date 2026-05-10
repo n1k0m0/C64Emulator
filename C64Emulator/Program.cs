@@ -84,6 +84,31 @@ namespace C64Emulator
                 return;
             }
 
+            if (args != null && args.Length >= 2 && string.Equals(args[0], "--golden-run", StringComparison.OrdinalIgnoreCase))
+            {
+                string outputDirectory = args.Length >= 3
+                    ? args[2]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "golden-results");
+                RunGoldenManifest(args[1], outputDirectory);
+                return;
+            }
+
+            if (args != null && args.Length >= 3 && string.Equals(args[0], "--golden-accept", StringComparison.OrdinalIgnoreCase))
+            {
+                string outputManifestPath = args.Length >= 4 ? args[3] : args[1];
+                AcceptGoldenBaseline(args[1], args[2], outputManifestPath);
+                return;
+            }
+
+            if (args != null && args.Length >= 3 && string.Equals(args[0], "--golden-compare", StringComparison.OrdinalIgnoreCase))
+            {
+                string reportPath = args.Length >= 4
+                    ? args[3]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "golden_compare.log");
+                CompareGoldenResults(args[1], args[2], reportPath);
+                return;
+            }
+
             if (args != null && args.Length >= 1 && string.Equals(args[0], "--trace-cycles", StringComparison.OrdinalIgnoreCase))
             {
                 int cycles = args.Length >= 2 && int.TryParse(args[1], out int parsedCycles) && parsedCycles > 0
@@ -96,6 +121,22 @@ namespace C64Emulator
                     ? parsedInterval
                     : 63;
                 RunTraceCycles(cycles, logPath, sampleInterval);
+                return;
+            }
+
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--trace-machine", StringComparison.OrdinalIgnoreCase))
+            {
+                int cycles = args.Length >= 2 && int.TryParse(args[1], out int parsedMachineCycles) && parsedMachineCycles > 0
+                    ? parsedMachineCycles
+                    : 20000;
+                string logPath = args.Length >= 3
+                    ? args[2]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "trace_machine.jsonl");
+                int sampleInterval = args.Length >= 4 && int.TryParse(args[3], out int parsedMachineInterval) && parsedMachineInterval > 0
+                    ? parsedMachineInterval
+                    : 1;
+                bool accuracyProfile = args.Length < 5 || !string.Equals(args[4], "compatibility", StringComparison.OrdinalIgnoreCase);
+                RunMachineTrace(cycles, logPath, sampleInterval, accuracyProfile);
                 return;
             }
 
@@ -259,6 +300,76 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Runs an external golden manifest through the real emulator.
+        /// </summary>
+        private static void RunGoldenManifest(string manifestPath, string outputDirectory)
+        {
+            try
+            {
+                Directory.CreateDirectory(outputDirectory);
+                GoldenManifest manifest = GoldenManifestLoader.Load(manifestPath);
+                var harness = new GoldenTestHarness(new C64GoldenTestExecutor());
+                GoldenRunResult result = harness.Run(manifest, outputDirectory);
+
+                string jsonPath = Path.Combine(outputDirectory, "golden-results.json");
+                string junitPath = Path.Combine(outputDirectory, "golden-results.junit.xml");
+                GoldenJsonResultWriter.Write(jsonPath, result);
+                GoldenJUnitResultWriter.Write(junitPath, result);
+
+                Console.WriteLine("Golden suite: " + (string.IsNullOrWhiteSpace(result.Name) ? "golden" : result.Name));
+                Console.WriteLine("Tests=" + result.TestCount + " Failures=" + result.FailureCount + " Errors=" + result.ErrorCount + " Skipped=" + result.SkippedCount);
+                Console.WriteLine("JSON=" + Path.GetFullPath(jsonPath));
+                Console.WriteLine("JUnit=" + Path.GetFullPath(junitPath));
+                Environment.ExitCode = result.FailureCount == 0 && result.ErrorCount == 0 ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GOLDEN RUN FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Accepts actual golden output values into a manifest.
+        /// </summary>
+        private static void AcceptGoldenBaseline(string manifestPath, string resultPath, string outputManifestPath)
+        {
+            try
+            {
+                int updated = GoldenBaselineUpdater.Accept(manifestPath, resultPath, outputManifestPath);
+                Console.WriteLine("Golden baseline updated: " + Path.GetFullPath(outputManifestPath));
+                Console.WriteLine("UpdatedTests=" + updated.ToString(CultureInfo.InvariantCulture));
+                Environment.ExitCode = updated > 0 ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GOLDEN ACCEPT FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Compares two golden result JSON files.
+        /// </summary>
+        private static void CompareGoldenResults(string referenceResultPath, string actualResultPath, string reportPath)
+        {
+            try
+            {
+                int failures = GoldenResultComparer.Compare(referenceResultPath, actualResultPath, reportPath);
+                Console.WriteLine("Report=" + Path.GetFullPath(reportPath));
+                Environment.ExitCode = failures == 0 ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("GOLDEN COMPARE FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
         /// Ensures the target log directory exists.
         /// </summary>
         private static void EnsureLogDirectory(string logPath)
@@ -284,6 +395,26 @@ namespace C64Emulator
             catch (Exception ex)
             {
                 Console.WriteLine("TRACE EXPORT FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Runs a structured machine-cycle trace export.
+        /// </summary>
+        private static void RunMachineTrace(int cycles, string logPath, int sampleInterval, bool accuracyProfile)
+        {
+            try
+            {
+                DevTraceExporter.ExportMachineTrace(cycles, sampleInterval, logPath, accuracyProfile);
+                Console.WriteLine("Machine trace written: " + Path.GetFullPath(logPath));
+                Console.WriteLine("Profile=" + (accuracyProfile ? "accuracy" : "compatibility"));
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("MACHINE TRACE EXPORT FAILED");
                 Console.WriteLine(ex);
                 Environment.ExitCode = 1;
             }

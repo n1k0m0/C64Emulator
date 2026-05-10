@@ -18,6 +18,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace C64Emulator.Core
 {
@@ -45,6 +46,43 @@ namespace C64Emulator.Core
                     if ((cycle % sampleInterval) == 0 || cycle == cycles)
                     {
                         WriteTraceSample(writer, system, cycle);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Runs the machine and writes structured JSONL samples for cycle-accuracy analysis.
+        /// </summary>
+        public static void ExportMachineTrace(int cycles, int sampleInterval, string logPath, bool accuracyProfile)
+        {
+            EnsureDirectory(logPath);
+            sampleInterval = Math.Max(1, sampleInterval);
+
+            C64AccuracyOptions options = accuracyProfile
+                ? C64AccuracyOptions.Accuracy
+                : C64AccuracyOptions.Compatibility;
+
+            using (var writer = new StreamWriter(logPath, false, Encoding.UTF8))
+            using (var system = new C64System(C64Model.Pal, options))
+            {
+                CpuTraceEntry lastCpuTrace = new CpuTraceEntry();
+                bool hasCpuTrace = false;
+                system.Cpu.TraceEnabled = true;
+                system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
+                {
+                    lastCpuTrace = entry;
+                    hasCpuTrace = true;
+                };
+
+                WriteMachineTraceSample(writer, system, 0, false, lastCpuTrace);
+                for (int cycle = 1; cycle <= cycles; cycle++)
+                {
+                    hasCpuTrace = false;
+                    system.Tick();
+                    if ((cycle % sampleInterval) == 0 || cycle == cycles)
+                    {
+                        WriteMachineTraceSample(writer, system, cycle, hasCpuTrace, lastCpuTrace);
                     }
                 }
             }
@@ -202,6 +240,150 @@ namespace C64Emulator.Core
             writer.Write(',');
             WriteCsvField(writer, system.GetDriveDebugInfo(8));
             writer.WriteLine();
+        }
+
+        private static void WriteMachineTraceSample(StreamWriter writer, C64System system, int sample, bool hasCpuTrace, CpuTraceEntry cpuTrace)
+        {
+            VicTiming timing = system.Timing;
+            CpuBusAccessPrediction prediction = system.LastCpuBusPrediction;
+            var entry = new MachineCycleTraceEntry
+            {
+                Sample = sample,
+                GlobalCycle = timing.GlobalCycle,
+                RasterLine = timing.RasterLine,
+                CycleInLine = timing.CycleInLine,
+                BeamX = timing.BeamX,
+                BeamY = timing.BeamY,
+                BadLine = timing.BadLine,
+                Phi1Action = timing.Phi1Action.ToString(),
+                Phi2Action = timing.Phi2Action.ToString(),
+                BaLow = system.BaLow,
+                AecLow = system.AecLow,
+                CpuCanAccess = system.CpuCanAccess,
+                VicCanAccess = system.VicCanAccess,
+                BusOwner = system.BusOwner.ToString(),
+                CpuBlocked = timing.CpuBlocked,
+                BusRequestPending = timing.BusRequestPending,
+                PredictedCpuAccessType = prediction.AccessType.ToString(),
+                PredictedCpuAddress = prediction.Address.ToString("X4", CultureInfo.InvariantCulture),
+                PredictedCpuValue = prediction.Value.ToString("X2", CultureInfo.InvariantCulture),
+                Cpu = hasCpuTrace ? ConvertCpuTrace(cpuTrace) : SnapshotCpu(system),
+                Vic = ConvertVicPipeline(system.VicPipeline),
+                Drive8Scheduler = ConvertDriveScheduler(system.GetDriveSchedulerState(8)),
+                Memory = system.GetMemoryConfigDebugInfo(),
+                Cia = system.GetCiaDebugInfo(),
+                Sid = system.GetSidDebugInfo(),
+                Iec = system.GetIecDebugInfo(),
+                Drive8 = system.GetDriveDebugInfo(8)
+            };
+
+            writer.Write(JsonSerializer.Serialize(entry));
+            writer.WriteLine();
+        }
+
+        private static MachineDriveSchedulerTraceEntry ConvertDriveScheduler(DriveSchedulerState state)
+        {
+            return new MachineDriveSchedulerTraceEntry
+            {
+                DeviceNumber = state.DeviceNumber,
+                TargetCycles = state.TargetCycles,
+                ExecutedCycles = state.ExecutedCycles,
+                NeedsClockTick = state.NeedsClockTick,
+                RunHardwareContinuously = state.RunHardwareContinuously,
+                ProgramCounter = state.ProgramCounter.ToString("X4", CultureInfo.InvariantCulture),
+                HasCustomCodeActive = state.HasCustomCodeActive,
+                IsHardwareTransportReady = state.IsHardwareTransportReady
+            };
+        }
+
+        private static MachineVicPipelineTraceEntry ConvertVicPipeline(VicPipelineState state)
+        {
+            return new MachineVicPipelineTraceEntry
+            {
+                GraphicsDisplayState = state.GraphicsDisplayState,
+                MatrixFetchStartedThisLine = state.MatrixFetchStartedThisLine,
+                MatrixFetchRequestStartCycle = state.MatrixFetchRequestStartCycle,
+                MatrixFetchStartCycle = state.MatrixFetchStartCycle,
+                MatrixFetchCpuBlockStartCycle = state.MatrixFetchCpuBlockStartCycle,
+                VideoMatrixValid = state.VideoMatrixValid,
+                VideoMatrixCellY = state.VideoMatrixCellY,
+                VideoPatternValid = state.VideoPatternValid,
+                VideoPatternCellY = state.VideoPatternCellY,
+                VideoPatternPixelRow = state.VideoPatternPixelRow,
+                GraphicsVc = state.GraphicsVc,
+                GraphicsVcBase = state.GraphicsVcBase,
+                GraphicsVmli = state.GraphicsVmli,
+                GraphicsRc = state.GraphicsRc,
+                GraphicsLineCellY = state.GraphicsLineCellY,
+                GraphicsLinePixelRow = state.GraphicsLinePixelRow,
+                LineDisplayEnabled = state.LineDisplayEnabled,
+                LineBitmapMode = state.LineBitmapMode,
+                LineExtendedColorMode = state.LineExtendedColorMode,
+                LineMulticolorMode = state.LineMulticolorMode,
+                LineXScroll = state.LineXScroll,
+                LineYScroll = state.LineYScroll,
+                DisplaySourceScreenBase = state.DisplaySourceScreenBase.ToString("X4", CultureInfo.InvariantCulture),
+                DisplaySourceCharacterBase = state.DisplaySourceCharacterBase.ToString("X4", CultureInfo.InvariantCulture),
+                DisplaySourceBitmapBase = state.DisplaySourceBitmapBase.ToString("X4", CultureInfo.InvariantCulture)
+            };
+        }
+
+        private static MachineCpuTraceEntry ConvertCpuTrace(CpuTraceEntry trace)
+        {
+            return new MachineCpuTraceEntry
+            {
+                Cycle = trace.Cycle,
+                StateBefore = trace.StateBefore.ToString(),
+                StateAfter = trace.StateAfter.ToString(),
+                Instruction = trace.InstructionName,
+                Opcode = trace.Opcode.ToString("X2", CultureInfo.InvariantCulture),
+                LastOpcodeAddress = trace.LastOpcodeAddress.ToString("X4", CultureInfo.InvariantCulture),
+                StepIndexBefore = trace.StepIndexBefore,
+                StepIndexAfter = trace.StepIndexAfter,
+                PcBefore = trace.PcBefore.ToString("X4", CultureInfo.InvariantCulture),
+                PcAfter = trace.PcAfter.ToString("X4", CultureInfo.InvariantCulture),
+                ABefore = trace.ABefore.ToString("X2", CultureInfo.InvariantCulture),
+                AAfter = trace.AAfter.ToString("X2", CultureInfo.InvariantCulture),
+                XBefore = trace.XBefore.ToString("X2", CultureInfo.InvariantCulture),
+                XAfter = trace.XAfter.ToString("X2", CultureInfo.InvariantCulture),
+                YBefore = trace.YBefore.ToString("X2", CultureInfo.InvariantCulture),
+                YAfter = trace.YAfter.ToString("X2", CultureInfo.InvariantCulture),
+                SpBefore = trace.SpBefore.ToString("X2", CultureInfo.InvariantCulture),
+                SpAfter = trace.SpAfter.ToString("X2", CultureInfo.InvariantCulture),
+                SrBefore = trace.SrBefore.ToString("X2", CultureInfo.InvariantCulture),
+                SrAfter = trace.SrAfter.ToString("X2", CultureInfo.InvariantCulture),
+                AccessType = trace.AccessType.ToString(),
+                Address = trace.Address.ToString("X4", CultureInfo.InvariantCulture),
+                Value = trace.Value.ToString("X2", CultureInfo.InvariantCulture)
+            };
+        }
+
+        private static MachineCpuTraceEntry SnapshotCpu(C64System system)
+        {
+            return new MachineCpuTraceEntry
+            {
+                Cycle = system.Cpu.CpuCycleCount,
+                StateBefore = system.Cpu.State.ToString(),
+                StateAfter = system.Cpu.State.ToString(),
+                Instruction = system.Cpu.CurrentInstructionName,
+                Opcode = system.Cpu.CurrentOpcode.ToString("X2", CultureInfo.InvariantCulture),
+                LastOpcodeAddress = system.Cpu.LastOpcodeAddress.ToString("X4", CultureInfo.InvariantCulture),
+                PcBefore = system.Cpu.PC.ToString("X4", CultureInfo.InvariantCulture),
+                PcAfter = system.Cpu.PC.ToString("X4", CultureInfo.InvariantCulture),
+                ABefore = system.Cpu.A.ToString("X2", CultureInfo.InvariantCulture),
+                AAfter = system.Cpu.A.ToString("X2", CultureInfo.InvariantCulture),
+                XBefore = system.Cpu.X.ToString("X2", CultureInfo.InvariantCulture),
+                XAfter = system.Cpu.X.ToString("X2", CultureInfo.InvariantCulture),
+                YBefore = system.Cpu.Y.ToString("X2", CultureInfo.InvariantCulture),
+                YAfter = system.Cpu.Y.ToString("X2", CultureInfo.InvariantCulture),
+                SpBefore = system.Cpu.SP.ToString("X2", CultureInfo.InvariantCulture),
+                SpAfter = system.Cpu.SP.ToString("X2", CultureInfo.InvariantCulture),
+                SrBefore = system.Cpu.SR.ToString("X2", CultureInfo.InvariantCulture),
+                SrAfter = system.Cpu.SR.ToString("X2", CultureInfo.InvariantCulture),
+                AccessType = CpuTraceAccessType.None.ToString(),
+                Address = "0000",
+                Value = "00"
+            };
         }
 
         private static void WriteCsvField(TextWriter writer, string value)

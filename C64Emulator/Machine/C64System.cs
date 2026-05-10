@@ -54,6 +54,7 @@ namespace C64Emulator.Core
         private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
         private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
         private readonly object _syncRoot = new object();
+        private readonly C64AccuracyOptions _accuracyOptions;
         private MountedMediaInfo _lastMountedMedia = MountedMediaInfo.None;
         private Key? _lastMirroredPollKey;
         private int _pollMirrorRepeatDelayCycles;
@@ -62,13 +63,23 @@ namespace C64Emulator.Core
         private bool _forceSoftwareIecTransport = true;
         private bool _enableInputInjection = true;
         private bool _catchingUpDrivesForIecAccess;
+        private CpuBusAccessPrediction _lastCpuBusPrediction = CpuBusAccessPrediction.None;
 
         /// <summary>
         /// Handles the c64 system operation.
         /// </summary>
         public C64System(C64Model model)
+            : this(model, null)
+        {
+        }
+
+        /// <summary>
+        /// Handles the c64 system operation.
+        /// </summary>
+        public C64System(C64Model model, C64AccuracyOptions accuracyOptions)
         {
             _model = model;
+            _accuracyOptions = (accuracyOptions ?? C64AccuracyOptions.Compatibility).Clone();
             _frameBuffer = new FrameBuffer(model.VisibleWidth, model.VisibleHeight);
             _bus = new SystemBus();
             _cia1 = new Cia1();
@@ -98,6 +109,7 @@ namespace C64Emulator.Core
             _iecKernalBridge.AttachDrive(_drive11);
             _bus.Connect(_vic, _cia1, _cia2, _sid);
             _cpu = new Cpu6510(_bus, _mediaManager, _iecKernalBridge);
+            ApplyAccuracyOptions();
             ApplyIecTransportMode();
 
             _bus.InitializeMemory();
@@ -294,9 +306,91 @@ namespace C64Emulator.Core
             }
         }
 
+        public VicPipelineState VicPipeline
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _vic.GetPipelineState();
+                }
+            }
+        }
+
         public Cpu6510 Cpu
         {
             get { return _cpu; }
+        }
+
+        public BusOwner BusOwner
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.Owner;
+                }
+            }
+        }
+
+        public bool BaLow
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.BaLow;
+                }
+            }
+        }
+
+        public bool AecLow
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.AecLow;
+                }
+            }
+        }
+
+        public bool CpuCanAccess
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.CpuCanAccess;
+                }
+            }
+        }
+
+        public bool VicCanAccess
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.VicCanAccess;
+                }
+            }
+        }
+
+        public C64AccuracyOptions AccuracyOptions
+        {
+            get { return _accuracyOptions.Clone(); }
+        }
+
+        public CpuBusAccessPrediction LastCpuBusPrediction
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _lastCpuBusPrediction;
+                }
+            }
         }
 
         public bool EnableKernalIecHooks
@@ -313,6 +407,7 @@ namespace C64Emulator.Core
                 lock (_syncRoot)
                 {
                     _cpu.EnableKernalIecHooks = value;
+                    _accuracyOptions.EnableKernalIecHooks = _cpu.EnableKernalIecHooks;
                     ApplyIecTransportMode();
                 }
             }
@@ -332,6 +427,7 @@ namespace C64Emulator.Core
                 lock (_syncRoot)
                 {
                     _cpu.EnableLoadHack = value;
+                    _accuracyOptions.EnableLoadHack = value;
                 }
             }
         }
@@ -350,6 +446,7 @@ namespace C64Emulator.Core
                 lock (_syncRoot)
                 {
                     _forceSoftwareIecTransport = value;
+                    _accuracyOptions.ForceSoftwareIecTransport = value;
                     ApplyIecTransportMode();
                 }
             }
@@ -369,6 +466,7 @@ namespace C64Emulator.Core
                 lock (_syncRoot)
                 {
                     _enableInputInjection = value;
+                    _accuracyOptions.EnableInputInjection = value;
                     if (!_enableInputInjection)
                     {
                         _lastMirroredPollKey = null;
@@ -492,6 +590,30 @@ namespace C64Emulator.Core
             {
                 IecDrive1541 drive = GetDrive(deviceNumber);
                 return drive != null ? drive.GetDebugInfo() : "NO DRIVE";
+            }
+        }
+
+        public DriveSchedulerState GetDriveSchedulerState(int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                if (drive == null)
+                {
+                    return default(DriveSchedulerState);
+                }
+
+                return new DriveSchedulerState
+                {
+                    DeviceNumber = deviceNumber,
+                    TargetCycles = _drive1541TargetCycles,
+                    ExecutedCycles = _drive1541ExecutedCycles,
+                    NeedsClockTick = drive.NeedsClockTick,
+                    RunHardwareContinuously = drive.RunHardwareContinuously,
+                    ProgramCounter = drive.Hardware.ProgramCounter,
+                    HasCustomCodeActive = drive.HasCustomCodeActive,
+                    IsHardwareTransportReady = drive.IsHardwareTransportReady
+                };
             }
         }
 
@@ -804,6 +926,7 @@ namespace C64Emulator.Core
         /// </summary>
         private Phi2BusState ComputePhi2BusState()
         {
+            _lastCpuBusPrediction = CpuBusAccessPrediction.None;
             if (_vic.RequiresBusThisCycle())
             {
                 return new Phi2BusState
@@ -817,8 +940,9 @@ namespace C64Emulator.Core
 
             if (_vic.HasBusRequestPendingThisCycle())
             {
-                CpuTraceAccessType accessType = _cpu.PredictNextCycleAccessType();
-                if (accessType == CpuTraceAccessType.Write)
+                CpuBusAccessPrediction prediction = _cpu.PredictNextCycleAccess();
+                _lastCpuBusPrediction = prediction;
+                if (prediction.AccessType == CpuTraceAccessType.Write)
                 {
                     return new Phi2BusState
                     {
@@ -1009,6 +1133,11 @@ namespace C64Emulator.Core
         /// </summary>
         private bool AnyDriveNeedsClockTick()
         {
+            if (_accuracyOptions.RunDriveCpuContinuously)
+            {
+                return true;
+            }
+
             return _drive8.NeedsClockTick ||
                 _drive9.NeedsClockTick ||
                 _drive10.NeedsClockTick ||
@@ -1020,22 +1149,22 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickAllDrivesOnce()
         {
-            if (_drive8.NeedsClockTick)
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive8.NeedsClockTick)
             {
                 _drive8.Tick();
             }
 
-            if (_drive9.NeedsClockTick)
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive9.NeedsClockTick)
             {
                 _drive9.Tick();
             }
 
-            if (_drive10.NeedsClockTick)
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive10.NeedsClockTick)
             {
                 _drive10.Tick();
             }
 
-            if (_drive11.NeedsClockTick)
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive11.NeedsClockTick)
             {
                 _drive11.Tick();
             }
@@ -1059,6 +1188,26 @@ namespace C64Emulator.Core
             finally
             {
                 _catchingUpDrivesForIecAccess = false;
+            }
+        }
+
+        /// <summary>
+        /// Applies startup accuracy policy to shortcut-capable subsystems.
+        /// </summary>
+        private void ApplyAccuracyOptions()
+        {
+            _cpu.EnableLoadHack = _accuracyOptions.EnableLoadHack;
+            _cpu.EnableKernalIecHooks = _accuracyOptions.EnableKernalIecHooks;
+            _forceSoftwareIecTransport = _accuracyOptions.ForceSoftwareIecTransport;
+            _enableInputInjection = _accuracyOptions.EnableInputInjection;
+            _drive8.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive9.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive10.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive11.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            if (!_enableInputInjection)
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
             }
         }
 

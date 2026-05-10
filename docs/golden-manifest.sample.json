@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "C64Emulator sample golden suite",
+  "description": "Minimal boot-only sample. Add expected hashes/properties once a reference baseline is accepted.",
+  "tests": [
+    {
+      "id": "pal-boot-5000",
+      "name": "PAL boot for 5000 cycles",
+      "category": "boot",
+      "model": "PAL",
+      "maxCycles": 5000,
+      "arguments": {
+        "profile": "accuracy",
+        "writeFrame": "true"
+      },
+      "expectations": {
+        "hashes": {},
+        "properties": {}
+      }
+    }
+  ]
+}

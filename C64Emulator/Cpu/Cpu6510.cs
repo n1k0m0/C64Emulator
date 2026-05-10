@@ -84,6 +84,8 @@ namespace C64Emulator.Core
         private bool _skipIrqPollOnce;
         private bool _accessPredictionMode;
         private CpuTraceAccessType _predictedAccessType;
+        private ushort _predictedAddress;
+        private byte _predictedValue;
         private long _cpuCycleCount;
         private CpuTraceEntry _currentTraceEntry;
         private bool _traceEntryActive;
@@ -191,9 +193,17 @@ namespace C64Emulator.Core
         /// </summary>
         public CpuTraceAccessType PredictNextCycleAccessType()
         {
+            return PredictNextCycleAccess().AccessType;
+        }
+
+        /// <summary>
+        /// Predicts the next cycle access without committing CPU or bus state.
+        /// </summary>
+        public CpuBusAccessPrediction PredictNextCycleAccess()
+        {
             if (_state == CpuState.Jammed)
             {
-                return CpuTraceAccessType.None;
+                return CpuBusAccessPrediction.None;
             }
 
             CpuState savedState = _state;
@@ -212,6 +222,9 @@ namespace C64Emulator.Core
             CpuTraceEntry savedTraceEntry = _currentTraceEntry;
             bool savedTraceEntryActive = _traceEntryActive;
             bool savedTraceEnabled = TraceEnabled;
+            CpuTraceAccessType savedPredictedAccessType = _predictedAccessType;
+            ushort savedPredictedAddress = _predictedAddress;
+            byte savedPredictedValue = _predictedValue;
             byte savedA = _a;
             byte savedX = _x;
             byte savedY = _y;
@@ -220,6 +233,8 @@ namespace C64Emulator.Core
 
             _accessPredictionMode = true;
             _predictedAccessType = CpuTraceAccessType.None;
+            _predictedAddress = 0;
+            _predictedValue = 0;
             TraceEnabled = false;
 
             try
@@ -267,7 +282,12 @@ namespace C64Emulator.Core
                         break;
                 }
 
-                return _predictedAccessType;
+                return new CpuBusAccessPrediction
+                {
+                    AccessType = _predictedAccessType,
+                    Address = _predictedAddress,
+                    Value = _predictedValue
+                };
             }
             finally
             {
@@ -287,13 +307,15 @@ namespace C64Emulator.Core
                 _currentTraceEntry = savedTraceEntry;
                 _traceEntryActive = savedTraceEntryActive;
                 TraceEnabled = savedTraceEnabled;
+                _predictedAccessType = savedPredictedAccessType;
+                _predictedAddress = savedPredictedAddress;
+                _predictedValue = savedPredictedValue;
                 _a = savedA;
                 _x = savedX;
                 _y = savedY;
                 _sp = savedSp;
                 _sr = savedSr;
                 _accessPredictionMode = false;
-                _predictedAccessType = CpuTraceAccessType.None;
             }
         }
 
@@ -1343,12 +1365,9 @@ namespace C64Emulator.Core
         {
             if (_accessPredictionMode)
             {
-                if (_predictedAccessType == CpuTraceAccessType.None)
-                {
-                    _predictedAccessType = accessType;
-                }
-
-                return 0;
+                byte predictedValue = PeekForPrediction(address);
+                RecordPredictedAccess(accessType, address, predictedValue);
+                return predictedValue;
             }
 
             byte value = _bus.CpuRead(address);
@@ -1363,16 +1382,41 @@ namespace C64Emulator.Core
         {
             if (_accessPredictionMode)
             {
-                if (_predictedAccessType == CpuTraceAccessType.None)
-                {
-                    _predictedAccessType = accessType;
-                }
-
+                RecordPredictedAccess(accessType, address, value);
                 return;
             }
 
             _bus.CpuWrite(address, value);
             RecordTraceAccess(accessType, address, value);
+        }
+
+        /// <summary>
+        /// Records the first bus access observed during prediction.
+        /// </summary>
+        private void RecordPredictedAccess(CpuTraceAccessType accessType, ushort address, byte value)
+        {
+            if (_predictedAccessType != CpuTraceAccessType.None)
+            {
+                return;
+            }
+
+            _predictedAccessType = accessType;
+            _predictedAddress = address;
+            _predictedValue = value;
+        }
+
+        /// <summary>
+        /// Reads CPU-visible memory for prediction without I/O side effects.
+        /// </summary>
+        private byte PeekForPrediction(ushort address)
+        {
+            var systemBus = _bus as SystemBus;
+            if (systemBus != null)
+            {
+                return systemBus.PeekCpuRead(address);
+            }
+
+            return 0;
         }
 
         /// <summary>

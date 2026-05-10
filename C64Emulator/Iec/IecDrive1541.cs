@@ -600,6 +600,12 @@ namespace C64Emulator.Core
             }
         }
 
+        public bool RunHardwareContinuously
+        {
+            get { return _hardware.RunCpuContinuously; }
+            set { _hardware.RunCpuContinuously = value; }
+        }
+
         public bool BridgeLowLevelSessionActive
         {
             get { return _bridgeLowLevelSessionActive; }
@@ -1787,6 +1793,11 @@ namespace C64Emulator.Core
         /// </summary>
         private bool ShouldTickHardware()
         {
+            if (_hardware.RunCpuContinuously)
+            {
+                return true;
+            }
+
             if (IsHardwareTransportReady)
             {
                 return true;
