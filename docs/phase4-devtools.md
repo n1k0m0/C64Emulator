@@ -4,13 +4,15 @@ Stand: 2026-05-10
 
 ## Live Overlay
 
-`F8` blendet ein kompaktes Entwickleroverlay ein:
+Der interne Entwickleroverlay zeigt kompakte Laufzeitdaten:
 
 - Rasterline, Cycle, Global Cycle
 - BA-Pending und CPU-Blockierung
 - CPU-PC/Opcode
 - Speicherbanking
 - CIA, SID, IEC und Drive-8 Kurzstatus
+
+Hinweis: `F8` ist im normalen Emulatorfenster fuer den Laufwerks-Footer reserviert. Der Entwickleroverlay bleibt als Diagnoseansicht im Code erhalten, ist aber nicht mehr auf `F8` gelegt.
 
 ## Headless Trace
 

@@ -51,6 +51,8 @@ namespace C64Emulator.Core
 
         public bool EnableInputInjection { get; set; }
 
+        public bool DriveOverlayEnabled { get; set; } = true;
+
         public int MediaBrowserTargetDrive { get; set; } = 8;
     }
 

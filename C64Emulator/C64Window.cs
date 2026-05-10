@@ -68,7 +68,7 @@ namespace C64Emulator
         private const double SleepSafetyMarginSeconds = 0.0005;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 14;
+        private const int AudioOverlayItemCount = 15;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int MediaBrowserVisibleRows = 9;
@@ -100,6 +100,7 @@ namespace C64Emulator
         private bool _windowFullscreen;
         private bool _gamepadEnabled = true;
         private bool _gamepadConnected;
+        private bool _driveOverlayEnabled = true;
         private bool _debugOverlayVisible;
         private bool _resetConfirmYesSelected = true;
         private ConfirmationAction _confirmationAction;
@@ -198,6 +199,7 @@ namespace C64Emulator
             _turboMode = settings.TurboMode;
             _windowFullscreen = settings.Fullscreen;
             _gamepadEnabled = settings.GamepadEnabled;
+            _driveOverlayEnabled = settings.DriveOverlayEnabled;
             _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
 
             if (!_gamepadEnabled)
@@ -243,6 +245,7 @@ namespace C64Emulator
                 EnableLoadHack = _system.EnableLoadHack,
                 ForceSoftwareIecTransport = _system.ForceSoftwareIecTransport,
                 EnableInputInjection = _system.EnableInputInjection,
+                DriveOverlayEnabled = _driveOverlayEnabled,
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive
             };
         }
@@ -473,9 +476,17 @@ namespace C64Emulator
                 Array.Copy(_system.FrameBuffer.Pixels, _frameSnapshot, _frameSnapshot.Length);
             }
 
-            UpdateDriveFooterState(time,
-                drive8Mounted || drive9Mounted || drive10Mounted || drive11Mounted,
-                drive8Active || drive9Active || drive10Active || drive11Active);
+            if (_driveOverlayEnabled)
+            {
+                UpdateDriveFooterState(time,
+                    drive8Mounted || drive9Mounted || drive10Mounted || drive11Mounted,
+                    drive8Active || drive9Active || drive10Active || drive11Active);
+            }
+            else
+            {
+                HideDriveFooter();
+            }
+
             UpdateTurboToastState(time);
             DrawFrame(_frameSnapshot, _system.Model.VisibleWidth, _system.Model.VisibleHeight);
             DrawDriveFooter(
@@ -593,7 +604,7 @@ namespace C64Emulator
 
             if (keyEventArgs.Key == Key.F8)
             {
-                ToggleDebugOverlay();
+                ToggleDriveOverlay();
                 return;
             }
 
@@ -1016,6 +1027,27 @@ namespace C64Emulator
             _debugOverlayVisible = !_debugOverlayVisible;
             _overlayStatusText = _debugOverlayVisible ? "DEBUG OVERLAY ON" : "DEBUG OVERLAY OFF";
             ShowTurboToast(_overlayStatusText);
+        }
+
+        /// <summary>
+        /// Toggles the drive footer overlay.
+        /// </summary>
+        private void ToggleDriveOverlay()
+        {
+            _driveOverlayEnabled = !_driveOverlayEnabled;
+            if (!_driveOverlayEnabled)
+            {
+                HideDriveFooter();
+            }
+            else
+            {
+                _driveFooterIdleSeconds = 0.0;
+                _driveFooterVisibility = 1.0;
+            }
+
+            _overlayStatusText = _driveOverlayEnabled ? "DRIVE OVERLAY ON" : "DRIVE OVERLAY OFF";
+            ShowTurboToast(_overlayStatusText);
+            SaveSettings();
         }
 
         /// <summary>
@@ -1608,6 +1640,15 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Hides the drive footer immediately.
+        /// </summary>
+        private void HideDriveFooter()
+        {
+            _driveFooterIdleSeconds = 0.0;
+            _driveFooterVisibility = 0.0;
+        }
+
+        /// <summary>
         /// Updates turbo toast state.
         /// </summary>
         private void UpdateTurboToastState(double time)
@@ -1682,7 +1723,7 @@ namespace C64Emulator
             DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 115, 142, 196);
             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 115, 142, 196);
 
-            DrawOverlayText(overlayX + 8, overlayY + 7, "DEBUG F8", 1, 255, 243, 168);
+            DrawOverlayText(overlayX + 8, overlayY + 7, "DEBUG", 1, 255, 243, 168);
             DrawOverlayText(overlayX + 8, overlayY + 19, string.Format("CYC {0} RASTER {1}:{2} BA {3}/{4}",
                 timing.GlobalCycle,
                 timing.RasterLine,
@@ -2128,6 +2169,10 @@ namespace C64Emulator
                     }
                     else if (_audioOverlaySelection == 13)
                     {
+                        ToggleDriveOverlay();
+                    }
+                    else if (_audioOverlaySelection == 14)
+                    {
                         OpenResetConfirmation();
                     }
                     else
@@ -2260,6 +2305,12 @@ namespace C64Emulator
             }
 
             if (_audioOverlaySelection == 13)
+            {
+                ToggleDriveOverlay();
+                return;
+            }
+
+            if (_audioOverlaySelection == 14)
             {
                 if (direction >= 0)
                 {
@@ -2423,7 +2474,7 @@ namespace C64Emulator
             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 182, 214, 108);
 
             DrawOverlayText(overlayX + 16, overlayY + 14, "SETTINGS", 2, 240, 248, 255);
-            DrawOverlayText(overlayX + 16, overlayY + 32, "F9 TURBO  F10 CLOSE  F11 FULLSCREEN", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 16, overlayY + 32, "F8 DRIVES  F9 TURBO  F10 CLOSE  F11 FULL", 1, 192, 210, 225);
             DrawAudioOverlayMenu(overlayX + 18, overlayY + 52, overlayWidth - 36, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
             DrawOverlayText(overlayX + 18, overlayY + 212, "MOUNTED " + FormatOverlayValue(mountedMediaInfo.DisplayName, 24), 1, 232, 238, 244);
             DrawOverlayText(overlayX + 18, overlayY + 222, "STATUS  " + FormatOverlayValue(_overlayStatusText, 24), 1, 182, 214, 108);
@@ -2511,6 +2562,9 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex);
                     break;
                 case 13:
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    break;
+                case 14:
                     DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex);
                     break;
             }

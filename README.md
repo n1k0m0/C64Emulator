@@ -40,6 +40,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 | Key | Action |
 | --- | --- |
+| `F8` | Toggle the drive activity footer overlay. |
 | `F9` | Toggle turbo mode. |
 | `F10` | Open the settings/media overlay. The emulator pauses while this menu is open. |
 | `F11` | Toggle fullscreen mode. |
@@ -83,6 +84,7 @@ Menu entries:
 | `IEC SOFTWARE` | `OFF` / `ON` | Toggles the high-level software IEC/DOS transport for standard disk traffic. This can improve compatibility for normal file access, while low-level custom loaders may still need more accurate 1541 behavior. |
 | `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
 | `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
+| `DRIVE OVERLAY` | `OFF` / `ON` | Shows or hides the drive activity footer. This is the same action as `F8`. |
 | `RESET` | Confirmation dialog | Opens a confirmation prompt for the selected reset mode. Use `Left` / `Right` to choose `YES` or `NO`, `Enter` to confirm, and `Esc` / `Backspace` to cancel. |
 
 The `MEDIA` browser opened from the F10 menu has its own controls:
@@ -178,7 +180,7 @@ For the Phase 4 developer-tool smoke suite:
 .\scripts\run-phase4-checks.ps1
 ```
 
-The live emulator also has a compact developer overlay on `F8` with raster/cycle, BA, CPU, memory, CIA, SID, IEC, and drive state.
+The drive activity footer can be toggled with `F8` or through the `DRIVE OVERLAY` entry in the `F10` settings menu.
 
 ## Media Handling
 
@@ -196,7 +198,7 @@ Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A sa
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, compatibility toggles, and the media browser target drive. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, and the media browser target drive. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
 
 ## ROM Files
 

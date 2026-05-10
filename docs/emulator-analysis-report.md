@@ -17,7 +17,7 @@ Phase-2-Umsetzungsstand nach diesem Bericht: Drag-and-drop fuer PRG/D64, Gamepad
 
 Phase-3-Umsetzungsstand: Ein neuer `--accuracy-tests` Runner prueft interne Timing-Smokes fuer VIC-II, CIA 6526, SID-Envelope und 1541-Transportmodus. `scripts/run-phase3-checks.ps1` buendelt ROM-Check, CPU-Selftest, Accuracy-Smokes und Benchmark; der weitere Test-ROM-/Golden-Master-Plan liegt in `docs/phase3-accuracy-plan.md`.
 
-Phase-4-Umsetzungsstand: `--trace-cycles` exportiert CPU/VIC/CIA/SID/IEC/Drive-Snapshots als CSV, `--regression-run` erzeugt einen Headless-Regressionslog plus optionalen Framebuffer-Golden-Master als PPM und SHA-256-Hash. `F8` zeigt im Emulator ein kompaktes Live-Debug-Overlay; `scripts/run-phase4-checks.ps1` prueft die Werkzeugkette.
+Phase-4-Umsetzungsstand: `--trace-cycles` exportiert CPU/VIC/CIA/SID/IEC/Drive-Snapshots als CSV, `--regression-run` erzeugt einen Headless-Regressionslog plus optionalen Framebuffer-Golden-Master als PPM und SHA-256-Hash. Der Emulator besitzt ein kompaktes Live-Debug-Overlay fuer Diagnosezwecke; `scripts/run-phase4-checks.ps1` prueft die Werkzeugkette.
 
 ## Bewertungsraster
 
