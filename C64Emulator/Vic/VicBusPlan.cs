@@ -137,6 +137,25 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Activates sprite DMA fetch slots for the current line.
+        /// </summary>
+        public void ActivateSpriteDma(int spriteIndex)
+        {
+            if ((uint)spriteIndex >= 8)
+            {
+                return;
+            }
+
+            int pointerCycle = GetPointerCycle(spriteIndex);
+            int nextCycle = (pointerCycle % 63) + 1;
+
+            SetPhi2Action(pointerCycle, VicBusAction.SpriteDataFetch, spriteIndex, true);
+            SetPhi1Action(nextCycle, VicBusAction.SpriteDataFetch, spriteIndex);
+            SetPhi2Action(nextCycle, VicBusAction.SpriteDataFetch, spriteIndex, true);
+            MarkBusRequestPending(pointerCycle);
+        }
+
+        /// <summary>
         /// Handles the mark bus request pending operation.
         /// </summary>
         private void MarkBusRequestPending(int firstBlockedCycle)

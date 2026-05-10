@@ -65,6 +65,8 @@ namespace C64Emulator.Core
 
             int failures = 0;
             failures += RunCase(output, "VIC frame timing", TestVicFrameTiming);
+            failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
+            failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
@@ -127,6 +129,54 @@ namespace C64Emulator.Core
                 context.Equal("cycle after one PAL frame", 0, frame.CycleInLine);
                 context.Equal("global after one PAL frame", 19656L, frame.GlobalCycle);
             }
+        }
+
+        private static void TestVicRasterIrqCompareIsCycleDriven(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x1A, 0x01);
+            vic.Write(0x12, 0x00);
+            context.True("D012 write alone does not assert raster IRQ", !vic.IsIrqAsserted());
+
+            vic.Tick();
+            context.True("line 0 cycle 0 compare has not fired yet", !vic.IsIrqAsserted());
+            vic.Tick();
+            context.True("line 0 cycle 1 compare asserts raster IRQ", vic.IsIrqAsserted());
+        }
+
+        private static void TestVicSpriteDmaStartsAtYCompareCycle(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x15, 0x01);
+            vic.Write(0x01, 0x00);
+
+            for (int cycle = 1; cycle < 55; cycle++)
+            {
+                vic.PrepareCycle();
+                if (cycle == 54)
+                {
+                    context.True("sprite DMA is not requested before Y compare", !vic.HasBusRequestPendingThisCycle());
+                }
+
+                vic.FinishCycle();
+            }
+
+            vic.PrepareCycle();
+            context.True("sprite DMA request begins at cycle 55", vic.HasBusRequestPendingThisCycle());
+            vic.FinishCycle();
+
+            vic.Tick();
+            vic.Tick();
+
+            vic.PrepareCycle();
+            context.True("sprite 0 DMA blocks CPU at cycle 58", vic.RequiresBusThisCycle());
+            vic.FinishCycle();
         }
 
         private static void TestVicBusPlanGoldenSlots(AccuracyContext context)

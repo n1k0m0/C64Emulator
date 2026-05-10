@@ -77,12 +77,30 @@ namespace C64Emulator.Core
         private readonly byte[] _registers = new byte[0x40];
         private readonly VicBusPlan _busPlan = new VicBusPlan();
         private readonly bool[] _spriteDmaActive = new bool[8];
+        private readonly bool[] _spriteDmaLatched = new bool[8];
         private readonly bool[] _spriteLineVisible = new bool[8];
         private readonly bool[] _spriteExpandFlipFlop = new bool[8];
         private readonly int[] _spriteCurrentRow = new int[8];
         private readonly int[] _spriteFetchRow = new int[8];
         private readonly int[] _spriteFetchPhase = new int[8];
         private readonly int[] _spriteDisplayRow = new int[8];
+        private readonly int[] _spriteLatchedX = new int[8];
+        private readonly int[] _spriteLatchedY = new int[8];
+        private readonly bool[] _spriteLatchedXExpanded = new bool[8];
+        private readonly bool[] _spriteLatchedYExpanded = new bool[8];
+        private readonly bool[] _spriteLatchedMulticolor = new bool[8];
+        private readonly byte[] _spriteLatchedColor = new byte[8];
+        private readonly int[] _spriteLineX = new int[8];
+        private readonly int[] _spriteLineY = new int[8];
+        private readonly bool[] _spriteLineXExpanded = new bool[8];
+        private readonly bool[] _spriteLineYExpanded = new bool[8];
+        private readonly bool[] _spriteLineMulticolor = new bool[8];
+        private readonly byte[] _spriteLineColor = new byte[8];
+        private readonly bool[] _spriteLineDataValid = new bool[8];
+        private readonly byte[] _spriteLineDataByte0 = new byte[8];
+        private readonly byte[] _spriteLineDataByte1 = new byte[8];
+        private readonly byte[] _spriteLineDataByte2 = new byte[8];
+        private readonly int[] _spriteLineDisplayRow = new int[8];
         private readonly bool[] _spriteDataValid = new bool[8];
         private readonly byte[] _spritePointers = new byte[8];
         private readonly byte[] _spriteDataByte0 = new byte[8];
@@ -99,6 +117,7 @@ namespace C64Emulator.Core
         private readonly bool[] _videoPatternBitmapModes = new bool[VisibleColumns];
         private readonly bool[] _videoPatternExtendedColorModes = new bool[VisibleColumns];
         private readonly bool[] _videoPatternMulticolorModes = new bool[VisibleColumns];
+        private readonly bool[] _videoPatternIdle = new bool[VisibleColumns];
         private readonly PixelResult[] _graphicsOutputDelay = new PixelResult[GraphicsOutputDelayPixels];
 
         private int _rasterLine;
@@ -223,6 +242,7 @@ namespace C64Emulator.Core
         {
             _busPlan.LoadState(reader);
             StateSerializer.ReadObjectFields(reader, this, "_bus", "_frameBuffer", "_model", "_busPlan");
+            RepairSpriteDmaLatchAfterLoad();
         }
 
         /// <summary>
@@ -252,6 +272,7 @@ namespace C64Emulator.Core
             }
 
             UpdateGraphicsStateForCurrentCycle();
+            UpdateSpriteDmaStartForCurrentCycle();
             ApplyGraphicsBusOverrides();
             _cpuBusBlockedThisCycle = _currentBusSlot.BlocksCpu;
             ExecuteFetchAction(_currentBusSlot.Phi1Action);
@@ -286,6 +307,8 @@ namespace C64Emulator.Core
         /// </summary>
         private void EndRasterLine()
         {
+            System.Array.Clear(_spriteLineVisible, 0, _spriteLineVisible.Length);
+            System.Array.Clear(_spriteLineDataValid, 0, _spriteLineDataValid.Length);
         }
 
         /// <summary>
@@ -360,12 +383,10 @@ namespace C64Emulator.Core
                 case 0x11:
                     _registers[0x11] = value;
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x00FF) | ((value & 0x80) << 1));
-                    TriggerRasterIrqIfMatched();
                     break;
                 case 0x12:
                     _registers[0x12] = value;
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x0100) | value);
-                    TriggerRasterIrqIfMatched();
                     break;
                 case 0x19:
                     _irqFlags = (byte)(_irqFlags & ~(value & 0x0F));
@@ -502,12 +523,30 @@ namespace C64Emulator.Core
             _bitmapLinePixelRow = -1;
             _previousBitmapDisplayLine = false;
             System.Array.Clear(_spriteDmaActive, 0, _spriteDmaActive.Length);
+            System.Array.Clear(_spriteDmaLatched, 0, _spriteDmaLatched.Length);
             System.Array.Clear(_spriteLineVisible, 0, _spriteLineVisible.Length);
             System.Array.Clear(_spriteExpandFlipFlop, 0, _spriteExpandFlipFlop.Length);
             System.Array.Clear(_spriteCurrentRow, 0, _spriteCurrentRow.Length);
             System.Array.Clear(_spriteFetchRow, 0, _spriteFetchRow.Length);
             System.Array.Clear(_spriteFetchPhase, 0, _spriteFetchPhase.Length);
             System.Array.Clear(_spriteDisplayRow, 0, _spriteDisplayRow.Length);
+            System.Array.Clear(_spriteLatchedX, 0, _spriteLatchedX.Length);
+            System.Array.Clear(_spriteLatchedY, 0, _spriteLatchedY.Length);
+            System.Array.Clear(_spriteLatchedXExpanded, 0, _spriteLatchedXExpanded.Length);
+            System.Array.Clear(_spriteLatchedYExpanded, 0, _spriteLatchedYExpanded.Length);
+            System.Array.Clear(_spriteLatchedMulticolor, 0, _spriteLatchedMulticolor.Length);
+            System.Array.Clear(_spriteLatchedColor, 0, _spriteLatchedColor.Length);
+            System.Array.Clear(_spriteLineX, 0, _spriteLineX.Length);
+            System.Array.Clear(_spriteLineY, 0, _spriteLineY.Length);
+            System.Array.Clear(_spriteLineXExpanded, 0, _spriteLineXExpanded.Length);
+            System.Array.Clear(_spriteLineYExpanded, 0, _spriteLineYExpanded.Length);
+            System.Array.Clear(_spriteLineMulticolor, 0, _spriteLineMulticolor.Length);
+            System.Array.Clear(_spriteLineColor, 0, _spriteLineColor.Length);
+            System.Array.Clear(_spriteLineDataValid, 0, _spriteLineDataValid.Length);
+            System.Array.Clear(_spriteLineDataByte0, 0, _spriteLineDataByte0.Length);
+            System.Array.Clear(_spriteLineDataByte1, 0, _spriteLineDataByte1.Length);
+            System.Array.Clear(_spriteLineDataByte2, 0, _spriteLineDataByte2.Length);
+            System.Array.Clear(_spriteLineDisplayRow, 0, _spriteLineDisplayRow.Length);
             System.Array.Clear(_spriteDataValid, 0, _spriteDataValid.Length);
             System.Array.Clear(_spritePointers, 0, _spritePointers.Length);
             System.Array.Clear(_spriteDataByte0, 0, _spriteDataByte0.Length);
@@ -524,6 +563,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_videoPatternBitmapModes, 0, _videoPatternBitmapModes.Length);
             System.Array.Clear(_videoPatternExtendedColorModes, 0, _videoPatternExtendedColorModes.Length);
             System.Array.Clear(_videoPatternMulticolorModes, 0, _videoPatternMulticolorModes.Length);
+            System.Array.Clear(_videoPatternIdle, 0, _videoPatternIdle.Length);
             _currentBusSlot = default(VicBusSlot);
             _displayEnableFrameLatched = false;
             _lineDisplayEnabled = true;
@@ -591,7 +631,8 @@ namespace C64Emulator.Core
                 frameY < _lineDisplayBottomFrame;
 
             int sourceFrameX = frameX + GraphicsOutputDelayPixels;
-            bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY);
+            bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY) &&
+                IsGraphicsSourceActiveForCurrentCycle();
             PixelResult graphicsPixel = sourceGraphicsVisible
                 ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - _lineDisplayTopFrame)
                 : CreateBackgroundPixel(GetBackgroundColor(0));
@@ -618,6 +659,14 @@ namespace C64Emulator.Core
                 frameX < _lineDisplayRightFrame &&
                 frameY >= _lineDisplayTopFrame &&
                 frameY < _lineDisplayBottomFrame;
+        }
+
+        /// <summary>
+        /// Returns whether the current cycle should feed visible graphics into the output delay.
+        /// </summary>
+        private bool IsGraphicsSourceActiveForCurrentCycle()
+        {
+            return _graphicsDisplayState || (_cycleInLine + 1) < 16;
         }
 
         /// <summary>
@@ -748,6 +797,11 @@ namespace C64Emulator.Core
             bool hasLatchedPattern = _videoPatternValid &&
                 _videoPatternPixelRow >= 0 &&
                 _videoPatternFetched[cellX];
+            if (hasLatchedPattern && _videoPatternIdle[cellX])
+            {
+                return false;
+            }
+
             bool hasLatchedMatrix = _videoMatrixValid &&
                 _videoMatrixFetched[cellX];
             bool currentBitmapMode = hasLatchedPattern
@@ -767,10 +821,10 @@ namespace C64Emulator.Core
                 int lineMatrixBaseIndex = GetGraphicsLineMatrixBaseIndex(cellY);
                 int matrixIndex = NormalizeVideoMatrixIndex(lineMatrixBaseIndex + cellX);
 
-                _graphicsSequencerScreenCode = (CanUseLatchedMatrixCell(cellX, true))
+                _graphicsSequencerScreenCode = CanUseLatchedMatrixCell(cellX, true)
                     ? _videoMatrixScreenCodes[cellX]
                     : ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
-                _graphicsSequencerColorNibble = (CanUseLatchedMatrixCell(cellX, true))
+                _graphicsSequencerColorNibble = CanUseLatchedMatrixCell(cellX, true)
                     ? _videoMatrixColorNibbles[cellX]
                     : _bus.ReadColorRam((ushort)matrixIndex);
                 bool useLatchedBitmapPattern = _videoPatternValid &&
@@ -912,12 +966,8 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            int spriteX = _registers[spriteIndex * 2];
-            int spriteY = _registers[(spriteIndex * 2) + 1];
-            if (((_registers[0x10] >> spriteIndex) & 0x01) != 0)
-            {
-                spriteX += 256;
-            }
+            int spriteX = _spriteLineX[spriteIndex];
+            int spriteY = _spriteLineY[spriteIndex];
 
             int localX = frameX - GetSpriteFrameLeft(spriteX);
             if (localX < 0)
@@ -925,8 +975,8 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            bool xExpanded = ((_registers[0x1D] >> spriteIndex) & 0x01) != 0;
-            bool yExpanded = ((_registers[0x17] >> spriteIndex) & 0x01) != 0;
+            bool xExpanded = _spriteLineXExpanded[spriteIndex];
+            bool yExpanded = _spriteLineYExpanded[spriteIndex];
             int localY = frameY - GetSpriteFrameTop(spriteY);
             if (localY < 0)
             {
@@ -948,17 +998,17 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            if (!_spriteDataValid[spriteIndex] || localY != _spriteDisplayRow[spriteIndex])
+            if (!_spriteLineDataValid[spriteIndex] || localY != _spriteLineDisplayRow[spriteIndex])
             {
                 return false;
             }
 
-            byte data0 = _spriteDataByte0[spriteIndex];
-            byte data1 = _spriteDataByte1[spriteIndex];
-            byte data2 = _spriteDataByte2[spriteIndex];
+            byte data0 = _spriteLineDataByte0[spriteIndex];
+            byte data1 = _spriteLineDataByte1[spriteIndex];
+            byte data2 = _spriteLineDataByte2[spriteIndex];
             uint spriteBits = (uint)((data0 << 16) | (data1 << 8) | data2);
 
-            if (((_registers[0x1C] >> spriteIndex) & 0x01) != 0)
+            if (_spriteLineMulticolor[spriteIndex])
             {
                 int pair = (int)((spriteBits >> ((11 - (localX / 2)) * 2)) & 0x03);
                 switch (pair)
@@ -969,7 +1019,7 @@ namespace C64Emulator.Core
                         spriteColor = Palette[_registers[0x25] & 0x0F];
                         return true;
                     case 2:
-                        spriteColor = Palette[_registers[0x27 + spriteIndex] & 0x0F];
+                        spriteColor = Palette[_spriteLineColor[spriteIndex] & 0x0F];
                         return true;
                     default:
                         spriteColor = Palette[_registers[0x26] & 0x0F];
@@ -982,7 +1032,7 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            spriteColor = Palette[_registers[0x27 + spriteIndex] & 0x0F];
+            spriteColor = Palette[_spriteLineColor[spriteIndex] & 0x0F];
             return true;
         }
 
@@ -1317,10 +1367,34 @@ namespace C64Emulator.Core
             System.Array.Clear(_videoPatternBitmapModes, 0, _videoPatternBitmapModes.Length);
             System.Array.Clear(_videoPatternExtendedColorModes, 0, _videoPatternExtendedColorModes.Length);
             System.Array.Clear(_videoPatternMulticolorModes, 0, _videoPatternMulticolorModes.Length);
+            System.Array.Clear(_videoPatternIdle, 0, _videoPatternIdle.Length);
             UpdateSpriteLineState();
             _busPlan.BuildLine(false, _spriteDmaActive);
             _currentBusSlot = _busPlan.GetSlot(0);
             ResetGraphicsOutputDelayLine();
+        }
+
+        /// <summary>
+        /// Reconstructs latch metadata for savestates written before sprite DMA latching existed.
+        /// </summary>
+        private void RepairSpriteDmaLatchAfterLoad()
+        {
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                if (_spriteDmaLatched[spriteIndex] || (!_spriteDmaActive[spriteIndex] && !_spriteLineVisible[spriteIndex]))
+                {
+                    continue;
+                }
+
+                _spriteDmaLatched[spriteIndex] = true;
+                _spriteLatchedX[spriteIndex] = _registers[spriteIndex * 2] +
+                    (((_registers[0x10] >> spriteIndex) & 0x01) != 0 ? 256 : 0);
+                _spriteLatchedY[spriteIndex] = _registers[(spriteIndex * 2) + 1];
+                _spriteLatchedXExpanded[spriteIndex] = ((_registers[0x1D] >> spriteIndex) & 0x01) != 0;
+                _spriteLatchedYExpanded[spriteIndex] = ((_registers[0x17] >> spriteIndex) & 0x01) != 0;
+                _spriteLatchedMulticolor[spriteIndex] = ((_registers[0x1C] >> spriteIndex) & 0x01) != 0;
+                _spriteLatchedColor[spriteIndex] = _registers[0x27 + spriteIndex];
+            }
         }
 
         /// <summary>
@@ -1432,8 +1506,7 @@ namespace C64Emulator.Core
         private static bool IsDisplaySourceFetch(VicBusAction action)
         {
             return action == VicBusAction.MatrixFetch ||
-                action == VicBusAction.CharFetch ||
-                action == VicBusAction.SpritePointerFetch;
+                action == VicBusAction.CharFetch;
         }
 
         /// <summary>
@@ -1601,6 +1674,7 @@ namespace C64Emulator.Core
                     _spriteDataByte2[spriteIndex] = 0xFF;
                     _spriteDisplayRow[spriteIndex] = _spriteFetchRow[spriteIndex];
                     _spriteDataValid[spriteIndex] = true;
+                    CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
             }
 
@@ -1648,6 +1722,7 @@ namespace C64Emulator.Core
                 _videoPatternBitmapModes[cellX] = _displaySourceBitmapMode;
                 _videoPatternExtendedColorModes[cellX] = _displaySourceExtendedColorMode;
                 _videoPatternMulticolorModes[cellX] = _displaySourceMulticolorMode;
+                _videoPatternIdle[cellX] = false;
                 _videoPatternBitmapMode = _displaySourceBitmapMode;
                 _graphicsVc = NormalizeVideoMatrixIndex(_graphicsVc + 1);
                 _graphicsVmli = (_graphicsVmli + 1) & 0x3F;
@@ -1670,6 +1745,7 @@ namespace C64Emulator.Core
             _videoPatternBitmapModes[idleCellX] = _displaySourceBitmapMode;
             _videoPatternExtendedColorModes[idleCellX] = _displaySourceExtendedColorMode;
             _videoPatternMulticolorModes[idleCellX] = _displaySourceMulticolorMode;
+            _videoPatternIdle[idleCellX] = true;
             _videoPatternBitmapMode = _displaySourceBitmapMode;
         }
 
@@ -1683,7 +1759,7 @@ namespace C64Emulator.Core
                 return;
             }
 
-            ushort pointerAddress = (ushort)(_displaySourceScreenBaseAbsolute + 0x03F8 + spriteIndex);
+            ushort pointerAddress = (ushort)(GetScreenBaseAbsoluteFromRegisters() + 0x03F8 + spriteIndex);
             _spritePointers[spriteIndex] = ReadVicAbsolute(pointerAddress);
         }
 
@@ -1723,6 +1799,7 @@ namespace C64Emulator.Core
                     _spriteDataByte2[spriteIndex] = value;
                     _spriteDisplayRow[spriteIndex] = row;
                     _spriteDataValid[spriteIndex] = true;
+                    CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
             }
 
@@ -1859,6 +1936,7 @@ namespace C64Emulator.Core
                 System.Array.Clear(_videoPatternBitmapModes, 0, _videoPatternBitmapModes.Length);
                 System.Array.Clear(_videoPatternExtendedColorModes, 0, _videoPatternExtendedColorModes.Length);
                 System.Array.Clear(_videoPatternMulticolorModes, 0, _videoPatternMulticolorModes.Length);
+                System.Array.Clear(_videoPatternIdle, 0, _videoPatternIdle.Length);
                 return;
             }
 
@@ -1873,6 +1951,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_videoPatternBitmapModes, 0, _videoPatternBitmapModes.Length);
             System.Array.Clear(_videoPatternExtendedColorModes, 0, _videoPatternExtendedColorModes.Length);
             System.Array.Clear(_videoPatternMulticolorModes, 0, _videoPatternMulticolorModes.Length);
+            System.Array.Clear(_videoPatternIdle, 0, _videoPatternIdle.Length);
         }
 
         /// <summary>
@@ -1976,57 +2055,180 @@ namespace C64Emulator.Core
                 if (!enabled)
                 {
                     _spriteLineVisible[spriteIndex] = false;
+                    _spriteLineDataValid[spriteIndex] = false;
                     _spriteDmaActive[spriteIndex] = false;
+                    _spriteDmaLatched[spriteIndex] = false;
                     _spriteDataValid[spriteIndex] = false;
                     _spriteFetchPhase[spriteIndex] = 0;
                     continue;
                 }
 
-                int spriteX = _registers[spriteIndex * 2];
-                if (((_registers[0x10] >> spriteIndex) & 0x01) != 0)
+                if (!_spriteDmaLatched[spriteIndex])
                 {
-                    spriteX += 256;
+                    _spriteLineVisible[spriteIndex] = false;
+                    _spriteDmaActive[spriteIndex] = false;
+                    continue;
                 }
 
-                int spriteY = _registers[(spriteIndex * 2) + 1];
-                int spriteStart = GetSpriteVisibleStartRasterLine(spriteY, spriteX);
-                bool yExpanded = ((_registers[0x17] >> spriteIndex) & 0x01) != 0;
-                int visibleLines = yExpanded ? 42 : 21;
-                int visibleDelta = _rasterLine - spriteStart;
                 _spriteFetchPhase[spriteIndex] = 0;
+                UpdateLatchedSpriteLineState(spriteIndex, false);
+            }
+        }
 
-                if (enabled && visibleDelta >= 0 && visibleDelta < visibleLines)
+        /// <summary>
+        /// Updates sprite DMA start at the VIC-II Y-compare point.
+        /// </summary>
+        private void UpdateSpriteDmaStartForCurrentCycle()
+        {
+            if (_cycleInLine + 1 != 55)
+            {
+                return;
+            }
+
+            bool activatedAnySprite = false;
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                if (_spriteDmaLatched[spriteIndex])
                 {
-                    _spriteLineVisible[spriteIndex] = true;
-                    if (yExpanded)
-                    {
-                        if (visibleDelta > 0)
-                        {
-                            _spriteExpandFlipFlop[spriteIndex] = !_spriteExpandFlipFlop[spriteIndex];
-                        }
+                    continue;
+                }
 
-                        _spriteCurrentRow[spriteIndex] = visibleDelta / 2;
-                    }
-                    else
+                bool enabled = ((_registers[0x15] >> spriteIndex) & 0x01) != 0;
+                int spriteY = _registers[(spriteIndex * 2) + 1];
+                if (!enabled || _rasterLine != spriteY)
+                {
+                    continue;
+                }
+
+                LatchSpriteDma(spriteIndex);
+                UpdateLatchedSpriteLineState(spriteIndex, true);
+                _busPlan.ActivateSpriteDma(spriteIndex);
+                activatedAnySprite = true;
+            }
+
+            if (activatedAnySprite)
+            {
+                _currentBusSlot = _busPlan.GetSlot(_cycleInLine);
+            }
+        }
+
+        /// <summary>
+        /// Latches the current register values for a new sprite DMA instance.
+        /// </summary>
+        private void LatchSpriteDma(int spriteIndex)
+        {
+            int spriteX = _registers[spriteIndex * 2];
+            if (((_registers[0x10] >> spriteIndex) & 0x01) != 0)
+            {
+                spriteX += 256;
+            }
+
+            bool yExpanded = ((_registers[0x17] >> spriteIndex) & 0x01) != 0;
+            _spriteDmaLatched[spriteIndex] = true;
+            _spriteLatchedX[spriteIndex] = spriteX;
+            _spriteLatchedY[spriteIndex] = _registers[(spriteIndex * 2) + 1];
+            _spriteLatchedXExpanded[spriteIndex] = ((_registers[0x1D] >> spriteIndex) & 0x01) != 0;
+            _spriteLatchedYExpanded[spriteIndex] = yExpanded;
+            _spriteLatchedMulticolor[spriteIndex] = ((_registers[0x1C] >> spriteIndex) & 0x01) != 0;
+            _spriteLatchedColor[spriteIndex] = _registers[0x27 + spriteIndex];
+            _spriteExpandFlipFlop[spriteIndex] = !yExpanded;
+            _spriteDataValid[spriteIndex] = false;
+            _spriteFetchPhase[spriteIndex] = 0;
+        }
+
+        /// <summary>
+        /// Updates the current raster-line state for a latched sprite DMA instance.
+        /// </summary>
+        private void UpdateLatchedSpriteLineState(int spriteIndex, bool preserveCurrentLine)
+        {
+            int latchedY = _spriteLatchedY[spriteIndex];
+            bool latchedYExpanded = _spriteLatchedYExpanded[spriteIndex];
+            int spriteStart = GetSpriteVisibleStartRasterLine(latchedY, _spriteLatchedX[spriteIndex]);
+            int visibleLines = latchedYExpanded ? 42 : 21;
+            int visibleDelta = _rasterLine - spriteStart;
+
+            if (visibleDelta >= 0 && visibleDelta < visibleLines)
+            {
+                LatchSpriteRenderLine(spriteIndex);
+                if (latchedYExpanded)
+                {
+                    if (visibleDelta > 0)
                     {
-                        _spriteCurrentRow[spriteIndex] = visibleDelta;
+                        _spriteExpandFlipFlop[spriteIndex] = !_spriteExpandFlipFlop[spriteIndex];
                     }
+
+                    _spriteCurrentRow[spriteIndex] = visibleDelta / 2;
                 }
                 else
                 {
-                    _spriteLineVisible[spriteIndex] = false;
-                }
-
-                int fetchDelta = spriteIndex <= 2 ? (_rasterLine - spriteY) : visibleDelta;
-                _spriteDmaActive[spriteIndex] = enabled && fetchDelta >= 0 && fetchDelta < visibleLines;
-                _spriteFetchRow[spriteIndex] = ComputeSpriteFetchRow(fetchDelta, yExpanded);
-
-                if (_rasterLine == spriteY)
-                {
-                    _spriteExpandFlipFlop[spriteIndex] = !yExpanded;
-                    _spriteDataValid[spriteIndex] = false;
+                    _spriteCurrentRow[spriteIndex] = visibleDelta;
                 }
             }
+            else if (!preserveCurrentLine)
+            {
+                _spriteLineVisible[spriteIndex] = false;
+                _spriteLineDataValid[spriteIndex] = false;
+            }
+
+            int fetchDelta = spriteIndex <= 2 ? (_rasterLine - latchedY) : visibleDelta;
+            if (fetchDelta >= visibleLines)
+            {
+                _spriteDmaActive[spriteIndex] = false;
+                _spriteDmaLatched[spriteIndex] = false;
+                _spriteFetchRow[spriteIndex] = 20;
+                _spriteFetchPhase[spriteIndex] = 0;
+                _spriteDataValid[spriteIndex] = false;
+                return;
+            }
+
+            _spriteDmaActive[spriteIndex] = fetchDelta >= 0;
+            _spriteFetchRow[spriteIndex] = ComputeSpriteFetchRow(fetchDelta, latchedYExpanded);
+        }
+
+        /// <summary>
+        /// Latches the sprite state used by the current raster line renderer.
+        /// </summary>
+        private void LatchSpriteRenderLine(int spriteIndex)
+        {
+            _spriteLineVisible[spriteIndex] = true;
+            _spriteLineX[spriteIndex] = _spriteLatchedX[spriteIndex];
+            _spriteLineY[spriteIndex] = _spriteLatchedY[spriteIndex];
+            _spriteLineXExpanded[spriteIndex] = _spriteLatchedXExpanded[spriteIndex];
+            _spriteLineYExpanded[spriteIndex] = _spriteLatchedYExpanded[spriteIndex];
+            _spriteLineMulticolor[spriteIndex] = _spriteLatchedMulticolor[spriteIndex];
+            _spriteLineColor[spriteIndex] = _spriteLatchedColor[spriteIndex];
+            CaptureSpriteLineData(spriteIndex);
+        }
+
+        /// <summary>
+        /// Copies the most recently fetched sprite data into the current raster line renderer.
+        /// </summary>
+        private void CaptureSpriteLineData(int spriteIndex)
+        {
+            if (!_spriteDataValid[spriteIndex])
+            {
+                _spriteLineDataValid[spriteIndex] = false;
+                return;
+            }
+
+            _spriteLineDataByte0[spriteIndex] = _spriteDataByte0[spriteIndex];
+            _spriteLineDataByte1[spriteIndex] = _spriteDataByte1[spriteIndex];
+            _spriteLineDataByte2[spriteIndex] = _spriteDataByte2[spriteIndex];
+            _spriteLineDisplayRow[spriteIndex] = _spriteDisplayRow[spriteIndex];
+            _spriteLineDataValid[spriteIndex] = true;
+        }
+
+        /// <summary>
+        /// Updates current-line sprite data only when the line belongs to the active DMA instance.
+        /// </summary>
+        private void CaptureSpriteLineDataForCurrentDma(int spriteIndex)
+        {
+            if (!_spriteLineVisible[spriteIndex] || _spriteLineY[spriteIndex] != _spriteLatchedY[spriteIndex])
+            {
+                return;
+            }
+
+            CaptureSpriteLineData(spriteIndex);
         }
 
         /// <summary>
