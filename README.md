@@ -2,6 +2,14 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
+`SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
+
+The original source code of my emulator started in 2017 as a welcome change of pace while I was writing my dissertation. That first version already supported the C64 ROMs, basic PRG loading, and an early working VIC-II implementation, but it was still far from a polished emulator. SID audio did not exist yet at all.
+
+With the help of modern AI tooling, I have now returned to the project and expanded it substantially, as described below. For me, this emulator is about the joy of coding, the fun of exploring what current AI-assisted development makes possible, and, of course, the pleasure of playing with my beloved C64 again through an emulator of my own.
+
+This project is not intended to replace the excellent VICE emulator in any way. Above all, it is a personal side project built for the fun of working on it. Perhaps it can also serve as a useful reference for people who are curious about writing their own emulator or exploring AI-assisted software development.
+
 ## Screenshots
 
 | C64 boot screen | Settings overlay | Save/load overlay |
@@ -43,6 +51,50 @@ A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering front
 | `Enter` / `L` in savestate menu | Load the selected savestate. |
 | `Del` in savestate menu | Delete the selected savestate. |
 | `Esc` | Close the active emulator overlay. |
+
+## F10 Settings Menu
+
+`F10` opens the main runtime settings overlay. Emulation is paused while this menu is open, so it is safe to change media, reset behavior, input, video, and compatibility options without the machine continuing to run in the background.
+
+Navigation inside the menu:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move through the menu entries. The menu scrolls when needed. |
+| `Left` / `Right` | Adjust the selected value or trigger the selected toggle. |
+| `-` / `+` | Same as `Left` / `Right` for adjustable settings. |
+| `Enter` | Activate the selected entry. For simple toggles this changes the value; for `MEDIA` and `RESET` it opens the related sub-menu. |
+| `Esc` | Close the settings menu and resume emulation. |
+
+Menu entries:
+
+| Entry | Values / Action | Details |
+| --- | --- | --- |
+| `MASTER VOLUME` | Low to high | Controls the host-side SID output level. Use this to balance emulator audio against the Windows/system volume without changing the emulated program. |
+| `NOISE LEVEL` | Soft to harsh | Adjusts the generated SID noise amount. Lower values are cleaner; higher values make noise-heavy effects more aggressive. |
+| `SID MODEL` | `6581` / `8580` | Switches the SID character model. `6581` is the older, rougher sounding chip family; `8580` is cleaner and behaves differently for some filters and digi tricks. |
+| `JOYSTICK` | `PORT 2`, `PORT 1`, `BOTH` | Selects which C64 joystick port receives keyboard/gamepad joystick input. Most C64 games use port 2, while some use port 1. `BOTH` mirrors input to both ports for convenience. |
+| `MEDIA` | Browse / mounted media label | Opens the media browser with `Enter` or `Right`. `Left` ejects the currently mounted media. The browser can mount `.prg` and `.d64` files. |
+| `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
+| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
+| `TURBO` | `OFF` / `MAX` | Toggles uncapped emulation speed for fast loading, testing, or skipping waits. This is the same action as `F9`. |
+| `GAMEPAD` | `OFF`, `WAITING`, `ACTIVE` | Enables or disables host gamepad input. `WAITING` means gamepad support is on but no active pad input has been detected yet; `ACTIVE` means a pad is connected/seen. |
+| `LOAD HACK` | `OFF` / `ON` | Enables the direct KERNAL `LOAD` compatibility path. It improves convenience for simple loads, but is less hardware-faithful than pure IEC/drive behavior. |
+| `IEC SOFTWARE` | `OFF` / `ON` | Toggles the high-level software IEC/DOS transport for standard disk traffic. This can improve compatibility for normal file access, while low-level custom loaders may still need more accurate 1541 behavior. |
+| `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
+| `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
+| `RESET` | Confirmation dialog | Opens a confirmation prompt for the selected reset mode. Use `Left` / `Right` to choose `YES` or `NO`, `Enter` to confirm, and `Esc` / `Backspace` to cancel. |
+
+The `MEDIA` browser opened from the F10 menu has its own controls:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Select a directory or media file. |
+| `Enter` | Enter a directory or mount the selected `.prg` / `.d64`. |
+| `Backspace` | Go to the parent directory. |
+| `Left` / `Right` | Change the target drive from 8 to 11. |
+| `8` / `9` / `0` / `1` | Select target drive 8, 9, 10, or 11. |
+| `Esc` | Close the media browser and return to the F10 menu. |
 
 ## Project Layout
 
