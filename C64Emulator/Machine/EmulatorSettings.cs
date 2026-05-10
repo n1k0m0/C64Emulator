@@ -54,6 +54,8 @@ namespace C64Emulator.Core
         public bool DriveOverlayEnabled { get; set; } = true;
 
         public int MediaBrowserTargetDrive { get; set; } = 8;
+
+        public string MediaBrowserDirectory { get; set; } = string.Empty;
     }
 
     /// <summary>

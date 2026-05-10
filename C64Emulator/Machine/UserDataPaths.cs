@@ -54,6 +54,20 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets the per-user media directory for user-owned PRG and D64 files.
+        /// </summary>
+        public static string GetMediaDirectory()
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (string.IsNullOrWhiteSpace(documents))
+            {
+                documents = GetBaseDirectory();
+            }
+
+            return Path.Combine(documents, "C64Emulator");
+        }
+
+        /// <summary>
         /// Gets the per-user settings file path.
         /// </summary>
         public static string GetSettingsPath()

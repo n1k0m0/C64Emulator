@@ -188,7 +188,7 @@ PRG files are loaded directly into C64 memory. D64 files are mounted into an emu
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
 
-Media can be selected from the `F10` browser or dropped directly onto the emulator window. Dropped D64 images use the menu's current target drive.
+Media can be selected from the `F10` browser or dropped directly onto the emulator window. The default user media directory is `%USERPROFILE%\Documents\C64Emulator`; the emulator creates it on demand and remembers the last media browser directory. Dropped D64 images use the menu's current target drive.
 
 The D64 parser handles the common 35-track layout and extended image sizes where supported by the image parser. Some copy-protected titles or custom fast loaders can still expose gaps in the current 1541 accuracy work.
 
@@ -198,7 +198,7 @@ Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A sa
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, and the media browser target drive. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
 
 ## ROM Files
 

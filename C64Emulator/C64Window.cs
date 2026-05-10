@@ -112,6 +112,7 @@ namespace C64Emulator
         private int _mediaBrowserSelection;
         private int _mediaBrowserScroll;
         private int _mediaBrowserTargetDrive = 8;
+        private string _mediaBrowserLastDirectory;
         private int _saveOverlaySelection;
         private int _saveOverlayScroll;
         private string _mediaBrowserCurrentDirectory;
@@ -201,6 +202,7 @@ namespace C64Emulator
             _gamepadEnabled = settings.GamepadEnabled;
             _driveOverlayEnabled = settings.DriveOverlayEnabled;
             _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
+            _mediaBrowserLastDirectory = NormalizeExistingDirectory(settings.MediaBrowserDirectory);
 
             if (!_gamepadEnabled)
             {
@@ -246,7 +248,8 @@ namespace C64Emulator
                 ForceSoftwareIecTransport = _system.ForceSoftwareIecTransport,
                 EnableInputInjection = _system.EnableInputInjection,
                 DriveOverlayEnabled = _driveOverlayEnabled,
-                MediaBrowserTargetDrive = _mediaBrowserTargetDrive
+                MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
+                MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty
             };
         }
 
@@ -2763,6 +2766,7 @@ namespace C64Emulator
             {
                 _resetConfirmVisible = false;
                 _mediaBrowserCurrentDirectory = ResolveInitialMediaBrowserDirectory();
+                UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, false);
                 _mediaBrowserSelection = 0;
                 _mediaBrowserScroll = 0;
                 ReloadMediaBrowserEntries();
@@ -2808,6 +2812,7 @@ namespace C64Emulator
                 int targetDrive = string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase)
                     ? _mediaBrowserTargetDrive
                     : 8;
+                UpdateLastMediaBrowserDirectory(Path.GetDirectoryName(path), true);
                 _overlayStatusText = _system.MountMedia(path, targetDrive);
                 ResetEmulationTiming();
                 ShowTurboToast(_overlayStatusText);
@@ -3034,10 +3039,16 @@ namespace C64Emulator
                 }
             }
 
-            string currentDirectory = Directory.GetCurrentDirectory();
-            if (!string.IsNullOrWhiteSpace(currentDirectory) && Directory.Exists(currentDirectory))
+            string lastDirectory = NormalizeExistingDirectory(_mediaBrowserLastDirectory);
+            if (!string.IsNullOrWhiteSpace(lastDirectory))
             {
-                return currentDirectory;
+                return lastDirectory;
+            }
+
+            string mediaDirectory = EnsureUserMediaDirectory();
+            if (!string.IsNullOrWhiteSpace(mediaDirectory))
+            {
+                return mediaDirectory;
             }
 
             string documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -3047,6 +3058,69 @@ namespace C64Emulator
             }
 
             return AppDomain.CurrentDomain.BaseDirectory;
+        }
+
+        /// <summary>
+        /// Ensures and returns the standard user media directory.
+        /// </summary>
+        private static string EnsureUserMediaDirectory()
+        {
+            try
+            {
+                string mediaDirectory = UserDataPaths.GetMediaDirectory();
+                if (!string.IsNullOrWhiteSpace(mediaDirectory))
+                {
+                    Directory.CreateDirectory(mediaDirectory);
+                    if (Directory.Exists(mediaDirectory))
+                    {
+                        return mediaDirectory;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Returns an existing directory path or null.
+        /// </summary>
+        private static string NormalizeExistingDirectory(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                {
+                    return Path.GetFullPath(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Stores the last media browser directory without storing mounted media files.
+        /// </summary>
+        private void UpdateLastMediaBrowserDirectory(string path, bool save)
+        {
+            string directory = NormalizeExistingDirectory(path);
+            if (string.IsNullOrWhiteSpace(directory) || string.Equals(directory, _mediaBrowserLastDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _mediaBrowserLastDirectory = directory;
+            if (save)
+            {
+                SaveSettings();
+            }
         }
 
         /// <summary>
@@ -3156,6 +3230,7 @@ namespace C64Emulator
                 if (parent != null)
                 {
                     _mediaBrowserCurrentDirectory = parent.FullName;
+                    UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, true);
                     _mediaBrowserSelection = 0;
                     _mediaBrowserScroll = 0;
                     ReloadMediaBrowserEntries();
@@ -3185,12 +3260,14 @@ namespace C64Emulator
             if (entry.IsDirectory)
             {
                 _mediaBrowserCurrentDirectory = entry.Path;
+                UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, true);
                 _mediaBrowserSelection = 0;
                 _mediaBrowserScroll = 0;
                 ReloadMediaBrowserEntries();
                 return;
             }
 
+            UpdateLastMediaBrowserDirectory(Path.GetDirectoryName(entry.Path), true);
             _overlayStatusText = _system.MountMedia(entry.Path, _mediaBrowserTargetDrive);
             _mediaBrowserVisible = false;
         }
