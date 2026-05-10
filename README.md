@@ -196,7 +196,9 @@ Savestates are stored as individual files in the `saves` directory next to the e
 
 ## ROM Files
 
-The emulator expects the required C64 and 1541 ROM binary files in the `C64Emulator/` project directory. They are copied to the output folder during the build.
+The emulator expects the required C64 and 1541 ROM binary files in `%APPDATA%\C64Emulator\roms`. ROM files in the application/build directory are still accepted for development builds, but the per-user AppData directory is the preferred location for normal use.
+
+On GUI startup, the emulator checks whether the required ROM files can be found. If one or more files are missing, it offers to download the reference ROMs from zimmers.net into `%APPDATA%\C64Emulator\roms`, shows a separate progress bar for each missing file, verifies the SHA-256 checksum, and saves the downloaded files under the local emulator file names listed below. After a successful download, the dialog waits for the user to continue; after an error, the user can retry or cancel, which exits the emulator startup.
 
 The currently expected ROM files correspond to these reference files:
 

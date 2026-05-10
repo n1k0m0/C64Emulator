@@ -141,6 +141,11 @@ namespace C64Emulator
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            if (!RomStartupDownloader.EnsureRequiredRoms())
+            {
+                return;
+            }
+
             try
             {
                 using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))

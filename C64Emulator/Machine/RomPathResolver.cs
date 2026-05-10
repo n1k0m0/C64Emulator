@@ -117,12 +117,27 @@ namespace C64Emulator.Core
         {
             var directories = new List<string>();
             AddDirectory(directories, explicitBasePath);
+            AddDirectory(directories, GetUserRomDirectory(), false);
             AddDirectory(directories, AppDomain.CurrentDomain.BaseDirectory);
             AddDirectory(directories, Directory.GetCurrentDirectory());
             AddDirectory(directories, Path.Combine(Directory.GetCurrentDirectory(), "C64Emulator"));
             AddDirectory(directories, Path.GetDirectoryName(Directory.GetCurrentDirectory()));
             AddDirectory(directories, Path.Combine(Path.GetDirectoryName(Directory.GetCurrentDirectory()) ?? string.Empty, "C64Emulator"));
             return directories;
+        }
+
+        /// <summary>
+        /// Gets the per-user ROM directory used by the GUI downloader.
+        /// </summary>
+        public static string GetUserRomDirectory()
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (string.IsNullOrWhiteSpace(appData))
+            {
+                appData = AppDomain.CurrentDomain.BaseDirectory;
+            }
+
+            return Path.Combine(appData, "C64Emulator", "roms");
         }
 
         private static void AppendRomStatus(StringBuilder builder, string label, IEnumerable<string> fileNames, string explicitBasePath)
@@ -147,7 +162,7 @@ namespace C64Emulator.Core
             return builder.ToString();
         }
 
-        private static void AddDirectory(List<string> directories, string directory)
+        private static void AddDirectory(List<string> directories, string directory, bool requireExistingDirectory = true)
         {
             if (string.IsNullOrWhiteSpace(directory))
             {
@@ -164,7 +179,7 @@ namespace C64Emulator.Core
                 return;
             }
 
-            if (!Directory.Exists(fullPath))
+            if (requireExistingDirectory && !Directory.Exists(fullPath))
             {
                 return;
             }
