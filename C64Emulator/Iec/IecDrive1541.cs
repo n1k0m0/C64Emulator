@@ -340,6 +340,15 @@ namespace C64Emulator.Core
         public void MountDisk(D64Image image)
         {
             _mountedImage = image;
+            if (_hardware.HasCustomCodeActive)
+            {
+                // A physical disk swap does not reset the 1541. Fast loaders
+                // such as Maniac Mansion keep their uploaded drive code in RAM
+                // while asking for the next disk side.
+                _hardware.MountDisk(_mountedImage);
+                return;
+            }
+
             Reset();
         }
 
@@ -349,6 +358,12 @@ namespace C64Emulator.Core
         public void EjectDisk()
         {
             _mountedImage = null;
+            if (_hardware.HasCustomCodeActive)
+            {
+                _hardware.EjectDisk();
+                return;
+            }
+
             Reset();
         }
 

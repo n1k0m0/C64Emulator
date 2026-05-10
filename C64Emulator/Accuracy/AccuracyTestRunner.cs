@@ -71,6 +71,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
+            failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
 
             output.WriteLine("Result: " + (failures == 0 ? "OK" : "FAILED"));
             output.WriteLine("Failures=" + failures);
@@ -249,6 +250,37 @@ namespace C64Emulator.Core
                 context.True("ROM transport mode can be selected", !system.ForceSoftwareIecTransport);
                 system.ForceSoftwareIecTransport = true;
                 context.True("software IEC transport can be restored", system.ForceSoftwareIecTransport);
+            }
+        }
+
+        private static void TestDriveDiskSwapPreservesCustomCode(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-empty-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                File.WriteAllBytes(tempPath, new byte[174848]);
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+
+                drive.Hardware.UploadMemory(0x0500, new byte[] { 0xEA, 0xEA, 0xEA });
+                drive.Hardware.ExecuteAt(0x0500);
+                context.True("custom code active before disk mount", drive.HasCustomCodeActive);
+                context.Equal("custom code PC before disk mount", (ushort)0x0500, drive.Hardware.ProgramCounter);
+
+                drive.MountDisk(D64Image.Load(tempPath));
+                context.True("custom code active after disk mount", drive.HasCustomCodeActive);
+                context.Equal("custom code PC after disk mount", (ushort)0x0500, drive.Hardware.ProgramCounter);
+
+                drive.EjectDisk();
+                context.True("custom code active after disk eject", drive.HasCustomCodeActive);
+                context.Equal("custom code PC after disk eject", (ushort)0x0500, drive.Hardware.ProgramCounter);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
             }
         }
     }
