@@ -142,6 +142,11 @@ namespace SharpPixels
         private int _stretchMapSourceHeight;
         private int _stretchMapTargetWidth;
         private int _stretchMapTargetHeight;
+        private Vector2i _windowedClientSize;
+        private Vector2i _windowedLocation;
+        private WindowState _windowedState = WindowState.Normal;
+        private WindowBorder _windowedBorder = WindowBorder.Resizable;
+        private bool _hasWindowedBounds;
 
         private readonly float[] vertices =
         {
@@ -2053,12 +2058,27 @@ namespace SharpPixels
         {
             if (_isFullscreen)
             {
-                WindowBorder = WindowBorder.Resizable;
                 WindowState = WindowState.Normal;
-                ClientSize = new Vector2i(PixelsWidth, PixelsHeight);
+                WindowBorder = _windowedBorder;
+                if (_hasWindowedBounds)
+                {
+                    Location = _windowedLocation;
+                    ClientSize = _windowedClientSize;
+                }
+
+                if (_windowedState != WindowState.Fullscreen)
+                {
+                    WindowState = _windowedState;
+                }
             }
             else
             {
+                _windowedState = WindowState;
+                _windowedBorder = WindowBorder;
+                _windowedClientSize = ClientSize;
+                _windowedLocation = Location;
+                _hasWindowedBounds = _windowedClientSize.X > 0 && _windowedClientSize.Y > 0;
+
                 WindowBorder = WindowBorder.Hidden;
                 WindowState = WindowState.Fullscreen;
             }
