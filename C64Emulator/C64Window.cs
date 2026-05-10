@@ -1186,21 +1186,19 @@ namespace C64Emulator
                 return;
             }
 
-            for (int sourceY = 0; sourceY < height; sourceY++)
+            int scaledWidth = width * scale;
+            int scaledHeight = height * scale;
+            for (int targetYOffset = 0; targetYOffset < scaledHeight; targetYOffset++)
             {
-                int sourceRow = sourceY * width;
-                for (int sourceX = 0; sourceX < width; sourceX++)
+                int sourceY = targetYOffset / scale;
+                int yFraction = ((targetYOffset % scale) * 256) / scale;
+                int targetY = offsetY + targetYOffset;
+                bool scanline = (targetYOffset & 1) != 0;
+                for (int targetXOffset = 0; targetXOffset < scaledWidth; targetXOffset++)
                 {
-                    uint color = BlendCrtSourcePixel(pixels, sourceRow, sourceX, width);
-                    for (int yRepeat = 0; yRepeat < scale; yRepeat++)
-                    {
-                        int targetY = offsetY + (sourceY * scale) + yRepeat;
-                        bool scanline = ((targetY - offsetY) & 1) != 0;
-                        for (int xRepeat = 0; xRepeat < scale; xRepeat++)
-                        {
-                            DrawCrtPixel(offsetX + (sourceX * scale) + xRepeat, targetY, color, scanline);
-                        }
-                    }
+                    int sourceX = targetXOffset / scale;
+                    int xFraction = ((targetXOffset % scale) * 256) / scale;
+                    DrawCrtPixel(offsetX + targetXOffset, targetY, SampleCrtSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height), scanline);
                 }
             }
         }
@@ -1217,13 +1215,16 @@ namespace C64Emulator
 
             for (int y = 0; y < PixelsHeight; y++)
             {
-                int sourceY = (y * height) / PixelsHeight;
-                int sourceRow = sourceY * width;
+                int scaledSourceY = (int)(((long)y * height * 256) / PixelsHeight);
+                int sourceY = scaledSourceY >> 8;
+                int yFraction = scaledSourceY & 0xFF;
                 bool scanline = (y & 1) != 0;
                 for (int x = 0; x < PixelsWidth; x++)
                 {
-                    int sourceX = (x * width) / PixelsWidth;
-                    DrawCrtPixel(x, y, BlendCrtSourcePixel(pixels, sourceRow, sourceX, width), scanline);
+                    int scaledSourceX = (int)(((long)x * width * 256) / PixelsWidth);
+                    int sourceX = scaledSourceX >> 8;
+                    int xFraction = scaledSourceX & 0xFF;
+                    DrawCrtPixel(x, y, SampleCrtSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height), scanline);
                 }
             }
         }
@@ -1238,20 +1239,19 @@ namespace C64Emulator
                 return;
             }
 
-            for (int sourceY = 0; sourceY < height; sourceY++)
+            int scaledWidth = width * scale;
+            int scaledHeight = height * scale;
+            for (int targetYOffset = 0; targetYOffset < scaledHeight; targetYOffset++)
             {
-                for (int sourceX = 0; sourceX < width; sourceX++)
+                int sourceY = targetYOffset / scale;
+                int yFraction = ((targetYOffset % scale) * 256) / scale;
+                int targetY = offsetY + targetYOffset;
+                bool scanline = (targetYOffset & 1) != 0;
+                for (int targetXOffset = 0; targetXOffset < scaledWidth; targetXOffset++)
                 {
-                    uint color = BlendTvSourcePixel(pixels, sourceY, sourceX, width, height);
-                    for (int yRepeat = 0; yRepeat < scale; yRepeat++)
-                    {
-                        int targetY = offsetY + (sourceY * scale) + yRepeat;
-                        bool scanline = ((targetY - offsetY) & 1) != 0;
-                        for (int xRepeat = 0; xRepeat < scale; xRepeat++)
-                        {
-                            DrawTvPixel(offsetX + (sourceX * scale) + xRepeat, targetY, color, scanline);
-                        }
-                    }
+                    int sourceX = targetXOffset / scale;
+                    int xFraction = ((targetXOffset % scale) * 256) / scale;
+                    DrawTvPixel(offsetX + targetXOffset, targetY, SampleTvSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height), scanline);
                 }
             }
         }
@@ -1268,12 +1268,16 @@ namespace C64Emulator
 
             for (int y = 0; y < PixelsHeight; y++)
             {
-                int sourceY = (y * height) / PixelsHeight;
+                int scaledSourceY = (int)(((long)y * height * 256) / PixelsHeight);
+                int sourceY = scaledSourceY >> 8;
+                int yFraction = scaledSourceY & 0xFF;
                 bool scanline = (y & 1) != 0;
                 for (int x = 0; x < PixelsWidth; x++)
                 {
-                    int sourceX = (x * width) / PixelsWidth;
-                    DrawTvPixel(x, y, BlendTvSourcePixel(pixels, sourceY, sourceX, width, height), scanline);
+                    int scaledSourceX = (int)(((long)x * width * 256) / PixelsWidth);
+                    int sourceX = scaledSourceX >> 8;
+                    int xFraction = scaledSourceX & 0xFF;
+                    DrawTvPixel(x, y, SampleTvSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height), scanline);
                 }
             }
         }
@@ -1293,6 +1297,26 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Samples the CRT-filtered source using bilinear interpolation.
+        /// </summary>
+        private static uint SampleCrtSourcePixel(uint[] pixels, int sourceY, int sourceX, int xFraction, int yFraction, int width, int height)
+        {
+            int clampedY = ClampInt(sourceY, 0, height - 1);
+            int nextY = ClampInt(sourceY + 1, 0, height - 1);
+            int clampedX = ClampInt(sourceX, 0, width - 1);
+            int nextX = ClampInt(sourceX + 1, 0, width - 1);
+
+            uint topLeft = BlendCrtSourcePixel(pixels, clampedY * width, clampedX, width);
+            uint topRight = BlendCrtSourcePixel(pixels, clampedY * width, nextX, width);
+            uint bottomLeft = BlendCrtSourcePixel(pixels, nextY * width, clampedX, width);
+            uint bottomRight = BlendCrtSourcePixel(pixels, nextY * width, nextX, width);
+            uint top = LerpRgb(topLeft, topRight, xFraction);
+            uint bottom = LerpRgb(bottomLeft, bottomRight, xFraction);
+            uint interpolated = LerpRgb(top, bottom, yFraction);
+            return LerpRgb(topLeft, interpolated, 48);
+        }
+
+        /// <summary>
         /// Blends a source pixel with horizontal and vertical neighbours for a softer TV tube look.
         /// </summary>
         private static uint BlendTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int width, int height)
@@ -1309,18 +1333,18 @@ namespace C64Emulator
             uint upper = pixels[upperRow + sourceX];
             uint lower = pixels[lowerRow + sourceX];
 
-            const int totalWeight = 18;
-            int red = ((((int)(center >> 16) & 0xFF) * 8) +
+            const int totalWeight = 20;
+            int red = ((((int)(center >> 16) & 0xFF) * 10) +
                        (((int)(left >> 16) & 0xFF) * 3) +
                        (((int)(right >> 16) & 0xFF) * 3) +
                        (((int)(upper >> 16) & 0xFF) * 2) +
                        (((int)(lower >> 16) & 0xFF) * 2)) / totalWeight;
-            int green = ((((int)(center >> 8) & 0xFF) * 8) +
+            int green = ((((int)(center >> 8) & 0xFF) * 10) +
                          (((int)(left >> 8) & 0xFF) * 3) +
                          (((int)(right >> 8) & 0xFF) * 3) +
                          (((int)(upper >> 8) & 0xFF) * 2) +
                          (((int)(lower >> 8) & 0xFF) * 2)) / totalWeight;
-            int blue = (((int)(center & 0xFF) * 8) +
+            int blue = (((int)(center & 0xFF) * 10) +
                         ((int)(left & 0xFF) * 3) +
                         ((int)(right & 0xFF) * 3) +
                         ((int)(upper & 0xFF) * 2) +
@@ -1330,11 +1354,53 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Samples the TV-filtered source using bilinear interpolation.
+        /// </summary>
+        private static uint SampleTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int xFraction, int yFraction, int width, int height)
+        {
+            int clampedY = ClampInt(sourceY, 0, height - 1);
+            int nextY = ClampInt(sourceY + 1, 0, height - 1);
+            int clampedX = ClampInt(sourceX, 0, width - 1);
+            int nextX = ClampInt(sourceX + 1, 0, width - 1);
+
+            uint topLeft = BlendTvSourcePixel(pixels, clampedY, clampedX, width, height);
+            uint topRight = BlendTvSourcePixel(pixels, clampedY, nextX, width, height);
+            uint bottomLeft = BlendTvSourcePixel(pixels, nextY, clampedX, width, height);
+            uint bottomRight = BlendTvSourcePixel(pixels, nextY, nextX, width, height);
+            uint top = LerpRgb(topLeft, topRight, xFraction);
+            uint bottom = LerpRgb(bottomLeft, bottomRight, xFraction);
+            uint interpolated = LerpRgb(top, bottom, yFraction);
+            return LerpRgb(topLeft, interpolated, 64);
+        }
+
+        /// <summary>
+        /// Linearly interpolates two RGB colors with an 8-bit fraction.
+        /// </summary>
+        private static uint LerpRgb(uint left, uint right, int fraction)
+        {
+            int inverse = 256 - fraction;
+            int red = ((((int)(left >> 16) & 0xFF) * inverse) + (((int)(right >> 16) & 0xFF) * fraction)) >> 8;
+            int green = ((((int)(left >> 8) & 0xFF) * inverse) + (((int)(right >> 8) & 0xFF) * fraction)) >> 8;
+            int blue = (((int)(left & 0xFF) * inverse) + ((int)(right & 0xFF) * fraction)) >> 8;
+            return (uint)((red << 16) | (green << 8) | blue);
+        }
+
+        private static int ClampInt(int value, int min, int max)
+        {
+            if (value < min)
+            {
+                return min;
+            }
+
+            return value > max ? max : value;
+        }
+
+        /// <summary>
         /// Draws one filtered output pixel.
         /// </summary>
         private void DrawCrtPixel(int x, int y, uint rgb, bool scanline)
         {
-            int multiplier = scanline ? 76 : 108;
+            int multiplier = scanline ? 94 : 102;
             byte red = ClampToByte((((int)(rgb >> 16) & 0xFF) * multiplier) / 100);
             byte green = ClampToByte((((int)(rgb >> 8) & 0xFF) * multiplier) / 100);
             byte blue = ClampToByte(((int)(rgb & 0xFF) * multiplier) / 100);
@@ -1346,7 +1412,7 @@ namespace C64Emulator
         /// </summary>
         private void DrawTvPixel(int x, int y, uint rgb, bool scanline)
         {
-            int baseMultiplier = scanline ? 72 : 106;
+            int baseMultiplier = scanline ? 93 : 101;
             int red = (((int)(rgb >> 16) & 0xFF) * baseMultiplier) / 100;
             int green = (((int)(rgb >> 8) & 0xFF) * baseMultiplier) / 100;
             int blue = ((int)(rgb & 0xFF) * baseMultiplier) / 100;
@@ -1354,27 +1420,27 @@ namespace C64Emulator
             switch (x % 3)
             {
                 case 0:
-                    red = (red * 115) / 100;
-                    green = (green * 86) / 100;
-                    blue = (blue * 88) / 100;
+                    red = (red * 103) / 100;
+                    green = (green * 98) / 100;
+                    blue = (blue * 99) / 100;
                     break;
                 case 1:
-                    red = (red * 90) / 100;
-                    green = (green * 110) / 100;
-                    blue = (blue * 90) / 100;
+                    red = (red * 99) / 100;
+                    green = (green * 102) / 100;
+                    blue = (blue * 99) / 100;
                     break;
                 default:
-                    red = (red * 86) / 100;
-                    green = (green * 88) / 100;
-                    blue = (blue * 116) / 100;
+                    red = (red * 98) / 100;
+                    green = (green * 99) / 100;
+                    blue = (blue * 103) / 100;
                     break;
             }
 
             if ((y & 3) == 3)
             {
-                red = (red * 92) / 100;
-                green = (green * 92) / 100;
-                blue = (blue * 92) / 100;
+                red = (red * 99) / 100;
+                green = (green * 99) / 100;
+                blue = (blue * 99) / 100;
             }
 
             DrawPixel(x, y, ClampToByte(red), ClampToByte(green), ClampToByte(blue));
