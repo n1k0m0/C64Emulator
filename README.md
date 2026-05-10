@@ -149,6 +149,30 @@ The executable is created at:
 C64Emulator/bin/x64/Release/C64Emulator.exe
 ```
 
+## Windows Installer
+
+The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
+
+```powershell
+winget install --id JRSoftware.InnoSetup -e --accept-package-agreements --accept-source-agreements
+```
+
+Build the self-contained Windows publish folder and installer with:
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+The setup executable is written to:
+
+```text
+artifacts\installer\C64Emulator-<version>-win-x64-setup.exe
+```
+
+The setup wizard installs the emulator into `Program Files`, creates Start Menu entries, and can optionally create a desktop shortcut. When a previous installation is found, Setup asks whether the old application files should be removed before installing the new version. User data is kept during this update cleanup.
+
+The uninstaller removes the installed application and `%APPDATA%\C64Emulator`, including downloaded ROMs, settings, and savestates. User-owned PRG and D64 media in `%USERPROFILE%\Documents\C64Emulator` are not removed by the uninstaller.
+
 ## Diagnostics
 
 The executable also exposes a few headless checks that are useful before accuracy or performance work:
