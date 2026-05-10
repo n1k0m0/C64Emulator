@@ -862,11 +862,13 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Gets the savestate directory next to the emulator executable.
+        /// Gets the per-user savestate directory.
         /// </summary>
         private static string GetSaveDirectory()
         {
-            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "saves");
+            string saveDirectory = UserDataPaths.GetSaveDirectory();
+            Directory.CreateDirectory(saveDirectory);
+            return saveDirectory;
         }
 
         /// <summary>

@@ -192,7 +192,7 @@ The D64 parser handles the common 35-track layout and extended image sizes where
 
 ## Savestates
 
-Savestates are stored as individual files in the `saves` directory next to the emulator executable. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay.
+Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay.
 
 ## ROM Files
 

@@ -131,13 +131,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static string GetUserRomDirectory()
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrWhiteSpace(appData))
-            {
-                appData = AppDomain.CurrentDomain.BaseDirectory;
-            }
-
-            return Path.Combine(appData, "C64Emulator", "roms");
+            return UserDataPaths.GetRomDirectory();
         }
 
         private static void AppendRomStatus(StringBuilder builder, string label, IEnumerable<string> fileNames, string explicitBasePath)
