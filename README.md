@@ -23,7 +23,7 @@ A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering front
 - Drag-and-drop mounting for `.prg` and `.d64` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
-- Optional sharp-pixel and CRT-style video presentation filters.
+- Optional sharp-pixel, CRT, and TV-grille video presentation filters.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.

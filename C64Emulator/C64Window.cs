@@ -47,7 +47,8 @@ namespace C64Emulator
         private enum VideoFilterMode
         {
             Sharp,
-            Crt
+            Crt,
+            Tv
         }
 
         /// <summary>
@@ -938,9 +939,19 @@ namespace C64Emulator
         /// </summary>
         private void CycleVideoFilter()
         {
-            _videoFilterMode = _videoFilterMode == VideoFilterMode.Sharp
-                ? VideoFilterMode.Crt
-                : VideoFilterMode.Sharp;
+            switch (_videoFilterMode)
+            {
+                case VideoFilterMode.Sharp:
+                    _videoFilterMode = VideoFilterMode.Crt;
+                    break;
+                case VideoFilterMode.Crt:
+                    _videoFilterMode = VideoFilterMode.Tv;
+                    break;
+                default:
+                    _videoFilterMode = VideoFilterMode.Sharp;
+                    break;
+            }
+
             _overlayStatusText = "FILTER " + FormatVideoFilter(_videoFilterMode);
         }
 
@@ -1135,7 +1146,11 @@ namespace C64Emulator
                 int offsetX = (PixelsWidth - scaledWidth) / 2;
                 int offsetY = (PixelsHeight - scaledHeight) / 2;
                 DrawFrameMargins(offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
-                if (_videoFilterMode == VideoFilterMode.Crt)
+                if (_videoFilterMode == VideoFilterMode.Tv)
+                {
+                    DrawArgbPixelsScaledTv(pixels, width, height, offsetX, offsetY, integerScale);
+                }
+                else if (_videoFilterMode == VideoFilterMode.Crt)
                 {
                     DrawArgbPixelsScaledCrt(pixels, width, height, offsetX, offsetY, integerScale);
                 }
@@ -1147,7 +1162,11 @@ namespace C64Emulator
                 return;
             }
 
-            if (_videoFilterMode == VideoFilterMode.Crt)
+            if (_videoFilterMode == VideoFilterMode.Tv)
+            {
+                DrawArgbPixelsStretchedTv(pixels, width, height);
+            }
+            else if (_videoFilterMode == VideoFilterMode.Crt)
             {
                 DrawArgbPixelsStretchedCrt(pixels, width, height);
             }
@@ -1210,6 +1229,56 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Draws ARGB pixels with a soft television grille and heavier raster blur.
+        /// </summary>
+        private void DrawArgbPixelsScaledTv(uint[] pixels, int width, int height, int offsetX, int offsetY, int scale)
+        {
+            if (pixels == null || pixels.Length < width * height || scale <= 0)
+            {
+                return;
+            }
+
+            for (int sourceY = 0; sourceY < height; sourceY++)
+            {
+                for (int sourceX = 0; sourceX < width; sourceX++)
+                {
+                    uint color = BlendTvSourcePixel(pixels, sourceY, sourceX, width, height);
+                    for (int yRepeat = 0; yRepeat < scale; yRepeat++)
+                    {
+                        int targetY = offsetY + (sourceY * scale) + yRepeat;
+                        bool scanline = ((targetY - offsetY) & 1) != 0;
+                        for (int xRepeat = 0; xRepeat < scale; xRepeat++)
+                        {
+                            DrawTvPixel(offsetX + (sourceX * scale) + xRepeat, targetY, color, scanline);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draws stretched ARGB pixels with the television grille filter.
+        /// </summary>
+        private void DrawArgbPixelsStretchedTv(uint[] pixels, int width, int height)
+        {
+            if (pixels == null || pixels.Length < width * height)
+            {
+                return;
+            }
+
+            for (int y = 0; y < PixelsHeight; y++)
+            {
+                int sourceY = (y * height) / PixelsHeight;
+                bool scanline = (y & 1) != 0;
+                for (int x = 0; x < PixelsWidth; x++)
+                {
+                    int sourceX = (x * width) / PixelsWidth;
+                    DrawTvPixel(x, y, BlendTvSourcePixel(pixels, sourceY, sourceX, width, height), scanline);
+                }
+            }
+        }
+
+        /// <summary>
         /// Blends a source pixel with its horizontal neighbours for a soft composite-video feel.
         /// </summary>
         private static uint BlendCrtSourcePixel(uint[] pixels, int sourceRow, int sourceX, int width)
@@ -1224,6 +1293,43 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Blends a source pixel with horizontal and vertical neighbours for a softer TV tube look.
+        /// </summary>
+        private static uint BlendTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int width, int height)
+        {
+            int sourceRow = sourceY * width;
+            int leftX = Math.Max(0, sourceX - 1);
+            int rightX = Math.Min(width - 1, sourceX + 1);
+            int upperRow = Math.Max(0, sourceY - 1) * width;
+            int lowerRow = Math.Min(height - 1, sourceY + 1) * width;
+
+            uint center = pixels[sourceRow + sourceX];
+            uint left = pixels[sourceRow + leftX];
+            uint right = pixels[sourceRow + rightX];
+            uint upper = pixels[upperRow + sourceX];
+            uint lower = pixels[lowerRow + sourceX];
+
+            const int totalWeight = 18;
+            int red = ((((int)(center >> 16) & 0xFF) * 8) +
+                       (((int)(left >> 16) & 0xFF) * 3) +
+                       (((int)(right >> 16) & 0xFF) * 3) +
+                       (((int)(upper >> 16) & 0xFF) * 2) +
+                       (((int)(lower >> 16) & 0xFF) * 2)) / totalWeight;
+            int green = ((((int)(center >> 8) & 0xFF) * 8) +
+                         (((int)(left >> 8) & 0xFF) * 3) +
+                         (((int)(right >> 8) & 0xFF) * 3) +
+                         (((int)(upper >> 8) & 0xFF) * 2) +
+                         (((int)(lower >> 8) & 0xFF) * 2)) / totalWeight;
+            int blue = (((int)(center & 0xFF) * 8) +
+                        ((int)(left & 0xFF) * 3) +
+                        ((int)(right & 0xFF) * 3) +
+                        ((int)(upper & 0xFF) * 2) +
+                        ((int)(lower & 0xFF) * 2)) / totalWeight;
+
+            return (uint)((red << 16) | (green << 8) | blue);
+        }
+
+        /// <summary>
         /// Draws one filtered output pixel.
         /// </summary>
         private void DrawCrtPixel(int x, int y, uint rgb, bool scanline)
@@ -1233,6 +1339,45 @@ namespace C64Emulator
             byte green = ClampToByte((((int)(rgb >> 8) & 0xFF) * multiplier) / 100);
             byte blue = ClampToByte(((int)(rgb & 0xFF) * multiplier) / 100);
             DrawPixel(x, y, red, green, blue);
+        }
+
+        /// <summary>
+        /// Draws one output pixel with a coarse RGB mask and softened scanline contrast.
+        /// </summary>
+        private void DrawTvPixel(int x, int y, uint rgb, bool scanline)
+        {
+            int baseMultiplier = scanline ? 72 : 106;
+            int red = (((int)(rgb >> 16) & 0xFF) * baseMultiplier) / 100;
+            int green = (((int)(rgb >> 8) & 0xFF) * baseMultiplier) / 100;
+            int blue = ((int)(rgb & 0xFF) * baseMultiplier) / 100;
+
+            switch (x % 3)
+            {
+                case 0:
+                    red = (red * 115) / 100;
+                    green = (green * 86) / 100;
+                    blue = (blue * 88) / 100;
+                    break;
+                case 1:
+                    red = (red * 90) / 100;
+                    green = (green * 110) / 100;
+                    blue = (blue * 90) / 100;
+                    break;
+                default:
+                    red = (red * 86) / 100;
+                    green = (green * 88) / 100;
+                    blue = (blue * 116) / 100;
+                    break;
+            }
+
+            if ((y & 3) == 3)
+            {
+                red = (red * 92) / 100;
+                green = (green * 92) / 100;
+                blue = (blue * 92) / 100;
+            }
+
+            DrawPixel(x, y, ClampToByte(red), ClampToByte(green), ClampToByte(blue));
         }
 
         /// <summary>
@@ -2163,7 +2308,7 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex);
                     break;
                 case 6:
-                    DrawOverlayItem(x, y, "VIDEO FILTER", _videoFilterMode == VideoFilterMode.Crt ? 1.0f : 0.0f, FormatVideoFilter(_videoFilterMode), "SHARP", "CRT", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex);
                     break;
                 case 7:
                     DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex);
@@ -2256,7 +2401,31 @@ namespace C64Emulator
         /// </summary>
         private static string FormatVideoFilter(VideoFilterMode mode)
         {
-            return mode == VideoFilterMode.Crt ? "CRT" : "SHARP";
+            switch (mode)
+            {
+                case VideoFilterMode.Crt:
+                    return "CRT";
+                case VideoFilterMode.Tv:
+                    return "TV";
+                default:
+                    return "SHARP";
+            }
+        }
+
+        /// <summary>
+        /// Gets the video filter fill value.
+        /// </summary>
+        private static float GetVideoFilterFill(VideoFilterMode mode)
+        {
+            switch (mode)
+            {
+                case VideoFilterMode.Crt:
+                    return 0.5f;
+                case VideoFilterMode.Tv:
+                    return 1.0f;
+                default:
+                    return 0.0f;
+            }
         }
 
         /// <summary>

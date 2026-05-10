@@ -13,7 +13,7 @@ Build und interner CPU-Selbsttest wurden geprueft:
 - `dotnet build C64Emulator.sln -c Release -p:Platform=x64`: erfolgreich, 0 Warnungen.
 - `C64Emulator\bin\x64\Release\C64Emulator.exe --self-test-cpu ...`: erfolgreich, alle 256 Opcode-Basiszyklen, IRQ/NMI und ausgewaehlte illegale Opcodes OK.
 
-Phase-2-Umsetzungsstand nach diesem Bericht: Drag-and-drop fuer PRG/D64, Gamepad-Joystickeingabe, CRT-Video-Filter und differenzierte Reset-Modi wurden in die Frontend-/Usability-Schicht integriert. Ein vollstaendiger Keymap-Editor und echte Drive-Sound-Emulation bleiben separate Folgearbeiten.
+Phase-2-Umsetzungsstand nach diesem Bericht: Drag-and-drop fuer PRG/D64, Gamepad-Joystickeingabe, CRT-/TV-Video-Filter und differenzierte Reset-Modi wurden in die Frontend-/Usability-Schicht integriert. Ein vollstaendiger Keymap-Editor und echte Drive-Sound-Emulation bleiben separate Folgearbeiten.
 
 Phase-3-Umsetzungsstand: Ein neuer `--accuracy-tests` Runner prueft interne Timing-Smokes fuer VIC-II, CIA 6526, SID-Envelope und 1541-Transportmodus. `scripts/run-phase3-checks.ps1` buendelt ROM-Check, CPU-Selftest, Accuracy-Smokes und Benchmark; der weitere Test-ROM-/Golden-Master-Plan liegt in `docs/phase3-accuracy-plan.md`.
 
