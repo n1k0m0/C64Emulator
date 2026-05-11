@@ -65,12 +65,18 @@ namespace C64Emulator.Core
 
             int failures = 0;
             failures += RunCase(output, "Accuracy profile disables emulator shortcuts", TestAccuracyProfileDisablesShortcuts);
+            failures += RunCase(output, "KERNAL LOAD relocates secondary address zero", TestKernalLoadRelocatesSecondaryAddressZero);
             failures += RunCase(output, "CPU bus prediction is side-effect free", TestCpuBusPredictionIsSideEffectFree);
             failures += RunCase(output, "VIC frame timing", TestVicFrameTiming);
             failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
             failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
             failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
+            failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
+            failures += RunCase(output, "VIC register writes are phased through render registers", TestVicRegisterWritesUseRenderRegisterPhase);
+            failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
+            failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
+            failures += RunCase(output, "VIC midline D011 RSEL affects vertical border", TestVicMidlineD011RselAffectsVerticalBorder);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
@@ -79,6 +85,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
+            failures += RunCase(output, "1541 stepper moves only while motor is on", TestDriveStepperMovesOnlyWhileMotorOn);
 
             output.WriteLine("Result: " + (failures == 0 ? "OK" : "FAILED"));
             output.WriteLine("Failures=" + failures);
@@ -123,6 +130,28 @@ namespace C64Emulator.Core
                 context.True("host input injection is disabled", !system.EnableInputInjection);
                 context.True("drive CPU runs continuously", options.RunDriveCpuContinuously);
             }
+        }
+
+        private static void TestKernalLoadRelocatesSecondaryAddressZero(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            bus.WriteRam(0x002B, 0x01);
+            bus.WriteRam(0x002C, 0x08);
+
+            byte[] programBytes = { 0x00, 0x20, 0x11, 0x22, 0x33 };
+            ushort loadAddress;
+            ushort endAddress;
+            bool loaded = PrgLoader.TryLoadIntoMemory(bus, programBytes, 0x0801, out loadAddress, out endAddress);
+
+            context.True("relocated load succeeds", loaded);
+            context.Equal("relocated load address", (ushort)0x0801, loadAddress);
+            context.Equal("relocated end address", (ushort)0x0804, endAddress);
+            context.Equal("first relocated byte", (byte)0x11, bus.ReadRam(0x0801));
+            context.Equal("second relocated byte", (byte)0x22, bus.ReadRam(0x0802));
+            context.Equal("file load address untouched", (byte)0x00, bus.ReadRam(0x2000));
+            context.Equal("BASIC variables pointer low", (byte)0x04, bus.ReadRam(0x002D));
+            context.Equal("BASIC variables pointer high", (byte)0x08, bus.ReadRam(0x002E));
         }
 
         private static void TestCpuBusPredictionIsSideEffectFree(AccuracyContext context)
@@ -282,6 +311,235 @@ namespace C64Emulator.Core
             vic.PrepareCycle();
             context.Equal("cycle 15 uses matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
             context.True("cycle 15 blocks CPU", vic.RequiresBusThisCycle());
+            vic.FinishCycle();
+        }
+
+        private static void TestVicBadlineStateSurvivesLaterD011Changes(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 13; cycle++)
+            {
+                vic.Tick();
+            }
+
+            vic.PrepareCycle();
+            context.True("cycle 14 badline state is latched", vic.GetTiming().BadLine);
+            vic.FinishCycle();
+
+            vic.Write(0x11, 0x1A);
+            vic.PrepareCycle();
+            context.True("cycle 15 remains badline state after yscroll mismatch", vic.GetTiming().BadLine);
+            context.Equal("cycle 15 still uses matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 15 still blocks CPU", vic.RequiresBusThisCycle());
+            vic.FinishCycle();
+        }
+
+        private static void TestVicRegisterWritesUseRenderRegisterPhase(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            const int cropLeft = 50;
+            const int cropTop = 14;
+            const int targetRaster = 20;
+            const int targetCycle = 10;
+            for (int cycle = 0; cycle < (targetRaster * C64Model.Pal.CyclesPerLine) + targetCycle; cycle++)
+            {
+                vic.Tick();
+            }
+
+            vic.PrepareCycle();
+            VicTiming timing = vic.GetTiming();
+            int frameX = timing.BeamX - cropLeft;
+            int frameY = timing.RasterLine - cropTop;
+            vic.Write(0x20, 0x02);
+            vic.FinishCycle();
+
+            context.Equal("first rendered dot sees phased border color", 0xFF68372Bu, frameBuffer.Pixels[(frameY * frameBuffer.Width) + frameX]);
+            context.Equal("last rendered dot keeps phased border color", 0xFF68372Bu, frameBuffer.Pixels[(frameY * frameBuffer.Width) + frameX + 7]);
+        }
+
+        private static void TestVicMidlineD016ScrollAffectsCurrentDisplaySource(AccuracyContext context)
+        {
+            string stableFrameHash = RenderD016SplitProbeFrame(false);
+            string splitFrameHash = RenderD016SplitProbeFrame(true);
+
+            context.True(
+                "midline D016 write must alter the rendered framebuffer",
+                !string.Equals(stableFrameHash, splitFrameHash, StringComparison.Ordinal));
+        }
+
+        private static void TestVicMidlineD016CselAffectsHorizontalBorder(AccuracyContext context)
+        {
+            string stableNarrowHash = RenderD016CselBorderProbeFrame(false);
+            string widenedMidlineHash = RenderD016CselBorderProbeFrame(true);
+
+            context.True(
+                "midline CSEL write must alter horizontal border timing",
+                !string.Equals(stableNarrowHash, widenedMidlineHash, StringComparison.Ordinal));
+        }
+
+        private static void TestVicMidlineD011RselAffectsVerticalBorder(AccuracyContext context)
+        {
+            string stableNarrowHash = RenderD011RselBorderProbeFrame(false);
+            string widenedMidframeHash = RenderD011RselBorderProbeFrame(true);
+
+            context.True(
+                "midline RSEL write must alter vertical border timing",
+                !string.Equals(stableNarrowHash, widenedMidframeHash, StringComparison.Ordinal));
+        }
+
+        private static string RenderD016SplitProbeFrame(bool writeMidlineScroll)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x1B);
+            vic.Write(0x16, 0x08);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x00);
+            vic.Write(0x21, 0x00);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, (byte)((column & 1) == 0 ? 0x01 : 0x02));
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int totalCycles = 56 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                VicTiming timing = vic.GetTiming();
+                if (writeMidlineScroll && timing.RasterLine == 52 && timing.CycleInLine == 25)
+                {
+                    vic.Write(0x16, 0x0F);
+                }
+
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return DevTraceExporter.ComputeFrameHash(frameBuffer);
+        }
+
+        private static string RenderD016CselBorderProbeFrame(bool widenMidline)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x1B);
+            vic.Write(0x16, 0x00);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x02);
+            vic.Write(0x21, 0x00);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, 0x01);
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int totalCycles = 56 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                VicTiming timing = vic.GetTiming();
+                if (widenMidline && timing.RasterLine == 52 && timing.CycleInLine == 5)
+                {
+                    vic.Write(0x16, 0x08);
+                }
+
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return DevTraceExporter.ComputeFrameHash(frameBuffer);
+        }
+
+        private static string RenderD011RselBorderProbeFrame(bool widenMidframe)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x13);
+            vic.Write(0x16, 0x08);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x02);
+            vic.Write(0x21, 0x00);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, 0x01);
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int totalCycles = 58 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                VicTiming timing = vic.GetTiming();
+                if (widenMidframe && timing.RasterLine == 51 && timing.CycleInLine == 5)
+                {
+                    vic.Write(0x11, 0x1B);
+                }
+
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return DevTraceExporter.ComputeFrameHash(frameBuffer);
+        }
+
+        private static void RunVicCycleWithoutCpu(Vic2 vic, SystemBus bus)
+        {
+            vic.PrepareCycle();
+            bool blocksCpu = vic.RequiresBusThisCycle();
+            bool requestPending = vic.HasBusRequestPendingThisCycle();
+            bus.SetPhi2BusState(
+                requestPending || blocksCpu,
+                blocksCpu,
+                !requestPending && !blocksCpu,
+                blocksCpu);
             vic.FinishCycle();
         }
 
@@ -462,6 +720,26 @@ namespace C64Emulator.Core
                     File.Delete(tempPath);
                 }
             }
+        }
+
+        private static void TestDriveStepperMovesOnlyWhileMotorOn(AccuracyContext context)
+        {
+            var mechanism = new Drive1541Mechanism();
+            context.Equal("initial half-track", 34, mechanism.CurrentHalfTrack);
+
+            mechanism.ApplyViaPortB(0x01, 0x03);
+            context.Equal("motor-off phase write does not step", 34, mechanism.CurrentHalfTrack);
+            context.True("motor remains off", !mechanism.MotorOn);
+
+            mechanism.ApplyViaPortB(0x04 | 0x01, 0x07);
+            context.Equal("motor-on phase latch does not retro-step", 34, mechanism.CurrentHalfTrack);
+            context.True("motor turns on", mechanism.MotorOn);
+
+            mechanism.ApplyViaPortB(0x04 | 0x02, 0x07);
+            context.Equal("forward phase advances half-track", 35, mechanism.CurrentHalfTrack);
+
+            mechanism.ApplyViaPortB(0x04 | 0x01, 0x07);
+            context.Equal("reverse phase returns half-track", 34, mechanism.CurrentHalfTrack);
         }
     }
 }

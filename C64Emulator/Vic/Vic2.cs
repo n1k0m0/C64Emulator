@@ -34,6 +34,7 @@ namespace C64Emulator.Core
         private const int CharacterHeight = 8;
         private const int DenLatchRasterLine = 0x30;
         private const int GraphicsOutputDelayPixels = 12;
+        private const int CpuWriteVisibleDot = 0;
         private const int InnerDisplayWidth = VisibleColumns * CharacterWidth;
         private const int InnerDisplayHeight = VisibleRows * CharacterHeight;
         private const int CropLeft = (TotalRasterWidth - 403) / 2;
@@ -75,6 +76,9 @@ namespace C64Emulator.Core
         private readonly FrameBuffer _frameBuffer;
         private readonly C64Model _model;
         private readonly byte[] _registers = new byte[0x40];
+        private readonly byte[] _pixelRegisters = new byte[0x40];
+        private readonly byte[] _pendingPixelRegisterValues = new byte[0x40];
+        private readonly bool[] _pendingPixelRegisterWrites = new bool[0x40];
         private readonly VicBusPlan _busPlan = new VicBusPlan();
         private readonly bool[] _spriteDmaActive = new bool[8];
         private readonly bool[] _spriteDmaLatched = new bool[8];
@@ -123,6 +127,7 @@ namespace C64Emulator.Core
         private int _rasterLine;
         private int _cycleInLine;
         private long _globalCycle;
+        private bool _cyclePrepared;
         private ushort _rasterIrqLine;
         private byte _irqFlags;
         private byte _spriteSpriteCollision;
@@ -131,6 +136,7 @@ namespace C64Emulator.Core
         private byte _lightPenY;
         private bool _cpuBusBlockedThisCycle;
         private bool _isBadLine;
+        private bool _badLineConditionThisCycle;
         private bool _rasterIrqTriggeredThisLine;
         private bool _videoMatrixValid;
         private int _videoMatrixCellY;
@@ -242,6 +248,7 @@ namespace C64Emulator.Core
         {
             _busPlan.LoadState(reader);
             StateSerializer.ReadObjectFields(reader, this, "_bus", "_frameBuffer", "_model", "_busPlan");
+            SynchronizePixelRegisters();
             RepairSpriteDmaLatchAfterLoad();
         }
 
@@ -259,6 +266,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void PrepareCycle()
         {
+            _cyclePrepared = true;
             if (_cycleInLine == 0)
             {
                 BeginRasterLine();
@@ -300,6 +308,8 @@ namespace C64Emulator.Core
                     _rasterLine = 0;
                 }
             }
+
+            _cyclePrepared = false;
         }
 
         /// <summary>
@@ -436,6 +446,8 @@ namespace C64Emulator.Core
                     _registers[address] = value;
                     break;
             }
+
+            QueuePixelRegisterWrite(address, _registers[address]);
         }
 
         /// <summary>
@@ -526,6 +538,7 @@ namespace C64Emulator.Core
             _irqFlags = 0;
             _spriteSpriteCollision = 0;
             _spriteDataCollision = 0;
+            _cyclePrepared = false;
             _lightPenX = 0;
             _lightPenY = 0;
             _cpuBusBlockedThisCycle = false;
@@ -621,8 +634,52 @@ namespace C64Emulator.Core
             _lineDisplayBottomFrame = _lineDisplayTopFrame + InnerDisplayHeight;
             _verticalBorderActive = true;
             _horizontalBorderActive = true;
+            SynchronizePixelRegisters();
             LatchDisplaySourceFromLineState();
             _frameBuffer.Clear(Palette[_registers[0x20] & 0x0F]);
+        }
+
+        /// <summary>
+        /// Queues the render-visible copy of a VIC register when a CPU write occurs mid-cycle.
+        /// </summary>
+        private void QueuePixelRegisterWrite(ushort address, byte value)
+        {
+            int index = address & 0x3F;
+            if (!_cyclePrepared)
+            {
+                _pixelRegisters[index] = value;
+                return;
+            }
+
+            _pendingPixelRegisterValues[index] = value;
+            _pendingPixelRegisterWrites[index] = true;
+        }
+
+        /// <summary>
+        /// Applies all CPU writes that become visible at the current pixel phase.
+        /// </summary>
+        private void ApplyPendingPixelRegisterWrites()
+        {
+            for (int index = 0; index < _pendingPixelRegisterWrites.Length; index++)
+            {
+                if (!_pendingPixelRegisterWrites[index])
+                {
+                    continue;
+                }
+
+                _pixelRegisters[index] = _pendingPixelRegisterValues[index];
+                _pendingPixelRegisterWrites[index] = false;
+            }
+        }
+
+        /// <summary>
+        /// Resynchronizes render-visible registers with the architectural VIC registers.
+        /// </summary>
+        private void SynchronizePixelRegisters()
+        {
+            System.Array.Copy(_registers, _pixelRegisters, _registers.Length);
+            System.Array.Clear(_pendingPixelRegisterValues, 0, _pendingPixelRegisterValues.Length);
+            System.Array.Clear(_pendingPixelRegisterWrites, 0, _pendingPixelRegisterWrites.Length);
         }
 
         /// <summary>
@@ -635,6 +692,11 @@ namespace C64Emulator.Core
 
             for (int dot = 0; dot < PixelsPerCycle; dot++)
             {
+                if (dot == CpuWriteVisibleDot)
+                {
+                    ApplyPendingPixelRegisterWrites();
+                }
+
                 int beamX = beamXStart + dot;
                 int frameX = beamX - CropLeft;
                 int frameY = beamY - CropTop;
@@ -652,7 +714,7 @@ namespace C64Emulator.Core
         /// </summary>
         private PixelResult ComposePixel(int frameX, int frameY)
         {
-            uint borderColor = Palette[_registers[0x20] & 0x0F];
+            uint borderColor = Palette[_pixelRegisters[0x20] & 0x0F];
             PixelResult borderPixel = new PixelResult
             {
                 Color = borderColor,
@@ -661,18 +723,20 @@ namespace C64Emulator.Core
 
             UpdateHorizontalBorderState(frameX, frameY);
 
-            int activeDisplayLeft = _lineDisplayLeftFrame;
+            int activeDisplayLeft = GetCurrentDisplayLeftFrame();
+            int activeDisplayTop = GetCurrentDisplayTopFrame();
+            int activeDisplayBottom = activeDisplayTop + GetCurrentDisplayHeight();
             bool currentGraphicsVisible = _lineDisplayEnabled &&
                 !_horizontalBorderActive &&
                 !_verticalBorderActive &&
-                frameY >= _lineDisplayTopFrame &&
-                frameY < _lineDisplayBottomFrame;
+                frameY >= activeDisplayTop &&
+                frameY < activeDisplayBottom;
 
             int sourceFrameX = frameX + GraphicsOutputDelayPixels;
             bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY) &&
                 IsGraphicsSourceActiveForCurrentCycle();
             PixelResult graphicsPixel = sourceGraphicsVisible
-                ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - _lineDisplayTopFrame)
+                ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - activeDisplayTop)
                 : CreateBackgroundPixel(GetBackgroundColor(0));
             PixelResult delayedGraphicsPixel = DelayGraphicsPixel(graphicsPixel);
             PixelResult result = currentGraphicsVisible ? delayedGraphicsPixel : borderPixel;
@@ -691,12 +755,16 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsGraphicsSourceVisible(int frameX, int frameY)
         {
+            int currentDisplayLeft = GetCurrentDisplayLeftFrame();
+            int currentDisplayRight = currentDisplayLeft + GetCurrentDisplayWidth();
+            int currentDisplayTop = GetCurrentDisplayTopFrame();
+            int currentDisplayBottom = currentDisplayTop + GetCurrentDisplayHeight();
             return _lineDisplayEnabled &&
                 !_verticalBorderActive &&
-                frameX >= _lineDisplayLeftFrame &&
-                frameX < _lineDisplayRightFrame &&
-                frameY >= _lineDisplayTopFrame &&
-                frameY < _lineDisplayBottomFrame;
+                frameX >= currentDisplayLeft &&
+                frameX < currentDisplayRight &&
+                frameY >= currentDisplayTop &&
+                frameY < currentDisplayBottom;
         }
 
         /// <summary>
@@ -712,7 +780,7 @@ namespace C64Emulator.Core
         /// </summary>
         private PixelResult ComputeGraphicsPixel(int displayX, int displayY)
         {
-            int scrolledX = displayX + GetHorizontalScrollPhase();
+            int scrolledX = displayX + GetCurrentHorizontalScrollPhase();
             if (scrolledX < 0 || scrolledX >= InnerDisplayWidth)
             {
                 _graphicsSequencerCellLoaded = false;
@@ -848,7 +916,7 @@ namespace C64Emulator.Core
 
             if (currentBitmapMode)
             {
-                int scrolledY = displayY + GetVerticalScrollPhase();
+                int scrolledY = displayY + GetCurrentVerticalScrollPhase();
                 if (scrolledY < 0 || scrolledY >= InnerDisplayHeight)
                 {
                     return false;
@@ -882,7 +950,7 @@ namespace C64Emulator.Core
             }
             else
             {
-                int scrolledY = displayY + GetVerticalScrollPhase();
+                int scrolledY = displayY + GetCurrentVerticalScrollPhase();
                 int textCellY = _graphicsLineCellY >= 0 ? _graphicsLineCellY : (scrolledY / CharacterHeight);
                 int textPixelYInCell = _graphicsLinePixelRow >= 0 ? _graphicsLinePixelRow : (scrolledY & 0x07);
                 if (textCellY < 0 || textCellY >= VisibleRows)
@@ -935,11 +1003,6 @@ namespace C64Emulator.Core
                 return;
             }
 
-            if (_registers[0x15] == 0)
-            {
-                return;
-            }
-
             byte opaqueSpriteMask = 0;
             bool spriteVisible = false;
 
@@ -959,7 +1022,7 @@ namespace C64Emulator.Core
                     _spriteDataCollision |= bit;
                 }
 
-                bool behindGraphics = ((_registers[0x1B] >> spriteIndex) & 0x01) != 0;
+                bool behindGraphics = ((_pixelRegisters[0x1B] >> spriteIndex) & 0x01) != 0;
                 if (!spriteVisible && (!behindGraphics || !result.GraphicsForeground))
                 {
                     result.Color = spriteColor;
@@ -994,11 +1057,6 @@ namespace C64Emulator.Core
         private bool TryGetSpritePixel(int spriteIndex, int frameX, int frameY, out uint spriteColor)
         {
             spriteColor = 0;
-            if (((_registers[0x15] >> spriteIndex) & 0x01) == 0)
-            {
-                return false;
-            }
-
             if (!_spriteLineVisible[spriteIndex])
             {
                 return false;
@@ -1046,7 +1104,8 @@ namespace C64Emulator.Core
             byte data2 = _spriteLineDataByte2[spriteIndex];
             uint spriteBits = (uint)((data0 << 16) | (data1 << 8) | data2);
 
-            if (_spriteLineMulticolor[spriteIndex])
+            bool spriteMulticolor = ((_pixelRegisters[0x1C] >> spriteIndex) & 0x01) != 0;
+            if (spriteMulticolor)
             {
                 int pair = (int)((spriteBits >> ((11 - (localX / 2)) * 2)) & 0x03);
                 switch (pair)
@@ -1054,13 +1113,13 @@ namespace C64Emulator.Core
                     case 0:
                         return false;
                     case 1:
-                        spriteColor = Palette[_registers[0x25] & 0x0F];
+                        spriteColor = Palette[_pixelRegisters[0x25] & 0x0F];
                         return true;
                     case 2:
-                        spriteColor = Palette[_spriteLineColor[spriteIndex] & 0x0F];
+                        spriteColor = Palette[_pixelRegisters[0x27 + spriteIndex] & 0x0F];
                         return true;
                     default:
-                        spriteColor = Palette[_registers[0x26] & 0x0F];
+                        spriteColor = Palette[_pixelRegisters[0x26] & 0x0F];
                         return true;
                 }
             }
@@ -1070,7 +1129,7 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            spriteColor = Palette[_spriteLineColor[spriteIndex] & 0x0F];
+            spriteColor = Palette[_pixelRegisters[0x27 + spriteIndex] & 0x0F];
             return true;
         }
 
@@ -1101,11 +1160,6 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsSpriteActiveOnLine(int spriteIndex, int rasterLine)
         {
-            if (((_registers[0x15] >> spriteIndex) & 0x01) == 0)
-            {
-                return false;
-            }
-
             return _spriteDmaActive[spriteIndex] || _spriteLineVisible[spriteIndex];
         }
 
@@ -1193,7 +1247,7 @@ namespace C64Emulator.Core
         /// </summary>
         private uint GetBackgroundColor(int index)
         {
-            return Palette[_registers[0x21 + (index & 0x03)] & 0x0F];
+            return Palette[_pixelRegisters[0x21 + (index & 0x03)] & 0x0F];
         }
 
         /// <summary>
@@ -1312,6 +1366,57 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets the current display top frame value.
+        /// </summary>
+        private int GetCurrentDisplayTopFrame()
+        {
+            return _displaySource25Row ? BorderTop : NarrowBorderTop;
+        }
+
+        /// <summary>
+        /// Gets the current display height value.
+        /// </summary>
+        private int GetCurrentDisplayHeight()
+        {
+            int rows = _displaySource25Row ? VisibleRows : NarrowVisibleRows;
+            return rows * CharacterHeight;
+        }
+
+        /// <summary>
+        /// Gets the current horizontal border left frame value from live CSEL.
+        /// </summary>
+        private int GetCurrentBorderLeftFrame()
+        {
+            return (_pixelRegisters[0x16] & 0x08) != 0 ? BorderLeft : NarrowBorderLeft;
+        }
+
+        /// <summary>
+        /// Gets the current horizontal border width value from live CSEL.
+        /// </summary>
+        private int GetCurrentBorderWidth()
+        {
+            int columns = (_pixelRegisters[0x16] & 0x08) != 0 ? VisibleColumns : NarrowVisibleColumns;
+            return columns * CharacterWidth;
+        }
+
+        /// <summary>
+        /// Gets the current vertical border top frame value from live RSEL.
+        /// </summary>
+        private int GetCurrentBorderTopFrame()
+        {
+            return (_pixelRegisters[0x11] & 0x08) != 0 ? BorderTop : NarrowBorderTop;
+        }
+
+        /// <summary>
+        /// Gets the current vertical border height value from live RSEL.
+        /// </summary>
+        private int GetCurrentBorderHeight()
+        {
+            int rows = (_pixelRegisters[0x11] & 0x08) != 0 ? VisibleRows : NarrowVisibleRows;
+            return rows * CharacterHeight;
+        }
+
+        /// <summary>
         /// Gets the horizontal scroll phase value.
         /// </summary>
         private int GetHorizontalScrollPhase()
@@ -1352,10 +1457,14 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsInsideActiveDisplayArea(int frameX, int frameY)
         {
-            return frameX >= _lineDisplayLeftFrame &&
-                frameX < _lineDisplayRightFrame &&
-                frameY >= _lineDisplayTopFrame &&
-                frameY < _lineDisplayBottomFrame;
+            int currentBorderLeft = GetCurrentBorderLeftFrame();
+            int currentBorderRight = currentBorderLeft + GetCurrentBorderWidth();
+            int currentBorderTop = GetCurrentBorderTopFrame();
+            int currentBorderBottom = currentBorderTop + GetCurrentBorderHeight();
+            return frameX >= currentBorderLeft &&
+                frameX < currentBorderRight &&
+                frameY >= currentBorderTop &&
+                frameY < currentBorderBottom;
         }
 
         /// <summary>
@@ -1388,6 +1497,7 @@ namespace C64Emulator.Core
             LatchDisplaySourceFromLineState();
             UpdateVerticalBorderState();
             _isBadLine = false;
+            _badLineConditionThisCycle = false;
             _matrixFetchStartedThisLine = false;
             _matrixFetchRequestStartCycle = CyclesPerLine + 1;
             _matrixFetchStartCycle = CyclesPerLine + 1;
@@ -1649,7 +1759,7 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            if (_isBadLine && (_cycleInLine + 1) < _matrixFetchStartCycle)
+            if (_badLineConditionThisCycle && (_cycleInLine + 1) < _matrixFetchStartCycle)
             {
                 return false;
             }
@@ -1872,7 +1982,7 @@ namespace C64Emulator.Core
             }
 
             bool badLineCondition = GetBadLineConditionForCurrentCycle();
-            _isBadLine = badLineCondition;
+            _badLineConditionThisCycle = badLineCondition;
 
             if (cycle == 14)
             {
@@ -1880,6 +1990,7 @@ namespace C64Emulator.Core
                 _graphicsVmli = 0;
                 if (badLineCondition)
                 {
+                    _isBadLine = true;
                     _graphicsRc = 0;
                     _graphicsDisplayState = true;
                     _matrixFetchStartedThisLine = true;
@@ -1896,6 +2007,7 @@ namespace C64Emulator.Core
             }
             else if (!_matrixFetchStartedThisLine && badLineCondition && cycle >= 15 && cycle <= 53)
             {
+                _isBadLine = true;
                 _graphicsDisplayState = true;
                 _matrixFetchStartedThisLine = true;
                 _matrixFetchRequestStartCycle = cycle + 1;
@@ -1932,7 +2044,7 @@ namespace C64Emulator.Core
             int cycle = _cycleInLine + 1;
             if (!_matrixFetchStartedThisLine)
             {
-                if (_isBadLine && cycle >= 12 && cycle < 15)
+                if (_badLineConditionThisCycle && cycle >= 12 && cycle < 15)
                 {
                     _currentBusSlot.BusRequestPending = true;
                 }
@@ -2029,8 +2141,8 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateVerticalBorderState()
         {
-            int top = _lineDisplayTopFrame + CropTop;
-            int bottom = _lineDisplayBottomFrame + CropTop;
+            int top = GetCurrentBorderTopFrame() + CropTop;
+            int bottom = top + GetCurrentBorderHeight();
 
             if (_rasterLine == 0)
             {
@@ -2051,21 +2163,23 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateHorizontalBorderState(int frameX, int frameY)
         {
-            if (frameY < _lineDisplayTopFrame || frameY >= _lineDisplayBottomFrame)
+            int currentBorderTop = GetCurrentBorderTopFrame();
+            int currentBorderBottom = currentBorderTop + GetCurrentBorderHeight();
+            if (frameY < currentBorderTop)
             {
                 _horizontalBorderActive = true;
                 return;
             }
 
-            int activeDisplayLeft = _lineDisplayLeftFrame;
-            int activeDisplayRight = _lineDisplayRightFrame;
-            if (frameX == activeDisplayLeft)
+            int currentBorderLeft = GetCurrentBorderLeftFrame();
+            int currentBorderRight = currentBorderLeft + GetCurrentBorderWidth();
+            if (frameX == currentBorderLeft)
             {
-                if (frameY == _lineDisplayBottomFrame)
+                if (frameY == currentBorderBottom)
                 {
                     _verticalBorderActive = true;
                 }
-                else if (frameY == _lineDisplayTopFrame && _lineDisplayEnabled)
+                else if (frameY == currentBorderTop && _lineDisplayEnabled)
                 {
                     _verticalBorderActive = false;
                 }
@@ -2076,7 +2190,7 @@ namespace C64Emulator.Core
                 }
             }
 
-            if (frameX == activeDisplayRight)
+            if (frameX == currentBorderRight)
             {
                 _horizontalBorderActive = true;
             }
@@ -2090,7 +2204,7 @@ namespace C64Emulator.Core
             for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
             {
                 bool enabled = ((_registers[0x15] >> spriteIndex) & 0x01) != 0;
-                if (!enabled)
+                if (!enabled && !_spriteDmaLatched[spriteIndex])
                 {
                     _spriteLineVisible[spriteIndex] = false;
                     _spriteLineDataValid[spriteIndex] = false;

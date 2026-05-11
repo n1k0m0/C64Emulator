@@ -152,6 +152,137 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Runs a PRG from a direct machine-code entry point and writes log plus optional framebuffer PPM.
+        /// </summary>
+        public static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles)
+        {
+            EnsureDirectory(logPath);
+            if (!string.IsNullOrWhiteSpace(framePath))
+            {
+                EnsureDirectory(framePath);
+            }
+
+            var log = new StringBuilder();
+            log.AppendLine("C64 PRG SYS RUN");
+            log.AppendLine("Started=" + DateTime.Now.ToString("O"));
+            log.AppendLine("Prg=" + (prgPath ?? string.Empty));
+            log.AppendLine("StartAddress=" + startAddress.ToString("X4", CultureInfo.InvariantCulture));
+            log.AppendLine("WarmupCycles=" + warmupCycles.ToString(CultureInfo.InvariantCulture));
+            log.AppendLine("Cycles=" + cycles.ToString(CultureInfo.InvariantCulture));
+
+            try
+            {
+                using (var system = new C64System(C64Model.Pal, C64AccuracyOptions.Accuracy))
+                {
+                    const int maxVicWriteLogCount = 4096;
+                    int vicWriteLogCount = 0;
+                    system.Cpu.TraceEnabled = true;
+                    system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
+                    {
+                        if (entry.AccessType != CpuTraceAccessType.Write || vicWriteLogCount >= maxVicWriteLogCount)
+                        {
+                            return;
+                        }
+
+                        if (entry.Address < 0xD000 || entry.Address > 0xD02E)
+                        {
+                            return;
+                        }
+
+                        VicTiming writeTiming = system.Timing;
+                        log.AppendFormat(
+                            "VicWrite[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} addr:{5:X4} value:{6:X2}",
+                            vicWriteLogCount,
+                            writeTiming.GlobalCycle,
+                            writeTiming.RasterLine,
+                            writeTiming.CycleInLine,
+                            entry.LastOpcodeAddress,
+                            entry.Address,
+                            entry.Value).AppendLine();
+                        vicWriteLogCount++;
+                    };
+
+                    if (warmupCycles > 0)
+                    {
+                        system.RunCycles(warmupCycles);
+                    }
+
+                    log.AppendLine("Mount=" + system.MountMedia(prgPath, 8));
+                    system.Cpu.StartAt(startAddress);
+                    system.RunCycles(Math.Max(0, cycles));
+
+                    VicTiming timing = system.Timing;
+                    log.AppendLine("FinalCycle=" + timing.GlobalCycle.ToString(CultureInfo.InvariantCulture));
+                    log.AppendFormat("FinalVic=raster:{0} cycle:{1} badLine:{2}", timing.RasterLine, timing.CycleInLine, timing.BadLine).AppendLine();
+                    log.AppendLine("FinalCpu=" + system.GetCpuDebugInfo());
+                    log.AppendLine("FinalMem=" + system.GetMemoryConfigDebugInfo());
+                    string frameHash = ComputeFrameHash(system.FrameBuffer);
+                    log.AppendLine("FrameSHA256=" + frameHash);
+
+                    if (!string.IsNullOrWhiteSpace(framePath))
+                    {
+                        WriteFrameBufferPpm(system.FrameBuffer, framePath);
+                        log.AppendLine("FramePath=" + Path.GetFullPath(framePath));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.AppendLine("EXCEPTION:");
+                log.AppendLine(ex.ToString());
+                File.WriteAllText(logPath, log.ToString());
+                throw;
+            }
+
+            File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Loads a savestate, advances it, and writes a framebuffer artifact plus log.
+        /// </summary>
+        public static void RenderSavestate(string savePath, int frames, string logPath, string framePath)
+        {
+            EnsureDirectory(logPath);
+            if (!string.IsNullOrWhiteSpace(framePath))
+            {
+                EnsureDirectory(framePath);
+            }
+
+            var log = new StringBuilder();
+            log.AppendLine("C64 SAVESTATE RENDER");
+            log.AppendLine("Started=" + DateTime.Now.ToString("O"));
+            log.AppendLine("Save=" + Path.GetFullPath(savePath));
+            log.AppendLine("Frames=" + frames.ToString(CultureInfo.InvariantCulture));
+
+            using (var system = new C64System(C64Model.Pal))
+            {
+                SaveStateFile.Load(savePath, system);
+                int safeFrames = Math.Max(0, frames);
+                int cycles = C64Model.Pal.RasterLines * C64Model.Pal.CyclesPerLine * safeFrames;
+                system.RunCycles(cycles);
+
+                VicTiming timing = system.Timing;
+                log.AppendLine("FinalCycle=" + timing.GlobalCycle.ToString(CultureInfo.InvariantCulture));
+                log.AppendFormat("FinalVic=raster:{0} cycle:{1} badLine:{2}", timing.RasterLine, timing.CycleInLine, timing.BadLine).AppendLine();
+                log.AppendLine("FinalCpu=" + system.GetCpuDebugInfo());
+                log.AppendLine("FinalMem=" + system.GetMemoryConfigDebugInfo());
+                log.AppendLine("FinalCia=" + system.GetCiaDebugInfo());
+                log.AppendLine("FinalSid=" + system.GetSidDebugInfo());
+                log.AppendLine("FinalIec=" + system.GetIecDebugInfo());
+                log.AppendLine("FinalDrive8=" + system.GetDriveDebugInfo(8));
+                log.AppendLine("FrameSHA256=" + ComputeFrameHash(system.FrameBuffer));
+
+                if (!string.IsNullOrWhiteSpace(framePath))
+                {
+                    WriteFrameBufferPpm(system.FrameBuffer, framePath);
+                    log.AppendLine("FramePath=" + Path.GetFullPath(framePath));
+                }
+            }
+
+            File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
         /// Writes a framebuffer as binary PPM (P6).
         /// </summary>
         public static void WriteFrameBufferPpm(FrameBuffer frameBuffer, string path)

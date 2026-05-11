@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "C64Emulator savestate visual golden sample",
+  "description": "Template for local VIC-II framebuffer regressions from .c64sav files. Copy this file and point saveStatePath at a local save.",
+  "tests": [
+    {
+      "id": "local-savestate-one-frame",
+      "name": "Local savestate after one PAL frame",
+      "category": "vic-visual",
+      "enabled": false,
+      "model": "PAL",
+      "saveStatePath": "../artifacts/local/example.c64sav",
+      "maxCycles": 19656,
+      "arguments": {
+        "profile": "compatibility",
+        "writeFrame": "true"
+      },
+      "expectations": {
+        "hashes": {},
+        "properties": {}
+      }
+    }
+  ]
+}

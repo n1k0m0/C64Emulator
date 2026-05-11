@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "C64Emulator disk LOAD golden suite",
+  "description": "Small generated fixtures for standard D64 directory and PRG LOAD behavior.",
+  "tests": [
+    {
+      "id": "disk-load-aa-relocatable",
+      "name": "LOAD\"AA\",8 relocates a PRG with non-BASIC file address",
+      "category": "1541-load",
+      "model": "PAL",
+      "mediaPath": "../artifacts/golden-fixtures/load-relocate.d64",
+      "maxCycles": 10000000,
+      "arguments": {
+        "profile": "compatibility",
+        "warmupCycles": "1000000",
+        "command": "LOAD\"AA\",8\\rRUN\\r",
+        "hashRam": "0801:004B",
+        "dumpRam": "0801:0050",
+        "writeFrame": "true"
+      },
+      "expectations": {
+        "hashes": {
+          "ram:0801:004B": "95E5F5906343FBCABD03D3267E8D711E0BD086C587C4C5256EAD8334999E5B22"
+        },
+        "properties": {
+          "mediaMount": "DISK MOUNTED IN DRIVE 8",
+          "st": "40",
+          "basicStart": "0801",
+          "basicVariables": "084C"
+        }
+      }
+    }
+  ]
+}

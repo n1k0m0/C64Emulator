@@ -787,6 +787,20 @@ namespace C64Emulator.Core
             get { return _cpuCycleCount; }
         }
 
+        /// <summary>
+        /// Starts execution at the given address on the next opcode fetch.
+        /// </summary>
+        public void StartAt(ushort address)
+        {
+            _pc = address;
+            _lastOpcodeAddress = address;
+            _state = CpuState.FetchOpcode;
+            _currentStepper = null;
+            _context.Reset(0x00);
+            _currentInstructionName = string.Empty;
+            _skipIrqPollOnce = true;
+        }
+
         public string LastIecHookDebug
         {
             get { return _lastIecHookName + ":" + (_lastIecHookSuccess ? "OK" : "FAIL"); }
@@ -1030,7 +1044,10 @@ namespace C64Emulator.Core
 
             ushort loadAddress;
             ushort endAddress;
-            if (!PrgLoader.TryLoadIntoMemory(systemBus, fileBytes, out loadAddress, out endAddress))
+            ushort targetAddress = Read(SecondaryAddressWord) == 0
+                ? (ushort)(X | (Y << 8))
+                : PrgLoader.GetFileLoadAddress(fileBytes);
+            if (!PrgLoader.TryLoadIntoMemory(systemBus, fileBytes, targetAddress, out loadAddress, out endAddress))
             {
                 return false;
             }
@@ -1224,7 +1241,10 @@ namespace C64Emulator.Core
 
             ushort loadAddress;
             ushort endAddress;
-            if (!PrgLoader.TryLoadIntoMemory(systemBus, programBytes, out loadAddress, out endAddress))
+            ushort targetAddress = _iecKernalBridge.CurrentSecondaryAddress == 0
+                ? (ushort)(X | (Y << 8))
+                : PrgLoader.GetFileLoadAddress(programBytes);
+            if (!PrgLoader.TryLoadIntoMemory(systemBus, programBytes, targetAddress, out loadAddress, out endAddress))
             {
                 _lastIecHookName = "LOAD";
                 _lastIecHookSuccess = false;

@@ -112,6 +112,11 @@ namespace C64Emulator.Core
             get { return _currentFilename; }
         }
 
+        public byte CurrentSecondaryAddress
+        {
+            get { return _currentSecondaryAddress; }
+        }
+
         public string StatusText
         {
             get { return _statusText; }

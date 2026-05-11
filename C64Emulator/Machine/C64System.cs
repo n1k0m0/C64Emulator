@@ -53,6 +53,7 @@ namespace C64Emulator.Core
         private readonly MediaManager _mediaManager;
         private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
         private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
+        private readonly Queue<byte> _queuedPetsciiInput = new Queue<byte>();
         private readonly object _syncRoot = new object();
         private readonly C64AccuracyOptions _accuracyOptions;
         private MountedMediaInfo _lastMountedMedia = MountedMediaInfo.None;
@@ -715,19 +716,19 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 const ushort KeyboardBufferCountAddress = 0x00C6;
-                const ushort KeyboardBufferStartAddress = 0x0277;
                 const int KeyboardBufferCapacity = 10;
 
                 for (int index = 0; index < text.Length; index++)
                 {
                     byte count = _bus.CpuRead(KeyboardBufferCountAddress);
-                    if (count >= KeyboardBufferCapacity)
+                    if (count < KeyboardBufferCapacity)
                     {
-                        break;
+                        EnqueuePetsciiByte((byte)text[index]);
                     }
-
-                    _bus.WriteRam((ushort)(KeyboardBufferStartAddress + count), (byte)text[index]);
-                    _bus.WriteRam(KeyboardBufferCountAddress, (byte)(count + 1));
+                    else
+                    {
+                        _queuedPetsciiInput.Enqueue((byte)text[index]);
+                    }
                 }
             }
         }
@@ -990,6 +991,7 @@ namespace C64Emulator.Core
             _mountedDrivePaths.Clear();
             _lastMountedMedia = MountedMediaInfo.None;
             _pressedHostKeys.Clear();
+            _queuedPetsciiInput.Clear();
             _lastMirroredPollKey = null;
             _pollMirrorRepeatDelayCycles = 0;
             _drive1541TargetCycles = 0.0;
@@ -1228,6 +1230,7 @@ namespace C64Emulator.Core
             _cia1.Tick();
             _cia2.Tick();
             _sid.Tick();
+            DrainQueuedPetsciiInputIntoKeyboardBuffer();
             MirrorHeldHostInputIntoKeyboardBuffer();
             _vic.FinishCycle();
             if (AnyDriveNeedsClockTick())
@@ -1406,6 +1409,13 @@ namespace C64Emulator.Core
         /// </summary>
         private void MirrorHeldHostInputIntoKeyboardBuffer()
         {
+            if (_queuedPetsciiInput.Count > 0)
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                return;
+            }
+
             if (!CanMirrorHostInputIntoKeyboardBuffer())
             {
                 _lastMirroredPollKey = null;
@@ -1474,9 +1484,25 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Drains queued petscii input into the KERNAL keyboard buffer.
+        /// </summary>
+        private void DrainQueuedPetsciiInputIntoKeyboardBuffer()
+        {
+            while (_queuedPetsciiInput.Count > 0)
+            {
+                if (!EnqueuePetsciiByte(_queuedPetsciiInput.Peek()))
+                {
+                    return;
+                }
+
+                _queuedPetsciiInput.Dequeue();
+            }
+        }
+
+        /// <summary>
         /// Enqueues petscii byte.
         /// </summary>
-        private void EnqueuePetsciiByte(byte petscii)
+        private bool EnqueuePetsciiByte(byte petscii)
         {
             const ushort KeyboardBufferCountAddress = 0x00C6;
             const ushort KeyboardBufferStartAddress = 0x0277;
@@ -1485,11 +1511,12 @@ namespace C64Emulator.Core
             byte count = _bus.CpuRead(KeyboardBufferCountAddress);
             if (count >= KeyboardBufferCapacity)
             {
-                return;
+                return false;
             }
 
             _bus.WriteRam((ushort)(KeyboardBufferStartAddress + count), petscii);
             _bus.WriteRam(KeyboardBufferCountAddress, (byte)(count + 1));
+            return true;
         }
 
         /// <summary>

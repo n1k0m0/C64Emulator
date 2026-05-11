@@ -70,6 +70,11 @@ namespace C64Emulator.Core
         public string MediaPath { get; set; }
 
         /// <summary>
+        /// Gets or sets a savestate path relative to the manifest base directory.
+        /// </summary>
+        public string SaveStatePath { get; set; }
+
+        /// <summary>
         /// Gets or sets the maximum number of machine cycles for this test.
         /// </summary>
         public long MaxCycles { get; set; }

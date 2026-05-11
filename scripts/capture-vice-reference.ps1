@@ -1,9 +1,10 @@
 param(
     [string]$VicePath = "",
     [string]$MediaPath = "",
-    [int]$Cycles = 50000,
+    [int]$Cycles = 10000000,
     [string]$OutputDirectory = "artifacts\vice-reference",
-    [string]$Name = "vice-reference"
+    [string]$Name = "vice-reference",
+    [switch]$AllowBlankScreenshot
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,8 +62,11 @@ $metadataPath = Join-Path $outputPath ($Name + ".json")
 
 $arguments = @(
     "-default",
-    "-console",
     "-silent",
+    "-windowxpos", "100",
+    "-windowypos", "100",
+    "-windowwidth", "720",
+    "-windowheight", "643",
     "-limitcycles", $Cycles.ToString([System.Globalization.CultureInfo]::InvariantCulture),
     "-exitscreenshot", $screenshotPath,
     "-logtofile",
@@ -76,13 +80,60 @@ if (-not [string]::IsNullOrWhiteSpace($MediaPath)) {
 
 $process = Start-Process -FilePath $x64sc -ArgumentList $arguments -NoNewWindow -Wait -PassThru
 if ($process.ExitCode -ne 0) {
-    exit $process.ExitCode
+    $logText = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { "" }
+    $hasExpectedCycleLimitExit = $process.ExitCode -eq 1 -and
+        $logText -match "cycle limit reached" -and
+        (Test-Path -LiteralPath $screenshotPath)
+
+    if (-not $hasExpectedCycleLimitExit) {
+        exit $process.ExitCode
+    }
 }
 
 $hash = if (Test-Path -LiteralPath $screenshotPath) {
     (Get-FileHash -Algorithm SHA256 -LiteralPath $screenshotPath).Hash
 } else {
     ""
+}
+
+$screenshotStats = [ordered]@{
+    width = 0
+    height = 0
+    uniqueSampleColors = 0
+    nonBlackSamplePixels = 0
+}
+
+if (Test-Path -LiteralPath $screenshotPath) {
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = [System.Drawing.Bitmap]::new((Resolve-Path -LiteralPath $screenshotPath).Path)
+    try {
+        $uniqueColors = New-Object 'System.Collections.Generic.HashSet[int]'
+        $stepX = [Math]::Max(1, [int]($bitmap.Width / 160))
+        $stepY = [Math]::Max(1, [int]($bitmap.Height / 120))
+        $nonBlack = 0
+        for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
+                $argb = $bitmap.GetPixel($x, $y).ToArgb()
+                [void]$uniqueColors.Add($argb)
+                if (($argb -band 0x00FFFFFF) -ne 0) {
+                    $nonBlack++
+                }
+            }
+        }
+
+        $screenshotStats.width = $bitmap.Width
+        $screenshotStats.height = $bitmap.Height
+        $screenshotStats.uniqueSampleColors = $uniqueColors.Count
+        $screenshotStats.nonBlackSamplePixels = $nonBlack
+    }
+    finally {
+        $bitmap.Dispose()
+    }
+}
+
+if (-not $AllowBlankScreenshot -and $screenshotStats.nonBlackSamplePixels -eq 0) {
+    Write-Error "VICE screenshot was blank/black. Increase -Cycles or pass -AllowBlankScreenshot for diagnostics."
+    exit 1
 }
 
 $metadata = [ordered]@{
@@ -92,6 +143,7 @@ $metadata = [ordered]@{
     media = $MediaPath
     screenshot = $screenshotPath
     screenshotSha256 = $hash
+    screenshotStats = $screenshotStats
     log = $logPath
     capturedUtc = [DateTime]::UtcNow.ToString("O")
 }

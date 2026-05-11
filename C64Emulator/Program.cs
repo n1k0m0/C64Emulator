@@ -161,6 +161,40 @@ namespace C64Emulator
                 return;
             }
 
+            if (args != null && args.Length >= 3 && string.Equals(args[0], "--run-prg-sys", StringComparison.OrdinalIgnoreCase))
+            {
+                ushort startAddress = ParseUShort(args[2]);
+                int cycles = args.Length >= 4 && int.TryParse(args[3], out int parsedPrgCycles) && parsedPrgCycles >= 0
+                    ? parsedPrgCycles
+                    : 1000000;
+                string logPath = args.Length >= 5
+                    ? args[4]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "prg_sys_run.log");
+                string framePath = args.Length >= 6
+                    ? args[5]
+                    : string.Empty;
+                int warmupCycles = args.Length >= 7 && int.TryParse(args[6], out int parsedWarmupCycles) && parsedWarmupCycles >= 0
+                    ? parsedWarmupCycles
+                    : 0;
+                RunPrgSys(args[1], startAddress, cycles, logPath, framePath, warmupCycles);
+                return;
+            }
+
+            if (args != null && args.Length >= 2 && string.Equals(args[0], "--render-savestate", StringComparison.OrdinalIgnoreCase))
+            {
+                int frames = args.Length >= 3 && int.TryParse(args[2], out int parsedFrames) && parsedFrames >= 0
+                    ? parsedFrames
+                    : 1;
+                string framePath = args.Length >= 4
+                    ? args[3]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "savestate_frame.ppm");
+                string logPath = args.Length >= 5
+                    ? args[4]
+                    : Path.ChangeExtension(framePath, ".log");
+                RunSavestateRender(args[1], frames, logPath, framePath);
+                return;
+            }
+
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--probe-iec-load", StringComparison.OrdinalIgnoreCase))
             {
                 string logPath = args.Length >= 3
@@ -439,6 +473,74 @@ namespace C64Emulator
             catch (Exception ex)
             {
                 Console.WriteLine("REGRESSION RUN FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Parses an unsigned 16-bit integer in decimal or hexadecimal notation.
+        /// </summary>
+        private static ushort ParseUShort(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return 0;
+            }
+
+            value = value.Trim();
+            if (value.StartsWith("$", StringComparison.Ordinal))
+            {
+                return ushort.Parse(value.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            }
+
+            if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                return ushort.Parse(value.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            }
+
+            return ushort.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Runs a PRG by jumping directly to a machine-code entry point.
+        /// </summary>
+        private static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles)
+        {
+            try
+            {
+                DevTraceExporter.RunPrgSys(prgPath, startAddress, cycles, logPath, framePath, warmupCycles);
+                Console.WriteLine("PRG SYS log written: " + Path.GetFullPath(logPath));
+                if (!string.IsNullOrWhiteSpace(framePath))
+                {
+                    Console.WriteLine("Frame written: " + Path.GetFullPath(framePath));
+                }
+
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("PRG SYS RUN FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Renders a savestate framebuffer artifact.
+        /// </summary>
+        private static void RunSavestateRender(string savePath, int frames, string logPath, string framePath)
+        {
+            try
+            {
+                DevTraceExporter.RenderSavestate(savePath, frames, logPath, framePath);
+                Console.WriteLine("Savestate render log written: " + Path.GetFullPath(logPath));
+                Console.WriteLine("Frame written: " + Path.GetFullPath(framePath));
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("SAVESTATE RENDER FAILED");
                 Console.WriteLine(ex);
                 Environment.ExitCode = 1;
             }

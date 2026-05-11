@@ -50,8 +50,19 @@ namespace C64Emulator.Core
                 var result = new GoldenTestResult();
                 result.Outcome = GoldenTestOutcome.Passed;
 
-                MountInputs(system, test, context, result);
+                bool mountAfterWarmup = GetBoolArgument(test, "mountAfterWarmup", false);
+                LoadOptionalSaveState(system, test, context, result);
+                if (!mountAfterWarmup)
+                {
+                    MountMediaInputs(system, test, context, result);
+                }
+
                 RunOptionalWarmup(system, test);
+                if (mountAfterWarmup)
+                {
+                    MountMediaInputs(system, test, context, result);
+                }
+
                 EnqueueOptionalCommand(system, test);
                 RunMachine(system, test.MaxCycles);
                 FillObservedState(system, test, context, result);
@@ -82,7 +93,18 @@ namespace C64Emulator.Core
             throw new NotSupportedException("Unsupported golden model '" + modelName + "'.");
         }
 
-        private static void MountInputs(C64System system, GoldenTestDefinition test, GoldenRunContext context, GoldenTestResult result)
+        private static void LoadOptionalSaveState(C64System system, GoldenTestDefinition test, GoldenRunContext context, GoldenTestResult result)
+        {
+            string saveStatePath = context.ResolvePath(test.SaveStatePath);
+            if (!string.IsNullOrWhiteSpace(saveStatePath))
+            {
+                SaveStateFile.Load(saveStatePath, system);
+                result.ActualProperties["saveStateLoad"] = "OK";
+                result.Artifacts["savestate"] = Path.GetFullPath(saveStatePath);
+            }
+        }
+
+        private static void MountMediaInputs(C64System system, GoldenTestDefinition test, GoldenRunContext context, GoldenTestResult result)
         {
             string programPath = context.ResolvePath(test.ProgramPath);
             if (!string.IsNullOrWhiteSpace(programPath))
@@ -145,6 +167,9 @@ namespace C64Emulator.Core
             result.ActualProperties["sp"] = system.Cpu.SP.ToString("X2", CultureInfo.InvariantCulture);
             result.ActualProperties["sr"] = system.Cpu.SR.ToString("X2", CultureInfo.InvariantCulture);
             result.ActualProperties["st"] = system.PeekRam(0x0090).ToString("X2", CultureInfo.InvariantCulture);
+            result.ActualProperties["keyboardBufferCount"] = system.PeekRam(0x00C6).ToString("X2", CultureInfo.InvariantCulture);
+            result.ActualProperties["basicStart"] = ReadWord(system, 0x002B).ToString("X4", CultureInfo.InvariantCulture);
+            result.ActualProperties["basicVariables"] = ReadWord(system, 0x002D).ToString("X4", CultureInfo.InvariantCulture);
             result.ActualProperties["mem"] = system.GetMemoryConfigDebugInfo();
             result.ActualProperties["cia"] = system.GetCiaDebugInfo();
             result.ActualProperties["iec"] = system.GetIecDebugInfo();
@@ -152,32 +177,104 @@ namespace C64Emulator.Core
 
             result.ActualHashes["frame"] = DevTraceExporter.ComputeFrameHash(system.FrameBuffer);
             ComputeRequestedMemoryHashes(system, test, result);
+            ComputeRequestedMemoryDumps(system, test, result);
             WriteOptionalFrameArtifact(system, test, context, result);
+        }
+
+        private static ushort ReadWord(C64System system, ushort address)
+        {
+            return (ushort)(system.PeekRam(address) | (system.PeekRam((ushort)(address + 1)) << 8));
         }
 
         private static void ComputeRequestedMemoryHashes(C64System system, GoldenTestDefinition test, GoldenTestResult result)
         {
-            if (test.Expectations == null || test.Expectations.Hashes == null)
+            if (test.Expectations != null && test.Expectations.Hashes != null)
+            {
+                foreach (KeyValuePair<string, string> pair in test.Expectations.Hashes)
+                {
+                    if (result.ActualHashes.ContainsKey(pair.Key))
+                    {
+                        continue;
+                    }
+
+                    ComputeNamedMemoryHash(system, result, pair.Key);
+                }
+            }
+
+            ComputeRequestedMemoryHashList(system, test, result, "hashRam", "ram:");
+            ComputeRequestedMemoryHashList(system, test, result, "hashDrive8Ram", "drive8ram:");
+        }
+
+        private static void ComputeRequestedMemoryHashList(C64System system, GoldenTestDefinition test, GoldenTestResult result, string argumentName, string keyPrefix)
+        {
+            string ranges = GetArgument(test, argumentName);
+            if (string.IsNullOrWhiteSpace(ranges))
             {
                 return;
             }
 
-            foreach (KeyValuePair<string, string> pair in test.Expectations.Hashes)
+            string[] parts = ranges.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int index = 0; index < parts.Length; index++)
             {
-                if (result.ActualHashes.ContainsKey(pair.Key))
+                string range = parts[index].Trim();
+                if (range.Length == 0)
                 {
                     continue;
                 }
 
-                if (pair.Key.StartsWith("ram:", StringComparison.OrdinalIgnoreCase))
+                string key = keyPrefix + range.ToUpperInvariant();
+                if (!result.ActualHashes.ContainsKey(key))
                 {
-                    result.ActualHashes[pair.Key] = HashRamRange(system, pair.Key.Substring(4));
-                }
-                else if (pair.Key.StartsWith("drive8ram:", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.ActualHashes[pair.Key] = HashDriveRamRange(system, 8, pair.Key.Substring(10));
+                    ComputeNamedMemoryHash(system, result, key);
                 }
             }
+        }
+
+        private static void ComputeNamedMemoryHash(C64System system, GoldenTestResult result, string key)
+        {
+            if (key.StartsWith("ram:", StringComparison.OrdinalIgnoreCase))
+            {
+                result.ActualHashes[key] = HashRamRange(system, key.Substring(4));
+            }
+            else if (key.StartsWith("drive8ram:", StringComparison.OrdinalIgnoreCase))
+            {
+                result.ActualHashes[key] = HashDriveRamRange(system, 8, key.Substring(10));
+            }
+        }
+
+        private static void ComputeRequestedMemoryDumps(C64System system, GoldenTestDefinition test, GoldenTestResult result)
+        {
+            string ranges = GetArgument(test, "dumpRam");
+            if (string.IsNullOrWhiteSpace(ranges))
+            {
+                return;
+            }
+
+            string[] parts = ranges.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int index = 0; index < parts.Length; index++)
+            {
+                string range = parts[index].Trim();
+                if (range.Length == 0)
+                {
+                    continue;
+                }
+
+                result.ActualProperties["ram:" + range.ToUpperInvariant()] = DumpRamRange(system, range);
+            }
+        }
+
+        private static string DumpRamRange(C64System system, string range)
+        {
+            ushort address;
+            int length;
+            ParseRange(range, out address, out length);
+            var builder = new StringBuilder(length * 2);
+            for (int index = 0; index < length; index++)
+            {
+                builder.Append(system.PeekRam((ushort)(address + index)).ToString("X2", CultureInfo.InvariantCulture));
+            }
+
+            return builder.ToString();
         }
 
         private static string HashRamRange(C64System system, string range)

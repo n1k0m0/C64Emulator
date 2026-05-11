@@ -30,6 +30,15 @@ namespace C64Emulator.Core
         /// </summary>
         public static bool TryLoadIntoMemory(SystemBus bus, byte[] programBytes, out ushort loadAddress, out ushort endAddress)
         {
+            ushort fileLoadAddress = GetFileLoadAddress(programBytes);
+            return TryLoadIntoMemory(bus, programBytes, fileLoadAddress, out loadAddress, out endAddress);
+        }
+
+        /// <summary>
+        /// Attempts to load into memory at an explicit target address.
+        /// </summary>
+        public static bool TryLoadIntoMemory(SystemBus bus, byte[] programBytes, ushort targetAddress, out ushort loadAddress, out ushort endAddress)
+        {
             loadAddress = 0x0000;
             endAddress = 0x0000;
 
@@ -38,7 +47,7 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            loadAddress = (ushort)(programBytes[0] | (programBytes[1] << 8));
+            loadAddress = targetAddress;
             endAddress = loadAddress;
             for (int index = 2; index < programBytes.Length; index++)
             {
@@ -48,6 +57,19 @@ namespace C64Emulator.Core
 
             UpdateBasicPointers(bus, loadAddress, endAddress);
             return true;
+        }
+
+        /// <summary>
+        /// Gets the PRG file load address.
+        /// </summary>
+        public static ushort GetFileLoadAddress(byte[] programBytes)
+        {
+            if (programBytes == null || programBytes.Length < 2)
+            {
+                return 0x0000;
+            }
+
+            return (ushort)(programBytes[0] | (programBytes[1] << 8));
         }
 
         /// <summary>
