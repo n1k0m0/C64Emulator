@@ -20,13 +20,13 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | --- | --- |
 | <img src="docs/screenshots/giana-intro.png" alt="Giana Sisters intro" width="320"> | <img src="docs/screenshots/giana-level-1.png" alt="Giana Sisters level 1" width="320"> |
 
-| Maniac Mansion: front porch | Maniac Mansion: arcade room | Maniac Mansion: hallway |
+| Maniac Mansion: game start | Maniac Mansion: hallway | Maniac Mansion: front door |
 | --- | --- | --- |
-| <img src="docs/screenshots/maniac-mansion-1.png" alt="Maniac Mansion front porch" width="260"> | <img src="docs/screenshots/maniac-mansion-2.png" alt="Maniac Mansion arcade room" width="260"> | <img src="docs/screenshots/maniac-mansion-3.png" alt="Maniac Mansion hallway" width="260"> |
+| <img src="docs/screenshots/maniac-mansion-1.png" alt="Maniac Mansion game start" width="260"> | <img src="docs/screenshots/maniac-mansion-2.png" alt="Maniac Mansion hallway" width="260"> | <img src="docs/screenshots/maniac-mansion-3.png" alt="Maniac Mansion front door" width="260"> |
 
-| Zak McKracken: apartment | Zak McKracken: street | Zak McKracken: title screen |
+| Zak McKracken: apartment | Zak McKracken: bakery | Zak McKracken: airplane |
 | --- | --- | --- |
-| <img src="docs/screenshots/zak-mckracken-1.png" alt="Zak McKracken apartment" width="260"> | <img src="docs/screenshots/zak-mckracken-2.png" alt="Zak McKracken street" width="260"> | <img src="docs/screenshots/zak-mckracken-3.png" alt="Zak McKracken title screen" width="260"> |
+| <img src="docs/screenshots/zak-mckracken-1.png" alt="Zak McKracken apartment" width="260"> | <img src="docs/screenshots/zak-mckracken-2.png" alt="Zak McKracken bakery" width="260"> | <img src="docs/screenshots/zak-mckracken-3.png" alt="Zak McKracken airplane" width="260"> |
 
 ## Current Features
 
