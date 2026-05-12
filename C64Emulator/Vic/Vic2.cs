@@ -305,6 +305,7 @@ namespace C64Emulator.Core
 
                 if (_rasterLine >= TotalLines)
                 {
+                    _frameBuffer.CaptureCompletedFrame();
                     _rasterLine = 0;
                 }
             }
@@ -772,7 +773,7 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsGraphicsSourceActiveForCurrentCycle()
         {
-            return _graphicsDisplayState || (_cycleInLine + 1) < 16;
+            return _graphicsDisplayState || ((_cycleInLine + 1) < 16 && _badLineConditionThisCycle);
         }
 
         /// <summary>
@@ -2052,21 +2053,13 @@ namespace C64Emulator.Core
                 return;
             }
 
-            if (cycle < _matrixFetchRequestStartCycle || cycle > 54)
-            {
-                return;
-            }
-
-            if (cycle >= _matrixFetchStartCycle)
-            {
-                _currentBusSlot.Phi2Action = VicBusAction.MatrixFetch;
-            }
-
-            _currentBusSlot.BusRequestPending = cycle >= _matrixFetchRequestStartCycle && cycle < _matrixFetchCpuBlockStartCycle;
-            if (cycle >= _matrixFetchCpuBlockStartCycle)
-            {
-                _currentBusSlot.BlocksCpu = true;
-            }
+            VicBusPlan.ApplyMatrixFetchToSlot(
+                ref _currentBusSlot,
+                cycle,
+                _matrixFetchRequestStartCycle,
+                _matrixFetchStartCycle,
+                _matrixFetchCpuBlockStartCycle,
+                54);
         }
 
         /// <summary>

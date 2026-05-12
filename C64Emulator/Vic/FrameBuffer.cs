@@ -34,6 +34,10 @@ namespace C64Emulator.Core
         /// Gets the raw framebuffer pixel array.
         /// </summary>
         public uint[] Pixels { get; private set; }
+        /// <summary>
+        /// Gets the most recently completed full-frame pixel array.
+        /// </summary>
+        public uint[] CompletedPixels { get; private set; }
 
         /// <summary>
         /// Initializes a new FrameBuffer instance.
@@ -43,6 +47,7 @@ namespace C64Emulator.Core
             Width = width;
             Height = height;
             Pixels = new uint[width * height];
+            CompletedPixels = new uint[width * height];
         }
 
         /// <summary>
@@ -75,6 +80,16 @@ namespace C64Emulator.Core
             {
                 Pixels[i] = argb;
             }
+
+            System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
+        }
+
+        /// <summary>
+        /// Captures the currently rendered frame as the stable display frame.
+        /// </summary>
+        public void CaptureCompletedFrame()
+        {
+            System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
         }
 
         /// <summary>
@@ -98,6 +113,7 @@ namespace C64Emulator.Core
             if (width == Width && height == Height && pixels != null && pixels.Length == Pixels.Length)
             {
                 System.Array.Copy(pixels, Pixels, Pixels.Length);
+                System.Array.Copy(pixels, CompletedPixels, CompletedPixels.Length);
             }
         }
     }

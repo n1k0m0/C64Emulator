@@ -98,10 +98,15 @@ The related IRQ probes `vic-sprite-x-irq-phase.prg`,
 sprite color timing. `vic-sprite-multicolor-enable-irq-phase.prg` does the same
 for live `$D01C` sprite multicolor enable timing, while
 `vic-sprite-priority-irq-phase.prg` isolates `$D01B` priority over foreground
-graphics. Use the same VICE capture and normalized comparison shape shown above,
-substituting the PRG and output names. For color and priority timing, also check
-the output color histogram because the normalizer deliberately ignores palette
-differences while comparing geometry.
+graphics. The priority probe restores sprite pointer `$07F8` after clearing the
+screen, so the sprite data remains anchored at `$3000` and the test isolates
+`$D01B` priority instead of pointer-zero memory contents.
+`vic-sprite3-wrap-baseline.prg` covers the sprite-DMA wraparound case where
+sprite 3 fetches its data at the start of a raster line and therefore requires
+BA lead-in at the end of the previous line. Use the same VICE capture and
+normalized comparison shape shown above, substituting the PRG and output names.
+For color and priority timing, also check the output color histogram because the
+normalizer deliberately ignores palette differences while comparing geometry.
 
 For cycle-phase debugging without BASIC tokenization or command injection in
 the path, run the same PRG from its machine-code entry point:

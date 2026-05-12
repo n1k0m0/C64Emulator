@@ -476,7 +476,7 @@ namespace C64Emulator
                     drive8DebugInfo = _system.GetDriveDebugInfo(8);
                 }
 
-                Array.Copy(_system.FrameBuffer.Pixels, _frameSnapshot, _frameSnapshot.Length);
+                Array.Copy(_system.FrameBuffer.CompletedPixels, _frameSnapshot, _frameSnapshot.Length);
             }
 
             if (_driveOverlayEnabled)
@@ -815,7 +815,7 @@ namespace C64Emulator
                 SaveStateFile.Load(entry.Path, _system);
                 lock (_system.SyncRoot)
                 {
-                    Array.Copy(_system.FrameBuffer.Pixels, _frameSnapshot, _frameSnapshot.Length);
+                    Array.Copy(_system.FrameBuffer.CompletedPixels, _frameSnapshot, _frameSnapshot.Length);
                 }
 
                 _saveOverlayVisible = false;

@@ -112,6 +112,14 @@ namespace C64Emulator.Core
                 SetPhi1Action(cycle, VicBusAction.CharFetch, -1);
             }
 
+            if (badLine)
+            {
+                for (int cycle = 12; cycle <= 54; cycle++)
+                {
+                    ApplyMatrixFetchToSlot(ref _slots[cycle - 1], cycle, 12, 15, 15, 54);
+                }
+            }
+
             if (spriteDmaActive == null)
             {
                 return;
@@ -153,6 +161,38 @@ namespace C64Emulator.Core
             SetPhi1Action(nextCycle, VicBusAction.SpriteDataFetch, spriteIndex);
             SetPhi2Action(nextCycle, VicBusAction.SpriteDataFetch, spriteIndex, true);
             MarkBusRequestPending(pointerCycle);
+        }
+
+        /// <summary>
+        /// Applies a badline matrix-fetch sequence to an existing half-cycle slot.
+        /// </summary>
+        public static void ApplyMatrixFetchToSlot(
+            ref VicBusSlot slot,
+            int cycle,
+            int requestStartCycle,
+            int fetchStartCycle,
+            int cpuBlockStartCycle,
+            int fetchEndCycle)
+        {
+            if (cycle < requestStartCycle || cycle > fetchEndCycle)
+            {
+                return;
+            }
+
+            if (cycle >= fetchStartCycle)
+            {
+                slot.Phi2Action = VicBusAction.MatrixFetch;
+            }
+
+            if (cycle >= requestStartCycle && cycle < cpuBlockStartCycle)
+            {
+                slot.BusRequestPending = true;
+            }
+
+            if (cycle >= cpuBlockStartCycle)
+            {
+                slot.BlocksCpu = true;
+            }
         }
 
         /// <summary>

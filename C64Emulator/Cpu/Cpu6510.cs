@@ -83,6 +83,7 @@ namespace C64Emulator.Core
         private bool _soPending;
         private bool _skipIrqPollOnce;
         private bool _accessPredictionMode;
+        private bool _lastPredictionUsedMicrocycle;
         private CpuTraceAccessType _predictedAccessType;
         private ushort _predictedAddress;
         private byte _predictedValue;
@@ -203,9 +204,26 @@ namespace C64Emulator.Core
         {
             if (_state == CpuState.Jammed)
             {
+                _lastPredictionUsedMicrocycle = false;
                 return CpuBusAccessPrediction.None;
             }
 
+            CpuBusAccessPrediction microcyclePrediction;
+            if (CpuMicrocyclePredictor.TryPredictNextAccess(this, out microcyclePrediction))
+            {
+                _lastPredictionUsedMicrocycle = true;
+                return microcyclePrediction;
+            }
+
+            _lastPredictionUsedMicrocycle = false;
+            return PredictNextCycleAccessBySimulation();
+        }
+
+        /// <summary>
+        /// Predicts the next cycle access by executing one CPU cycle on a restored copy.
+        /// </summary>
+        private CpuBusAccessPrediction PredictNextCycleAccessBySimulation()
+        {
             CpuState savedState = _state;
             InstructionStepper savedStepper = _currentStepper;
             InstructionContext savedContext = _context;
@@ -772,6 +790,11 @@ namespace C64Emulator.Core
             get { return _context.Opcode; }
         }
 
+        internal InstructionContext CurrentInstructionContext
+        {
+            get { return _context; }
+        }
+
         public ushort LastOpcodeAddress
         {
             get { return _lastOpcodeAddress; }
@@ -785,6 +808,11 @@ namespace C64Emulator.Core
         public long CpuCycleCount
         {
             get { return _cpuCycleCount; }
+        }
+
+        public bool LastPredictionUsedMicrocycle
+        {
+            get { return _lastPredictionUsedMicrocycle; }
         }
 
         /// <summary>
@@ -1437,6 +1465,11 @@ namespace C64Emulator.Core
             }
 
             return 0;
+        }
+
+        internal byte PeekForMicrocyclePrediction(ushort address)
+        {
+            return PeekForPrediction(address);
         }
 
         /// <summary>

@@ -339,6 +339,7 @@ for address in (0xD800, 0xD900, 0xDA00, 0xDB00):
     sta_x(address)
 b(0xE8)
 b(0xD0, (sprite_priority_screen_loop - (len(code) + 2)) & 0xFF)
+lda(0xC0); sta(0x07F8)
 lda(0x18); sta(0xD018)
 lda(0x00); sta(0xD01B)
 handler_low_patch = len(code) + 1
@@ -372,6 +373,40 @@ sprite_priority_irq_prg_path, sprite_priority_irq_sys_address = write_sys_prg(
         (sprite_priority_entry_loop_low_patch + 1, sprite_priority_main_loop, "hi"),
     ],
     True)
+
+code = []
+b(0x78)
+lda(0x7F); sta(0xDC0D); sta(0xDD0D)
+lda_abs(0xDC0D); lda_abs(0xDD0D)
+lda(0x1B); sta(0xD011)
+lda(0x08); sta(0xD016)
+lda(0x00); sta(0xD020); sta(0xD021)
+lda(0x78); sta(0xD006)
+lda(0x64); sta(0xD007)
+lda(0x01); sta(0xD02A)
+lda(0x08); sta(0xD015)
+ldx(0x00)
+sprite3_fill_loop = len(code)
+lda(0xFF); sta_x(0x3000)
+b(0xE8)
+cpx(0x40)
+b(0xD0, (sprite3_fill_loop - (len(code) + 2)) & 0xFF)
+ldx(0x00)
+sprite3_clear_loop = len(code)
+lda(0x20)
+for address in (0x0400, 0x0500, 0x0600, 0x0700):
+    sta_x(address)
+lda(0x01)
+for address in (0xD800, 0xD900, 0xDA00, 0xDB00):
+    sta_x(address)
+b(0xE8)
+b(0xD0, (sprite3_clear_loop - (len(code) + 2)) & 0xFF)
+lda(0xC0); sta(0x07FB)
+lda(0x08); sta(0xD015)
+sprite3_wrap_loop = len(code)
+wait_raster(0x78); lda(0x08); sta(0xD015)
+b(0x4C, 0x00, 0x00)
+sprite3_wrap_prg_path, sprite3_wrap_sys_address = write_sys_prg("vic-sprite3-wrap-baseline.prg", code, sprite3_wrap_loop)
 
 manifest = {
     "schemaVersion": 1,
@@ -548,6 +583,25 @@ manifest = {
                 "hashes": {},
                 "properties": {}
             }
+        },
+        {
+            "id": "vic-sprite3-wrap-baseline",
+            "name": "VIC sprite 3 wrap baseline",
+            "category": "vic",
+            "model": "PAL",
+            "programPath": str(sprite3_wrap_prg_path.resolve()),
+            "maxCycles": 8000000,
+            "arguments": {
+                "profile": "accuracy",
+                "mountAfterWarmup": "true",
+                "warmupCycles": "2000000",
+                "command": "SYS" + str(sprite3_wrap_sys_address) + "\\r",
+                "writeFrame": "true"
+            },
+            "expectations": {
+                "hashes": {},
+                "properties": {}
+            }
         }
     ]
 }
@@ -563,6 +617,7 @@ print(str(sprite_color_irq_prg_path.resolve()))
 print(str(sprite_multicolor_color_irq_prg_path.resolve()))
 print(str(sprite_multicolor_enable_irq_prg_path.resolve()))
 print(str(sprite_priority_irq_prg_path.resolve()))
+print(str(sprite3_wrap_prg_path.resolve()))
 print(str(manifest_path.resolve()))
 '@
 

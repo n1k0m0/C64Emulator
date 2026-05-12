@@ -67,6 +67,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "Accuracy profile disables emulator shortcuts", TestAccuracyProfileDisablesShortcuts);
             failures += RunCase(output, "KERNAL LOAD relocates secondary address zero", TestKernalLoadRelocatesSecondaryAddressZero);
             failures += RunCase(output, "CPU bus prediction is side-effect free", TestCpuBusPredictionIsSideEffectFree);
+            failures += RunCase(output, "CPU microcycle table matches traced accesses", TestCpuMicrocycleTableMatchesTrace);
             failures += RunCase(output, "VIC frame timing", TestVicFrameTiming);
             failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
             failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
@@ -82,6 +83,8 @@ namespace C64Emulator.Core
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
+            failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
+            failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
@@ -187,6 +190,103 @@ namespace C64Emulator.Core
             context.Equal("predict absolute write value", (byte)0x55, write.Value);
         }
 
+        private static void TestCpuMicrocycleTableMatchesTrace(AccuracyContext context)
+        {
+            AssertMicrocyclePredictionMatchesTrace(context, "STA abs", 0x0801, 0x8D, 0x00, 0x20, harness => harness.Cpu.A = 0x55);
+            AssertMicrocyclePredictionMatchesTrace(context, "STA (zp),Y", 0x0801, 0x91, 0x20, 0xEA, harness =>
+            {
+                harness.Cpu.A = 0x42;
+                harness.Cpu.Y = 0x03;
+                harness.Bus.WriteRam(0x0020, 0x00);
+                harness.Bus.WriteRam(0x0021, 0x30);
+            });
+            AssertMicrocyclePredictionMatchesTrace(context, "PHA", 0x0801, 0x48, 0xEA, 0xEA, harness => harness.Cpu.A = 0x7E);
+            AssertMicrocyclePredictionMatchesTrace(context, "INC abs", 0x0801, 0xEE, 0x00, 0x20, harness => harness.Bus.WriteRam(0x2000, 0x10));
+            AssertMicrocyclePredictionMatchesTrace(context, "JSR abs", 0x0801, 0x20, 0x00, 0x09, null);
+            AssertMicrocyclePredictionMatchesTrace(context, "LDA abs,X page cross", 0x08FE, 0xBD, 0xFF, 0x20, harness =>
+            {
+                harness.Cpu.X = 0x01;
+                harness.Bus.WriteRam(0x2100, 0x5A);
+            });
+            AssertMicrocyclePredictionMatchesTrace(context, "LDA zp,X", 0x0801, 0xB5, 0x20, 0xEA, harness =>
+            {
+                harness.Cpu.X = 0x04;
+                harness.Bus.WriteRam(0x0024, 0x77);
+            });
+            AssertMicrocyclePredictionMatchesTrace(context, "STA zp,X", 0x0801, 0x95, 0x20, 0xEA, harness =>
+            {
+                harness.Cpu.A = 0x66;
+                harness.Cpu.X = 0x04;
+            });
+            AssertMicrocyclePredictionMatchesTrace(context, "INC zp,X", 0x0801, 0xF6, 0x20, 0xEA, harness =>
+            {
+                harness.Cpu.X = 0x04;
+                harness.Bus.WriteRam(0x0024, 0x10);
+            });
+            AssertMicrocyclePredictionMatchesTrace(context, "XAA immediate", 0x0801, 0x8B, 0x7F, 0xEA, harness =>
+            {
+                harness.Cpu.A = 0xFF;
+                harness.Cpu.X = 0x33;
+            });
+        }
+
+        private static void AssertMicrocyclePredictionMatchesTrace(
+            AccuracyContext context,
+            string label,
+            ushort startAddress,
+            byte opcode,
+            byte operandLow,
+            byte operandHigh,
+            Action<CpuTraceHarness> configure)
+        {
+            var harness = new CpuTraceHarness();
+            harness.Reset(startAddress);
+            harness.LoadProgram(startAddress, opcode, operandLow, operandHigh, 0xEA, 0xEA);
+            if (configure != null)
+            {
+                configure(harness);
+            }
+
+            var recorder = new CpuTraceRecorder();
+            recorder.Attach(harness.Cpu);
+            harness.Cpu.TraceEnabled = true;
+            try
+            {
+                bool enteredExecution = false;
+                int previousTraceCount = 0;
+                for (int cycle = 0; cycle < 16; cycle++)
+                {
+                    CpuBusAccessPrediction prediction = harness.Cpu.PredictNextCycleAccess();
+                    bool usedMicrocycle = harness.Cpu.LastPredictionUsedMicrocycle;
+                    harness.Cpu.Tick();
+
+                    context.True(label + " cycle " + cycle + " used microcycle prediction", usedMicrocycle);
+                    context.True(label + " emitted trace entry for cycle " + cycle, recorder.Entries.Count == previousTraceCount + 1);
+                    CpuTraceEntry entry = recorder.Entries[previousTraceCount];
+                    previousTraceCount = recorder.Entries.Count;
+
+                    context.Equal(label + " access type cycle " + cycle, entry.AccessType, prediction.AccessType);
+                    context.Equal(label + " address cycle " + cycle, entry.Address, prediction.Address);
+                    context.Equal(label + " value cycle " + cycle, entry.Value, prediction.Value);
+
+                    if (harness.Cpu.State == CpuState.ExecuteInstruction || harness.Cpu.State == CpuState.InterruptSequence)
+                    {
+                        enteredExecution = true;
+                    }
+
+                    if (enteredExecution && harness.Cpu.State == CpuState.FetchOpcode)
+                    {
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                harness.Cpu.TraceEnabled = false;
+                recorder.Detach(harness.Cpu);
+            }
+        }
+
         private static void TestVicFrameTiming(AccuracyContext context)
         {
             using (var system = new C64System(C64Model.Pal))
@@ -282,6 +382,41 @@ namespace C64Emulator.Core
             context.True("sprite BA pending cycle 55", plan.GetSlot(54).BusRequestPending);
             context.True("sprite BA pending cycle 56", plan.GetSlot(55).BusRequestPending);
             context.True("sprite BA pending cycle 57", plan.GetSlot(56).BusRequestPending);
+
+            plan.BuildLine(true, null);
+            context.True("badline BA pending cycle 12", plan.GetSlot(11).BusRequestPending);
+            context.True("badline BA pending cycle 14", plan.GetSlot(13).BusRequestPending);
+            context.True("badline cycle 14 does not block CPU", !plan.GetSlot(13).BlocksCpu);
+            context.Equal("badline cycle 15 keeps refresh on phi1", VicBusAction.Refresh, plan.GetSlot(14).Phi1Action);
+            context.Equal("badline cycle 15 matrix fetch on phi2", VicBusAction.MatrixFetch, plan.GetSlot(14).Phi2Action);
+            context.True("badline cycle 15 blocks CPU", plan.GetSlot(14).BlocksCpu);
+            context.Equal("badline cycle 16 keeps char fetch on phi1", VicBusAction.CharFetch, plan.GetSlot(15).Phi1Action);
+            context.Equal("badline cycle 16 matrix fetch on phi2", VicBusAction.MatrixFetch, plan.GetSlot(15).Phi2Action);
+            context.Equal("badline cycle 54 matrix fetch on phi2", VicBusAction.MatrixFetch, plan.GetSlot(53).Phi2Action);
+            context.Equal("badline cycle 55 keeps char fetch only", VicBusAction.CharFetch, plan.GetSlot(54).Phi1Action);
+            context.Equal("badline cycle 55 has no matrix fetch", VicBusAction.Idle, plan.GetSlot(54).Phi2Action);
+
+            sprites = new bool[8];
+            sprites[3] = true;
+            plan.BuildLine(false, sprites);
+            context.True("sprite 3 BA pending wraps to cycle 61", plan.GetSlot(60).BusRequestPending);
+            context.True("sprite 3 BA pending wraps to cycle 62", plan.GetSlot(61).BusRequestPending);
+            context.True("sprite 3 BA pending wraps to cycle 63", plan.GetSlot(62).BusRequestPending);
+            context.Equal("sprite 3 pointer fetch at cycle 1 phi1", VicBusAction.SpritePointerFetch, plan.GetSlot(0).Phi1Action);
+            context.Equal("sprite 3 data fetch at cycle 1 phi2", VicBusAction.SpriteDataFetch, plan.GetSlot(0).Phi2Action);
+            context.True("sprite 3 data blocks CPU at cycle 1", plan.GetSlot(0).BlocksCpu);
+            context.Equal("sprite 3 second data fetch at cycle 2 phi1", VicBusAction.SpriteDataFetch, plan.GetSlot(1).Phi1Action);
+            context.Equal("sprite 3 third data fetch at cycle 2 phi2", VicBusAction.SpriteDataFetch, plan.GetSlot(1).Phi2Action);
+
+            sprites = new bool[8];
+            sprites[0] = true;
+            plan.BuildLine(true, sprites);
+            context.Equal("badline plus sprite 0 keeps matrix fetch through cycle 54", VicBusAction.MatrixFetch, plan.GetSlot(53).Phi2Action);
+            context.True("badline plus sprite 0 keeps sprite BA pending at cycle 55", plan.GetSlot(54).BusRequestPending);
+            context.Equal("badline plus sprite 0 keeps char fetch at cycle 55 phi1", VicBusAction.CharFetch, plan.GetSlot(54).Phi1Action);
+            context.Equal("badline plus sprite 0 has no matrix fetch at cycle 55 phi2", VicBusAction.Idle, plan.GetSlot(54).Phi2Action);
+            context.Equal("badline plus sprite 0 pointer at cycle 58 phi1", VicBusAction.SpritePointerFetch, plan.GetSlot(57).Phi1Action);
+            context.Equal("badline plus sprite 0 data at cycle 58 phi2", VicBusAction.SpriteDataFetch, plan.GetSlot(57).Phi2Action);
         }
 
         private static void TestVicBadlinePipelineGatesCAccesses(AccuracyContext context)
@@ -644,6 +779,14 @@ namespace C64Emulator.Core
                 byte attackEnvelope = sid.Read(0x1C);
                 context.True("voice 3 envelope rises while gate is set", attackEnvelope > 0x20);
 
+                for (int cycle = 0; cycle < 30000; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                byte sustainEnvelope = sid.Read(0x1C);
+                context.True("voice 3 envelope reaches high sustain", sustainEnvelope >= 0xE0);
+
                 sid.Write(0x12, 0x00);
                 for (int cycle = 0; cycle < 7000; cycle++)
                 {
@@ -656,6 +799,106 @@ namespace C64Emulator.Core
             finally
             {
                 sid.Dispose();
+            }
+        }
+
+        private static void TestSidVoice3OscillatorAndTestReadback(AccuracyContext context)
+        {
+            var sid = new Sid();
+            try
+            {
+                sid.Write(0x0E, 0x00);
+                sid.Write(0x0F, 0x20);
+                sid.Write(0x12, 0x20);
+
+                for (int cycle = 0; cycle < 1200; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                byte firstOscillator = sid.Read(0x1B);
+                for (int cycle = 0; cycle < 1200; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                byte secondOscillator = sid.Read(0x1B);
+                context.True("voice 3 oscillator advances while TEST is clear", firstOscillator != secondOscillator);
+
+                sid.Write(0x12, 0x28);
+                for (int cycle = 0; cycle < 32; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("TEST bit forces oscillator readback low", (byte)0x00, sid.Read(0x1B));
+
+                sid.Write(0x12, 0x20);
+                for (int cycle = 0; cycle < 1200; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.True("oscillator resumes after TEST is cleared", sid.Read(0x1B) != 0x00);
+                context.Equal("SID paddle reads stay idle-high", (byte)0xFF, sid.Read(0x19));
+                context.Equal("SID second paddle read stays idle-high", (byte)0xFF, sid.Read(0x1A));
+            }
+            finally
+            {
+                sid.Dispose();
+            }
+        }
+
+        private static void TestSidFunctionalStateSaveRestore(AccuracyContext context)
+        {
+            var sid = new Sid();
+            var restored = new Sid();
+            try
+            {
+                sid.Write(0x0E, 0x40);
+                sid.Write(0x0F, 0x18);
+                sid.Write(0x13, 0x00);
+                sid.Write(0x14, 0x90);
+                sid.Write(0x12, 0x21);
+
+                for (int cycle = 0; cycle < 5000; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                byte oscillatorBeforeSave = sid.Read(0x1B);
+                byte envelopeBeforeSave = sid.Read(0x1C);
+
+                using (var stream = new MemoryStream())
+                {
+                    using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
+                    {
+                        sid.SaveState(writer);
+                    }
+
+                    stream.Position = 0;
+                    using (var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, true))
+                    {
+                        restored.LoadState(reader);
+                    }
+                }
+
+                context.Equal("restored oscillator readback", oscillatorBeforeSave, restored.Read(0x1B));
+                context.Equal("restored envelope readback", envelopeBeforeSave, restored.Read(0x1C));
+
+                for (int cycle = 0; cycle < 600; cycle++)
+                {
+                    sid.Tick();
+                    restored.Tick();
+                }
+
+                context.Equal("restored oscillator continues in lockstep", sid.Read(0x1B), restored.Read(0x1B));
+                context.Equal("restored envelope continues in lockstep", sid.Read(0x1C), restored.Read(0x1C));
+            }
+            finally
+            {
+                sid.Dispose();
+                restored.Dispose();
             }
         }
 

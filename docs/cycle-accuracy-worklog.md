@@ -87,3 +87,27 @@ This document records the first implementation pass for the cycle-accuracy roadm
 - Updated sprite pixel composition so the sprite shape, X/Y position, expansion, and data bytes remain latched for the active DMA/render instance, but the sprite's own color reads the render-visible `$D027+n` register at pixel time. Hires and multicolor sprite color IRQ probes now match VICE with zero normalized mismatches and matching white/red sprite-pixel counts.
 - Added `vic-sprite-multicolor-enable-irq-phase.prg`, which exposed that `$D01C` sprite multicolor enable is live during pixel composition. The emulator now reads `$D01C` from the render-visible register copy for sprite pixel decoding; the probe matches VICE with zero normalized mismatches and the expected 384 red / 120 white split.
 - Added `vic-sprite-priority-irq-phase.prg` as a foreground-overlap probe for `$D01B`. It confirms that priority timing needs a dedicated absolute sprite-Y/IRQ-phase pass rather than a broad sprite-start offset change; the attempted global render-start adjustment regressed the existing sprite probes and was not kept.
+
+## VIC-II Sprite Priority Pass
+
+- Revisited the `$D01B` sprite-priority/foreground IRQ probe and found that the fixture itself was corrupting sprite 0's pointer: the screen-clear loop overwrote `$07F8` after the shared setup had pointed the sprite at `$3000`.
+- Fixed `vic-sprite-priority-irq-phase.prg` generation so `$07F8` is restored after the screen memory is cleared. This keeps the test focused on priority timing instead of accidentally rendering bytes from pointer 0.
+- With the corrected fixture, the emulator and VICE priority probe match after crop/palette normalization with zero mismatches. No broad sprite Y/start offset change was needed, preserving the existing sprite baseline, enable, X, color, multicolor, and sprite-3 wrap probes.
+
+## VIC-II Half-Cycle Bus Pass
+
+- Moved the badline matrix-fetch rule into `VicBusPlan.ApplyMatrixFetchToSlot`, so the standalone bus plan and the dynamic `Vic2` override use the same Phi1/Phi2 rule: BA pending on cycles 12-14, refresh/character fetches preserved on Phi1, and matrix c-accesses on Phi2 from cycle 15 through 54.
+- Extended the bus-plan regression to cover badline Phi1/Phi2 overlap, sprite 3 line-wrap DMA lead-in on cycles 61-63 for a cycle-1 fetch, and the badline-plus-sprite-0 boundary where matrix fetch ends at cycle 54 and sprite BA lead-in starts at cycle 55.
+- Added `vic-sprite3-wrap-baseline.prg` to the local VICE fixture set. It renders sprite 3, whose data fetches occur at the start of the raster line; the fixture currently matches VICE with zero normalized mismatches.
+
+## CPU Microcycle Prediction Pass
+
+- Added `CpuMicrocyclePredictor`, an explicit table-driven predictor for the CPU bus access on the next cycle. Fetch, interrupt, branch, stack, jump/subroutine, read, write, indexed, indirect, and read-modify-write addressing families now provide side-effect-free bus access metadata without executing and restoring a speculative CPU tick.
+- `Cpu6510.PredictNextCycleAccess()` now uses the microcycle table first and keeps the previous simulation-based predictor only as a compatibility fallback for uncovered edge cases.
+- Added an accuracy regression that compares microcycle predictions against traced real CPU accesses for absolute stores, indirect-indexed stores, stack pushes, read-modify-write final writes, subroutine calls, and page-crossing indexed reads. The 256-opcode CPU self-test remains green after the change.
+
+## SID Functional Scope Pass
+
+- Kept SID explicitly in functional scope rather than cycle-accurate scope. The implementation remains a pragmatic audio model with register state, three oscillators, basic waveforms, ADSR-style envelopes, simple filtering, volume-DAC output, and voice-3 OSC/ENV readback.
+- Extended the built-in accuracy tests around SID behavior that games commonly depend on: voice-3 envelope gate attack/release plus sustain, voice-3 oscillator readback, TEST-bit oscillator reset/resume, idle-high paddle reads, and savestate restore/continuation.
+- No VIC/CPU timing depends on SID cycle-level side effects in this pass; SID cycle accuracy, ADSR delay bugs, exact waveform DAC behavior, and analog filter matching remain intentionally out of scope.
