@@ -574,6 +574,8 @@ namespace SharpPixels
                 case Keys.LeftBracket: return Key.BracketLeft;
                 case Keys.RightBracket: return Key.BracketRight;
                 case Keys.Home: return Key.Home;
+                case Keys.PageUp: return Key.PageUp;
+                case Keys.PageDown: return Key.PageDown;
                 case Keys.Up: return Key.Up;
                 case Keys.Down: return Key.Down;
                 case Keys.Left: return Key.Left;

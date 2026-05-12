@@ -49,6 +49,8 @@ namespace OpenTK.Input
         BackSpace = 53,
         Delete = 55,
         Home = 58,
+        PageUp = 59,
+        PageDown = 60,
         KeypadMultiply = 78,
         A = 83,
         B = 84,

@@ -72,7 +72,7 @@ namespace C64Emulator
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int MediaBrowserVisibleRows = 9;
-        private const int SaveOverlayVisibleRows = 8;
+        private const int SaveOverlayVisibleRows = 12;
         private const double DriveFooterVisibleHoldSeconds = 1.2;
         private const double DriveFooterFadeOutSeconds = 0.6;
         private const double TurboToastHoldSeconds = 0.85;
@@ -753,6 +753,12 @@ namespace C64Emulator
                     return true;
                 case Key.Down:
                     MoveSaveOverlaySelection(1);
+                    return true;
+                case Key.PageUp:
+                    MoveSaveOverlaySelection(-SaveOverlayVisibleRows);
+                    return true;
+                case Key.PageDown:
+                    MoveSaveOverlaySelection(SaveOverlayVisibleRows);
                     return true;
                 case Key.F5:
                 case Key.S:
@@ -1751,8 +1757,8 @@ namespace C64Emulator
         /// </summary>
         private void DrawSaveOverlay()
         {
-            int overlayWidth = Math.Min(PixelsWidth - 24, 360);
-            int overlayHeight = Math.Min(PixelsHeight - 28, 240);
+            int overlayWidth = Math.Min(PixelsWidth - 12, 376);
+            int overlayHeight = Math.Min(PixelsHeight - 12, 292);
             int overlayX = (PixelsWidth - overlayWidth) / 2;
             int overlayY = (PixelsHeight - overlayHeight) / 2;
 
@@ -1769,7 +1775,8 @@ namespace C64Emulator
             int listX = overlayX + 14;
             int listY = overlayY + 62;
             int listWidth = Math.Max(120, overlayWidth - 156);
-            DrawFilledRectangleWithAlpha(listX - 4, listY - 4, listWidth + 8, 112, 20, 24, 38, 210);
+            int listHeight = (SaveOverlayVisibleRows * 13) + 8;
+            DrawFilledRectangleWithAlpha(listX - 4, listY - 4, listWidth + 8, listHeight, 20, 24, 38, 210);
 
             if (_saveStateEntries.Count == 0)
             {
@@ -2125,6 +2132,12 @@ namespace C64Emulator
                 case Key.Down:
                     MoveAudioOverlaySelection(1);
                     return true;
+                case Key.PageUp:
+                    MoveAudioOverlaySelection(-AudioOverlayVisibleRows);
+                    return true;
+                case Key.PageDown:
+                    MoveAudioOverlaySelection(AudioOverlayVisibleRows);
+                    return true;
                 case Key.Left:
                 case Key.Minus:
                     AdjustAudioSetting(-1);
@@ -2200,6 +2213,8 @@ namespace C64Emulator
             {
                 case Key.Up:
                 case Key.Down:
+                case Key.PageUp:
+                case Key.PageDown:
                 case Key.Left:
                 case Key.Right:
                 case Key.Plus:
@@ -2421,6 +2436,12 @@ namespace C64Emulator
                     return true;
                 case Key.Down:
                     MoveMediaBrowserSelection(1);
+                    return true;
+                case Key.PageUp:
+                    MoveMediaBrowserSelection(-MediaBrowserVisibleRows);
+                    return true;
+                case Key.PageDown:
+                    MoveMediaBrowserSelection(MediaBrowserVisibleRows);
                     return true;
                 case Key.Left:
                     _mediaBrowserTargetDrive = Math.Max(8, _mediaBrowserTargetDrive - 1);
@@ -3332,6 +3353,8 @@ namespace C64Emulator
             {
                 case Key.Up:
                 case Key.Down:
+                case Key.PageUp:
+                case Key.PageDown:
                 case Key.Left:
                 case Key.Right:
                 case Key.Enter:
