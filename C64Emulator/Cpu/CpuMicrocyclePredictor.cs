@@ -20,6 +20,10 @@ namespace C64Emulator.Core
     /// </summary>
     internal static class CpuMicrocyclePredictor
     {
+        // The predictor is intentionally table-shaped instead of executing any opcode
+        // logic.  VIC-II arbitration needs to know the next CPU bus access before the
+        // CPU tick runs; prediction must therefore be side-effect free and only read
+        // already-latched instruction context plus peeked memory values.
         private enum AccessPattern
         {
             None,
@@ -70,6 +74,9 @@ namespace C64Emulator.Core
         private static bool TryPredictInterruptAccess(Cpu6510 cpu, out CpuBusAccessPrediction prediction)
         {
             InstructionContext context = cpu.CurrentInstructionContext;
+            // IRQ/NMI uses the same external bus sequence as BRK except that the
+            // status byte has the break flag cleared.  The CPU core owns PC/SR/SP
+            // mutation; this method only mirrors the visible reads and writes.
             switch (context.StepIndex)
             {
                 case 0:
@@ -115,6 +122,9 @@ namespace C64Emulator.Core
                 return false;
             }
 
+            // Most 6502/6510 opcodes collapse to a small set of addressing-mode
+            // bus patterns.  Special control-flow and stack instructions are handled
+            // above because their cycles do not fit the compact mode tables.
             return TryPredictPattern(cpu, context, pattern, writeValue, out prediction);
         }
 
@@ -177,6 +187,9 @@ namespace C64Emulator.Core
             pattern = AccessPattern.None;
             writeValue = 0;
 
+            // A handful of opcodes sit outside the regular cc/aaa/bbb decode grid
+            // or need register-specific store values.  Resolve those explicitly
+            // before falling back to the grouped opcode layout.
             switch (opcode)
             {
                 case 0x24:
@@ -240,6 +253,8 @@ namespace C64Emulator.Core
             int mode = (opcode >> 2) & 0x07;
             bool store = operation == 4;
             writeValue = store ? cpu.A : (byte)0;
+            // Group 01 contains the common ORA/AND/EOR/ADC/STA/LDA/CMP/SBC family.
+            // The addressing mode bits are regular enough to share one table.
             return TryGetMode01Pattern(mode, store, out pattern);
         }
 
@@ -669,6 +684,9 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, cpu.PC);
                     return true;
                 case 2:
+                    // Indexed reads save one cycle when the high byte does not
+                    // change.  On a page cross, the 6510 first performs a dummy read
+                    // from the wrapped address, then retries with the corrected page.
                     if (context.PageCrossed)
                     {
                         prediction = Read(cpu, CpuTraceAccessType.DummyRead, GetPageWrappedAddress(context.Address2, context.Address));
@@ -699,6 +717,9 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, cpu.PC);
                     return true;
                 case 2:
+                    // Stores and read-modify-write indexed modes always pay the
+                    // dummy-read cycle, even when the effective address stays on the
+                    // original page.
                     prediction = Read(cpu, CpuTraceAccessType.DummyRead, GetPageWrappedAddress(context.Address2, context.Address));
                     return true;
                 case 3:
@@ -718,6 +739,9 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, cpu.PC);
                     return true;
                 case 1:
+                    // (zp,X) performs the indexing dummy read before reading the
+                    // zero-page pointer pair.  The operand has already been wrapped
+                    // into context.Address by the instruction implementation.
                     prediction = Read(cpu, CpuTraceAccessType.DummyRead, (byte)context.Address);
                     return true;
                 case 2:
@@ -891,6 +915,8 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, (byte)context.Address);
                     return true;
                 case 2:
+                    // NMOS 6502 read-modify-write instructions expose two writes:
+                    // first the unmodified operand, then the final value.
                     prediction = Write(cpu, (byte)context.Address, context.Operand);
                     return true;
                 case 3:
@@ -1153,6 +1179,8 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, context.Address);
                     return true;
                 case 3:
+                    // Preserve the original 6502 page-wrap bug: JMP ($xxFF) reads
+                    // the high byte from $xx00, not the next page.
                     prediction = Read(cpu, CpuTraceAccessType.Read, (ushort)((context.Address & 0xFF00) | ((context.Address + 1) & 0x00FF)));
                     return true;
                 default:
@@ -1169,6 +1197,8 @@ namespace C64Emulator.Core
                     prediction = Read(cpu, CpuTraceAccessType.Read, cpu.PC);
                     return true;
                 case 1:
+                    // Taken branches perform a dummy opcode fetch from the fallthrough
+                    // PC.  Page-crossing branches then add one more wrapped dummy read.
                     prediction = Read(cpu, CpuTraceAccessType.DummyRead, cpu.PC);
                     return true;
                 case 2:

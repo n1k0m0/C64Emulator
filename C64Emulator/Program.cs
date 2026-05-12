@@ -34,6 +34,8 @@ namespace C64Emulator
         [STAThread]
         static void Main(string[] args)
         {
+            // Command-line modes are kept before any WinForms/OpenTK startup so
+            // CI, release scripts, and VICE comparisons can run headlessly.
             if (args != null && args.Length >= 1 && string.Equals(args[0], "--self-test-cpu", StringComparison.OrdinalIgnoreCase))
             {
                 string logPath = args.Length >= 2
@@ -135,6 +137,9 @@ namespace C64Emulator
                 int sampleInterval = args.Length >= 4 && int.TryParse(args[3], out int parsedMachineInterval) && parsedMachineInterval > 0
                     ? parsedMachineInterval
                     : 1;
+                // Accuracy traces default to the hardware-faithful profile; pass
+                // "compatibility" only when comparing against the interactive
+                // convenience settings.
                 bool accuracyProfile = args.Length < 5 || !string.Equals(args[4], "compatibility", StringComparison.OrdinalIgnoreCase);
                 RunMachineTrace(cycles, logPath, sampleInterval, accuracyProfile);
                 return;
@@ -145,6 +150,8 @@ namespace C64Emulator
                 string mediaPath = args.Length >= 2 ? args[1] : string.Empty;
                 if (string.Equals(mediaPath, "-", StringComparison.Ordinal))
                 {
+                    // "-" is used by scripts to mean "boot without media" without
+                    // making argument positions ambiguous.
                     mediaPath = string.Empty;
                 }
 
@@ -340,6 +347,9 @@ namespace C64Emulator
         {
             try
             {
+                // The golden harness owns test orchestration; Program only resolves
+                // paths, serializes machine-readable artifacts, and maps failures to
+                // a process exit code for scripts.
                 Directory.CreateDirectory(outputDirectory);
                 GoldenManifest manifest = GoldenManifestLoader.Load(manifestPath);
                 var harness = new GoldenTestHarness(new C64GoldenTestExecutor());
@@ -562,6 +572,9 @@ namespace C64Emulator
                 {
                     log.AppendLine("Mount=" + system.MountMedia(d64Path, 8));
 
+                    // Let the boot ROM reach READY before injecting BASIC text.  The
+                    // probe is intentionally simple because it is used for diagnosing
+                    // IEC handshakes, not for exercising the UI input path.
                     for (int i = 0; i < 400000; i++)
                     {
                         system.Tick();
@@ -648,6 +661,9 @@ namespace C64Emulator
 
                         if (loadCompleted && cycle > 0 && (cycle % 4000000) == 2000000)
                         {
+                            // Periodic CONTROL taps skip many intro pauses in common
+                            // disk games, allowing the probe to reach gameplay frames
+                            // while still using normal keyboard input.
                             system.KeyDown(OpenTK.Input.Key.ControlLeft);
                         }
 

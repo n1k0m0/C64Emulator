@@ -63,6 +63,9 @@ namespace C64Emulator.Core
             output.WriteLine("C64 ACCURACY TESTS");
             output.WriteLine("Scope=internal timing smoke tests plus external golden-suite infrastructure.");
 
+            // These checks are deliberately small and deterministic.  They guard
+            // the timing contracts that caused visible VIC-II regressions without
+            // replacing the heavier screenshot/golden workflow.
             int failures = 0;
             failures += RunCase(output, "Accuracy profile disables emulator shortcuts", TestAccuracyProfileDisablesShortcuts);
             failures += RunCase(output, "KERNAL LOAD relocates secondary address zero", TestKernalLoadRelocatesSecondaryAddressZero);
@@ -252,6 +255,10 @@ namespace C64Emulator.Core
             harness.Cpu.TraceEnabled = true;
             try
             {
+                // Compare the predicted external bus access immediately before each
+                // CPU tick against the trace emitted by the tick.  This catches
+                // predictor drift while also proving the prediction path did not
+                // advance CPU state on its own.
                 bool enteredExecution = false;
                 int previousTraceCount = 0;
                 for (int cycle = 0; cycle < 16; cycle++)
@@ -364,6 +371,10 @@ namespace C64Emulator.Core
             var plan = new VicBusPlan();
             plan.BuildLine(false, null);
 
+            // Slot indexes are zero-based, while VIC documentation is usually
+            // written in one-based cycle numbers.  The assertion labels keep the
+            // hardware-facing cycle names to make failures easier to compare with
+            // timing diagrams.
             context.Equal("cycle 11 phi1 refresh", VicBusAction.Refresh, plan.GetSlot(10).Phi1Action);
             context.Equal("cycle 15 phi1 refresh", VicBusAction.Refresh, plan.GetSlot(14).Phi1Action);
             context.Equal("cycle 16 phi1 char fetch", VicBusAction.CharFetch, plan.GetSlot(15).Phi1Action);
@@ -545,6 +556,9 @@ namespace C64Emulator.Core
 
             const ushort screenBase = 0xC400;
             const ushort characterBase = 0xE000;
+            // Build a one-character solid-font scene with alternating color RAM.
+            // A midline X-scroll change should shift the current display source,
+            // so a plain frame hash is enough to catch a phase regression.
             for (int row = 0; row < 25; row++)
             {
                 for (int column = 0; column < 40; column++)
@@ -588,6 +602,9 @@ namespace C64Emulator.Core
             vic.Write(0x20, 0x02);
             vic.Write(0x21, 0x00);
 
+            // CSEL changes the horizontal border compare points.  The probe keeps
+            // the display content simple so any hash change comes from border timing
+            // rather than unrelated character data.
             const ushort screenBase = 0xC400;
             const ushort characterBase = 0xE000;
             for (int row = 0; row < 25; row++)
@@ -633,6 +650,8 @@ namespace C64Emulator.Core
             vic.Write(0x20, 0x02);
             vic.Write(0x21, 0x00);
 
+            // RSEL shifts the vertical border compare rows.  Writing it midframe
+            // should affect the current frame instead of waiting for the next one.
             const ushort screenBase = 0xC400;
             const ushort characterBase = 0xE000;
             for (int row = 0; row < 25; row++)
@@ -670,6 +689,10 @@ namespace C64Emulator.Core
             vic.PrepareCycle();
             bool blocksCpu = vic.RequiresBusThisCycle();
             bool requestPending = vic.HasBusRequestPendingThisCycle();
+            // The probes drive the VIC directly, but the chip still observes the
+            // same BA/AEC bus state that C64System would derive for a real CPU
+            // cycle.  Keeping that handshake here makes fixture hashes comparable
+            // with full-machine runs.
             bus.SetPhi2BusState(
                 requestPending || blocksCpu,
                 blocksCpu,
