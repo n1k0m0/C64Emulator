@@ -86,6 +86,18 @@ namespace C64Emulator
                 return;
             }
 
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--migrate-savestates", StringComparison.OrdinalIgnoreCase))
+            {
+                string saveDirectory = args.Length >= 2
+                    ? args[1]
+                    : UserDataPaths.GetSaveDirectory();
+                string logPath = args.Length >= 3
+                    ? args[2]
+                    : Path.Combine(saveDirectory, "savestate-migration.log");
+                RunSaveStateMigration(saveDirectory, logPath);
+                return;
+            }
+
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--golden-run", StringComparison.OrdinalIgnoreCase))
             {
                 string outputDirectory = args.Length >= 3
@@ -338,6 +350,29 @@ namespace C64Emulator
             File.WriteAllText(logPath, log.ToString());
             Console.Write(log.ToString());
             Environment.ExitCode = failures == 0 ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Migrates flat savestate files into per-game subdirectories.
+        /// </summary>
+        private static void RunSaveStateMigration(string saveDirectory, string logPath)
+        {
+            try
+            {
+                EnsureLogDirectory(logPath);
+                var log = new StringWriter();
+                int moved = SaveStateMigration.MigrateFlatSaves(saveDirectory, log);
+                File.WriteAllText(logPath, log.ToString());
+                Console.Write(log.ToString());
+                Console.WriteLine("MigrationLog=" + Path.GetFullPath(logPath));
+                Environment.ExitCode = moved >= 0 ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("SAVESTATE MIGRATION FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
         }
 
         /// <summary>

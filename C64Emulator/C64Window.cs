@@ -116,8 +116,9 @@ namespace C64Emulator
         private int _saveOverlaySelection;
         private int _saveOverlayScroll;
         private string _mediaBrowserCurrentDirectory;
+        private string _saveOverlayCurrentDirectory;
         private List<MediaBrowserEntry> _mediaBrowserEntries = new List<MediaBrowserEntry>();
-        private List<SaveStateMetadata> _saveStateEntries = new List<SaveStateMetadata>();
+        private List<SaveOverlayEntry> _saveOverlayEntries = new List<SaveOverlayEntry>();
         private string _overlayStatusText = "READY";
         private string _saveOverlayStatusText = "F12 SAVE MENU";
         private string _turboToastText = string.Empty;
@@ -728,6 +729,7 @@ namespace C64Emulator
             _resetConfirmVisible = false;
             _saveOverlayStatusText = "PAUSED";
             _saveOverlayVisible = true;
+            _saveOverlayCurrentDirectory = GetSaveDirectory();
             ReloadSaveStateEntries();
         }
 
@@ -766,11 +768,13 @@ namespace C64Emulator
                     return true;
                 case Key.Enter:
                 case Key.L:
-                    LoadSelectedSaveState();
+                    ActivateSelectedSaveOverlayEntry();
                     return true;
                 case Key.Delete:
-                case Key.BackSpace:
                     DeleteSelectedSaveState();
+                    return true;
+                case Key.BackSpace:
+                    NavigateSaveOverlayUp();
                     return true;
                 case Key.Escape:
                     CloseSaveOverlay();
@@ -787,7 +791,7 @@ namespace C64Emulator
         {
             try
             {
-                string saveDirectory = GetSaveDirectory();
+                string saveDirectory = SaveStateFile.GetSaveDirectoryForMedia(GetSaveDirectory(), _system.MountedMedia);
                 string savePath = SaveStateFile.CreateSavePath(saveDirectory);
                 uint[] screenshotPixels = new uint[_frameSnapshot.Length];
                 Array.Copy(_frameSnapshot, screenshotPixels, screenshotPixels.Length);
@@ -805,11 +809,36 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Loads the currently selected savestate.
+        /// Activates the selected savestate overlay entry.
         /// </summary>
-        private void LoadSelectedSaveState()
+        private void ActivateSelectedSaveOverlayEntry()
         {
-            if (_saveStateEntries.Count == 0)
+            if (_saveOverlayEntries.Count == 0)
+            {
+                _saveOverlayStatusText = "NO SAVE SELECTED";
+                return;
+            }
+
+            SaveOverlayEntry selectedEntry = _saveOverlayEntries[_saveOverlaySelection];
+            if (selectedEntry.IsDirectory)
+            {
+                _saveOverlayCurrentDirectory = selectedEntry.Path;
+                _saveOverlaySelection = 0;
+                _saveOverlayScroll = 0;
+                ReloadSaveStateEntries();
+                _saveOverlayStatusText = selectedEntry.IsParent ? "UP" : "OPEN " + FormatOverlayValue(selectedEntry.DisplayName, 32);
+                return;
+            }
+
+            LoadSelectedSaveState(selectedEntry.Metadata);
+        }
+
+        /// <summary>
+        /// Loads the given savestate.
+        /// </summary>
+        private void LoadSelectedSaveState(SaveStateMetadata entry)
+        {
+            if (entry == null)
             {
                 _saveOverlayStatusText = "NO SAVE SELECTED";
                 return;
@@ -817,7 +846,6 @@ namespace C64Emulator
 
             try
             {
-                SaveStateMetadata entry = _saveStateEntries[_saveOverlaySelection];
                 SaveStateFile.Load(entry.Path, _system);
                 lock (_system.SyncRoot)
                 {
@@ -841,15 +869,22 @@ namespace C64Emulator
         /// </summary>
         private void DeleteSelectedSaveState()
         {
-            if (_saveStateEntries.Count == 0)
+            if (_saveOverlayEntries.Count == 0)
             {
                 _saveOverlayStatusText = "NO SAVE SELECTED";
                 return;
             }
 
+            SaveOverlayEntry selectedEntry = _saveOverlayEntries[_saveOverlaySelection];
+            if (selectedEntry.IsDirectory || selectedEntry.Metadata == null)
+            {
+                _saveOverlayStatusText = "SELECT A SAVE";
+                return;
+            }
+
             try
             {
-                SaveStateMetadata entry = _saveStateEntries[_saveOverlaySelection];
+                SaveStateMetadata entry = selectedEntry.Metadata;
                 File.Delete(entry.Path);
                 _saveOverlayStatusText = "SAVE DELETED";
                 ReloadSaveStateEntries();
@@ -867,11 +902,38 @@ namespace C64Emulator
         private void ReloadSaveStateEntries()
         {
             var entries = new List<SaveStateMetadata>();
+            var overlayEntries = new List<SaveOverlayEntry>();
             try
             {
                 string saveDirectory = GetSaveDirectory();
                 Directory.CreateDirectory(saveDirectory);
-                string[] files = Directory.GetFiles(saveDirectory, SaveStateFile.SearchPattern, SearchOption.TopDirectoryOnly);
+                if (string.IsNullOrWhiteSpace(_saveOverlayCurrentDirectory) || !Directory.Exists(_saveOverlayCurrentDirectory))
+                {
+                    _saveOverlayCurrentDirectory = saveDirectory;
+                }
+
+                string currentDirectory = Path.GetFullPath(_saveOverlayCurrentDirectory);
+                string rootDirectory = Path.GetFullPath(saveDirectory);
+                if (!currentDirectory.StartsWith(rootDirectory, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentDirectory = rootDirectory;
+                    _saveOverlayCurrentDirectory = rootDirectory;
+                }
+
+                DirectoryInfo parent = Directory.GetParent(currentDirectory);
+                if (parent != null && !string.Equals(currentDirectory.TrimEnd(Path.DirectorySeparatorChar), rootDirectory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                {
+                    overlayEntries.Add(new SaveOverlayEntry(parent.FullName, "UP", true, true, null));
+                }
+
+                string[] directories = Directory.GetDirectories(currentDirectory, "*", SearchOption.TopDirectoryOnly);
+                Array.Sort(directories, StringComparer.OrdinalIgnoreCase);
+                foreach (string directory in directories)
+                {
+                    overlayEntries.Add(new SaveOverlayEntry(directory, "DIR " + Path.GetFileName(directory).ToUpperInvariant(), true, false, null));
+                }
+
+                string[] files = Directory.GetFiles(currentDirectory, SaveStateFile.SearchPattern, SearchOption.TopDirectoryOnly);
                 foreach (string file in files)
                 {
                     try
@@ -885,6 +947,10 @@ namespace C64Emulator
                 }
 
                 entries.Sort((left, right) => right.CreatedLocalTime.CompareTo(left.CreatedLocalTime));
+                foreach (SaveStateMetadata entry in entries)
+                {
+                    overlayEntries.Add(new SaveOverlayEntry(entry.Path, FormatSaveListEntry(entry, 80), false, false, entry));
+                }
             }
             catch (Exception ex)
             {
@@ -892,10 +958,10 @@ namespace C64Emulator
                 _saveOverlayStatusText = "SAVE DIR FAILED";
             }
 
-            _saveStateEntries = entries;
-            if (_saveOverlaySelection >= _saveStateEntries.Count)
+            _saveOverlayEntries = overlayEntries;
+            if (_saveOverlaySelection >= _saveOverlayEntries.Count)
             {
-                _saveOverlaySelection = Math.Max(0, _saveStateEntries.Count - 1);
+                _saveOverlaySelection = Math.Max(0, _saveOverlayEntries.Count - 1);
             }
 
             if (_saveOverlaySelection < 0)
@@ -911,9 +977,17 @@ namespace C64Emulator
         /// </summary>
         private void SelectSaveStatePath(string path)
         {
-            for (int index = 0; index < _saveStateEntries.Count; index++)
+            string directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
             {
-                if (string.Equals(_saveStateEntries[index].Path, path, StringComparison.OrdinalIgnoreCase))
+                _saveOverlayCurrentDirectory = directory;
+                ReloadSaveStateEntries();
+            }
+
+            for (int index = 0; index < _saveOverlayEntries.Count; index++)
+            {
+                if (!_saveOverlayEntries[index].IsDirectory &&
+                    string.Equals(_saveOverlayEntries[index].Path, path, StringComparison.OrdinalIgnoreCase))
                 {
                     _saveOverlaySelection = index;
                     ClampSaveOverlayScroll();
@@ -927,7 +1001,7 @@ namespace C64Emulator
         /// </summary>
         private void MoveSaveOverlaySelection(int delta)
         {
-            if (_saveStateEntries.Count == 0)
+            if (_saveOverlayEntries.Count == 0)
             {
                 return;
             }
@@ -938,12 +1012,36 @@ namespace C64Emulator
                 _saveOverlaySelection = 0;
             }
 
-            if (_saveOverlaySelection >= _saveStateEntries.Count)
+            if (_saveOverlaySelection >= _saveOverlayEntries.Count)
             {
-                _saveOverlaySelection = _saveStateEntries.Count - 1;
+                _saveOverlaySelection = _saveOverlayEntries.Count - 1;
             }
 
             ClampSaveOverlayScroll();
+        }
+
+        /// <summary>
+        /// Navigates to the parent savestate folder if possible.
+        /// </summary>
+        private void NavigateSaveOverlayUp()
+        {
+            string saveDirectory = GetSaveDirectory();
+            string currentDirectory = string.IsNullOrWhiteSpace(_saveOverlayCurrentDirectory)
+                ? saveDirectory
+                : Path.GetFullPath(_saveOverlayCurrentDirectory);
+            string rootDirectory = Path.GetFullPath(saveDirectory);
+            if (string.Equals(currentDirectory.TrimEnd(Path.DirectorySeparatorChar), rootDirectory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+            {
+                _saveOverlayStatusText = "AT SAVE ROOT";
+                return;
+            }
+
+            DirectoryInfo parent = Directory.GetParent(currentDirectory);
+            _saveOverlayCurrentDirectory = parent == null ? rootDirectory : parent.FullName;
+            _saveOverlaySelection = 0;
+            _saveOverlayScroll = 0;
+            ReloadSaveStateEntries();
+            _saveOverlayStatusText = "UP";
         }
 
         /// <summary>
@@ -956,7 +1054,7 @@ namespace C64Emulator
                 _saveOverlayScroll = _saveOverlaySelection;
             }
 
-            int maxVisibleStart = Math.Max(0, _saveStateEntries.Count - SaveOverlayVisibleRows);
+            int maxVisibleStart = Math.Max(0, _saveOverlayEntries.Count - SaveOverlayVisibleRows);
             int visibleEnd = _saveOverlayScroll + SaveOverlayVisibleRows - 1;
             if (_saveOverlaySelection > visibleEnd)
             {
@@ -1769,7 +1867,7 @@ namespace C64Emulator
             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 182, 214, 108);
 
             DrawOverlayText(overlayX + 14, overlayY + 12, "SAVE STATES", 2, 240, 248, 255);
-            DrawOverlayText(overlayX + 14, overlayY + 31, "S/F5 SAVE  ENTER/L LOAD  DEL DELETE  F12/ESC CLOSE", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 14, overlayY + 31, "ENTER OPEN/LOAD  BACK UP  S/F5 SAVE  DEL DELETE", 1, 192, 210, 225);
             DrawOverlayText(overlayX + 14, overlayY + 43, "STATUS " + FormatOverlayValue(_saveOverlayStatusText, 45), 1, 182, 214, 108);
 
             int listX = overlayX + 14;
@@ -1778,9 +1876,9 @@ namespace C64Emulator
             int listHeight = (SaveOverlayVisibleRows * 13) + 8;
             DrawFilledRectangleWithAlpha(listX - 4, listY - 4, listWidth + 8, listHeight, 20, 24, 38, 210);
 
-            if (_saveStateEntries.Count == 0)
+            if (_saveOverlayEntries.Count == 0)
             {
-                DrawOverlayText(listX, listY + 12, "NO SAVES YET", 2, 255, 243, 168);
+                DrawOverlayText(listX, listY + 12, "NO SAVES HERE", 2, 255, 243, 168);
                 DrawOverlayText(listX, listY + 34, "PRESS S TO CREATE ONE", 1, 232, 238, 244);
             }
             else
@@ -1788,17 +1886,17 @@ namespace C64Emulator
                 for (int row = 0; row < SaveOverlayVisibleRows; row++)
                 {
                     int index = _saveOverlayScroll + row;
-                    if (index >= _saveStateEntries.Count)
+                    if (index >= _saveOverlayEntries.Count)
                     {
                         break;
                     }
 
-                    SaveStateMetadata entry = _saveStateEntries[index];
+                    SaveOverlayEntry entry = _saveOverlayEntries[index];
                     bool selected = index == _saveOverlaySelection;
                     byte red = selected ? (byte)255 : (byte)232;
                     byte green = selected ? (byte)243 : (byte)238;
                     byte blue = selected ? (byte)168 : (byte)244;
-                    string listText = FormatSaveListEntry(entry, Math.Max(10, (listWidth / 6) - 3));
+                    string listText = FormatOverlayValue(entry.DisplayName, Math.Max(10, (listWidth / 6) - 3));
                     DrawOverlayText(listX, listY + (row * 13), (selected ? "> " : "  ") + listText, 1, red, green, blue);
                 }
             }
@@ -1812,9 +1910,10 @@ namespace C64Emulator
             DrawLine(thumbnailX - 1, thumbnailY - 1, thumbnailX - 1, thumbnailY + thumbnailHeight, 115, 142, 196);
             DrawLine(thumbnailX + thumbnailWidth, thumbnailY - 1, thumbnailX + thumbnailWidth, thumbnailY + thumbnailHeight, 115, 142, 196);
 
-            if (_saveStateEntries.Count > 0)
+            SaveOverlayEntry selectedOverlayEntry = _saveOverlayEntries.Count > 0 ? _saveOverlayEntries[_saveOverlaySelection] : null;
+            if (selectedOverlayEntry != null && !selectedOverlayEntry.IsDirectory && selectedOverlayEntry.Metadata != null)
             {
-                SaveStateMetadata selectedEntry = _saveStateEntries[_saveOverlaySelection];
+                SaveStateMetadata selectedEntry = selectedOverlayEntry.Metadata;
                 DrawArgbPixelsToRectangle(
                     selectedEntry.ScreenshotPixels,
                     selectedEntry.ScreenshotWidth,
@@ -1826,12 +1925,12 @@ namespace C64Emulator
 
                 DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 8, selectedEntry.CreatedLocalTime.ToString("yyyy-MM-dd"), 1, 232, 238, 244);
                 DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 19, selectedEntry.CreatedLocalTime.ToString("HH:mm:ss"), 1, 232, 238, 244);
-                DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 31, FormatOverlayValue(Path.GetFileName(selectedEntry.Path), 18), 1, 182, 214, 108);
+                DrawOverlayText(thumbnailX, thumbnailY + thumbnailHeight + 31, FormatOverlayValue(GetSaveStateDisplayMediaName(selectedEntry), 18), 1, 182, 214, 108);
             }
             else
             {
                 DrawFilledRectangle(thumbnailX, thumbnailY, thumbnailWidth, thumbnailHeight, 24, 24, 32);
-                DrawOverlayText(thumbnailX + 20, thumbnailY + 34, "NO IMAGE", 1, 115, 142, 196);
+                DrawOverlayText(thumbnailX + 20, thumbnailY + 34, selectedOverlayEntry != null && selectedOverlayEntry.IsDirectory ? "FOLDER" : "NO IMAGE", 1, 115, 142, 196);
             }
         }
 
@@ -1959,8 +2058,46 @@ namespace C64Emulator
         /// </summary>
         private static string FormatSaveListEntry(SaveStateMetadata entry, int maxLength)
         {
-            string text = entry.CreatedLocalTime.ToString("MM-dd HH:mm:ss") + " " + Path.GetFileNameWithoutExtension(entry.Path);
+            string mediaName = GetSaveStateDisplayMediaName(entry);
+            string text = entry.CreatedLocalTime.ToString("MM-dd HH:mm") + " " + mediaName;
             return FormatOverlayValue(text, maxLength);
+        }
+
+        /// <summary>
+        /// Gets the best available game/media name for a savestate row.
+        /// </summary>
+        private static string GetSaveStateDisplayMediaName(SaveStateMetadata entry)
+        {
+            if (entry == null)
+            {
+                return "UNKNOWN";
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.MediaHostPath))
+            {
+                return Path.GetFileNameWithoutExtension(entry.MediaHostPath).ToUpperInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.MediaDisplayName))
+            {
+                return entry.MediaDisplayName.ToUpperInvariant();
+            }
+
+            try
+            {
+                string directoryName = Path.GetFileName(Path.GetDirectoryName(entry.Path));
+                if (!string.IsNullOrWhiteSpace(directoryName) &&
+                    !string.Equals(directoryName, "saves", StringComparison.OrdinalIgnoreCase))
+                {
+                    return directoryName.ToUpperInvariant();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+
+            return Path.GetFileNameWithoutExtension(entry.Path).ToUpperInvariant();
         }
 
         /// <summary>
@@ -3691,6 +3828,49 @@ namespace C64Emulator
             /// Gets whether the entry navigates to the parent directory.
             /// </summary>
             public bool IsParent { get; }
+        }
+
+        /// <summary>
+        /// Represents a savestate browser entry component.
+        /// </summary>
+        private sealed class SaveOverlayEntry
+        {
+            /// <summary>
+            /// Initializes a new SaveOverlayEntry instance.
+            /// </summary>
+            public SaveOverlayEntry(string path, string displayName, bool isDirectory, bool isParent, SaveStateMetadata metadata)
+            {
+                Path = path;
+                DisplayName = displayName ?? string.Empty;
+                IsDirectory = isDirectory;
+                IsParent = isParent;
+                Metadata = metadata;
+            }
+
+            /// <summary>
+            /// Gets the host filesystem path.
+            /// </summary>
+            public string Path { get; }
+
+            /// <summary>
+            /// Gets the user-facing display name.
+            /// </summary>
+            public string DisplayName { get; }
+
+            /// <summary>
+            /// Gets whether the entry represents a directory.
+            /// </summary>
+            public bool IsDirectory { get; }
+
+            /// <summary>
+            /// Gets whether the entry navigates to the parent directory.
+            /// </summary>
+            public bool IsParent { get; }
+
+            /// <summary>
+            /// Gets the savestate metadata when this entry represents a save.
+            /// </summary>
+            public SaveStateMetadata Metadata { get; }
         }
     }
 }

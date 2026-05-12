@@ -24,8 +24,9 @@ namespace C64Emulator.Core
     internal static class SaveStateFile
     {
         private const string Magic = "C64EMU-SAVE";
-        private const int Version = 1;
+        private const int Version = 2;
         private const string Extension = ".c64sav";
+        private const string UnknownMediaDirectory = "Unknown";
 
         /// <summary>
         /// Creates a unique savestate path inside a directory.
@@ -43,6 +44,36 @@ namespace C64Emulator.Core
             }
 
             return path;
+        }
+
+        /// <summary>
+        /// Gets the savestate directory for a mounted media item.
+        /// </summary>
+        public static string GetSaveDirectoryForMedia(string baseSaveDirectory, MountedMediaInfo mediaInfo)
+        {
+            return System.IO.Path.Combine(baseSaveDirectory, GetMediaDirectoryName(mediaInfo));
+        }
+
+        /// <summary>
+        /// Gets a filesystem-safe directory name for a mounted media item.
+        /// </summary>
+        public static string GetMediaDirectoryName(MountedMediaInfo mediaInfo)
+        {
+            string name = null;
+            if (mediaInfo != null && mediaInfo.HasMedia)
+            {
+                if (!string.IsNullOrWhiteSpace(mediaInfo.HostPath))
+                {
+                    name = System.IO.Path.GetFileNameWithoutExtension(mediaInfo.HostPath);
+                }
+
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = mediaInfo.DisplayName;
+                }
+            }
+
+            return SanitizeDirectoryName(name);
         }
 
         /// <summary>
@@ -67,6 +98,7 @@ namespace C64Emulator.Core
                 writer.Write(Magic);
                 writer.Write(Version);
                 writer.Write(DateTime.UtcNow.Ticks);
+                WriteMountedMediaInfo(writer, system.MountedMedia);
                 writer.Write(screenshotWidth);
                 writer.Write(screenshotHeight);
                 BinaryStateIO.WriteUIntArray(writer, screenshotPixels);
@@ -82,8 +114,9 @@ namespace C64Emulator.Core
             using (var stream = File.OpenRead(path))
             using (var reader = new BinaryReader(stream))
             {
-                ValidateHeader(reader);
+                int version = ValidateHeader(reader);
                 long ticksUtc = reader.ReadInt64();
+                MountedMediaInfo mediaInfo = version >= 2 ? ReadMountedMediaInfo(reader) : MountedMediaInfo.None;
                 int screenshotWidth = reader.ReadInt32();
                 int screenshotHeight = reader.ReadInt32();
                 uint[] pixels = BinaryStateIO.ReadUIntArray(reader);
@@ -92,6 +125,10 @@ namespace C64Emulator.Core
                 {
                     Path = path,
                     CreatedLocalTime = new DateTime(ticksUtc, DateTimeKind.Utc).ToLocalTime(),
+                    MediaKind = mediaInfo.Kind,
+                    MediaShortLabel = mediaInfo.ShortLabel,
+                    MediaDisplayName = mediaInfo.DisplayName,
+                    MediaHostPath = mediaInfo.HostPath,
                     ScreenshotWidth = screenshotWidth,
                     ScreenshotHeight = screenshotHeight,
                     ScreenshotPixels = pixels
@@ -112,8 +149,13 @@ namespace C64Emulator.Core
             using (var stream = File.OpenRead(path))
             using (var reader = new BinaryReader(stream))
             {
-                ValidateHeader(reader);
+                int version = ValidateHeader(reader);
                 reader.ReadInt64();
+                if (version >= 2)
+                {
+                    ReadMountedMediaInfo(reader);
+                }
+
                 reader.ReadInt32();
                 reader.ReadInt32();
                 BinaryStateIO.ReadUIntArray(reader);
@@ -132,14 +174,83 @@ namespace C64Emulator.Core
         /// <summary>
         /// Validates the file header.
         /// </summary>
-        private static void ValidateHeader(BinaryReader reader)
+        private static int ValidateHeader(BinaryReader reader)
         {
             string magic = reader.ReadString();
             int version = reader.ReadInt32();
-            if (!string.Equals(magic, Magic, StringComparison.Ordinal) || version != Version)
+            if (!string.Equals(magic, Magic, StringComparison.Ordinal) || version < 1 || version > Version)
             {
                 throw new InvalidDataException("Unsupported savestate format.");
             }
+
+            return version;
+        }
+
+        /// <summary>
+        /// Writes mounted media metadata.
+        /// </summary>
+        private static void WriteMountedMediaInfo(BinaryWriter writer, MountedMediaInfo mediaInfo)
+        {
+            mediaInfo = mediaInfo ?? MountedMediaInfo.None;
+            writer.Write((int)mediaInfo.Kind);
+            BinaryStateIO.WriteString(writer, mediaInfo.ShortLabel);
+            BinaryStateIO.WriteString(writer, mediaInfo.DisplayName);
+            BinaryStateIO.WriteString(writer, mediaInfo.HostPath);
+        }
+
+        /// <summary>
+        /// Reads mounted media metadata.
+        /// </summary>
+        private static MountedMediaInfo ReadMountedMediaInfo(BinaryReader reader)
+        {
+            var kind = (MountedMediaKind)reader.ReadInt32();
+            string shortLabel = BinaryStateIO.ReadString(reader) ?? "NONE";
+            string displayName = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            string hostPath = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            return new MountedMediaInfo(kind, shortLabel, displayName, hostPath);
+        }
+
+        /// <summary>
+        /// Sanitizes a mounted media display name for use as a directory name.
+        /// </summary>
+        private static string SanitizeDirectoryName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return UnknownMediaDirectory;
+            }
+
+            char[] invalidChars = System.IO.Path.GetInvalidFileNameChars();
+            var builder = new System.Text.StringBuilder(name.Length);
+            for (int index = 0; index < name.Length; index++)
+            {
+                char value = name[index];
+                bool invalid = false;
+                for (int invalidIndex = 0; invalidIndex < invalidChars.Length; invalidIndex++)
+                {
+                    if (value == invalidChars[invalidIndex])
+                    {
+                        invalid = true;
+                        break;
+                    }
+                }
+
+                builder.Append(invalid || char.IsControl(value) ? '_' : value);
+            }
+
+            string sanitized = builder.ToString().Trim().Trim('.');
+            if (string.IsNullOrWhiteSpace(sanitized))
+            {
+                sanitized = UnknownMediaDirectory;
+            }
+
+            const int maximumLength = 80;
+            if (sanitized.Length > maximumLength)
+            {
+                sanitized = sanitized.Substring(0, maximumLength).Trim().Trim('.');
+            }
+
+            return string.IsNullOrWhiteSpace(sanitized) ? UnknownMediaDirectory : sanitized;
         }
     }
 }

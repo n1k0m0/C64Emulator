@@ -33,6 +33,26 @@ namespace C64Emulator.Core
         public DateTime CreatedLocalTime { get; set; }
 
         /// <summary>
+        /// Gets or sets the mounted media kind stored with the savestate.
+        /// </summary>
+        public MountedMediaKind MediaKind { get; set; }
+
+        /// <summary>
+        /// Gets or sets the short mounted media label stored with the savestate.
+        /// </summary>
+        public string MediaShortLabel { get; set; }
+
+        /// <summary>
+        /// Gets or sets the mounted media display name stored with the savestate.
+        /// </summary>
+        public string MediaDisplayName { get; set; }
+
+        /// <summary>
+        /// Gets or sets the mounted media host path stored with the savestate.
+        /// </summary>
+        public string MediaHostPath { get; set; }
+
+        /// <summary>
         /// Gets or sets the screenshot width.
         /// </summary>
         public int ScreenshotWidth { get; set; }
