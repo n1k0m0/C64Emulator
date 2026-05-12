@@ -16,9 +16,9 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | --- | --- | --- |
 | <img src="docs/screenshots/c64-boot-screen.png" alt="C64 boot screen" width="260"> | <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="260"> | <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="260"> |
 
-| Giana Sisters intro | Giana Sisters level 1 |
-| --- | --- |
-| <img src="docs/screenshots/giana-intro.png" alt="Giana Sisters intro" width="320"> | <img src="docs/screenshots/giana-level-1.png" alt="Giana Sisters level 1" width="320"> |
+| Giana Sisters intro | Giana Sisters level 1 | Giana Sisters end boss fight |
+| --- | --- | --- |
+| <img src="docs/screenshots/giana-intro.png" alt="Giana Sisters intro" width="260"> | <img src="docs/screenshots/giana-level-1.png" alt="Giana Sisters level 1" width="260"> | <img src="docs/screenshots/giana-end-boss-fight.png" alt="Giana Sisters end boss fight" width="260"> |
 
 | Maniac Mansion: game start | Maniac Mansion: hallway | Maniac Mansion: front door |
 | --- | --- | --- |
