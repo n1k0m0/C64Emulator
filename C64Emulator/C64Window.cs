@@ -119,6 +119,7 @@ namespace C64Emulator
         private string _saveOverlayCurrentDirectory;
         private List<MediaBrowserEntry> _mediaBrowserEntries = new List<MediaBrowserEntry>();
         private List<SaveOverlayEntry> _saveOverlayEntries = new List<SaveOverlayEntry>();
+        private string _lastLoadedSaveStatePath;
         private string _overlayStatusText = "READY";
         private string _saveOverlayStatusText = "F12 SAVE MENU";
         private string _turboToastText = string.Empty;
@@ -731,6 +732,10 @@ namespace C64Emulator
             _saveOverlayVisible = true;
             _saveOverlayCurrentDirectory = GetSaveDirectory();
             ReloadSaveStateEntries();
+            if (!string.IsNullOrWhiteSpace(_lastLoadedSaveStatePath) && File.Exists(_lastLoadedSaveStatePath))
+            {
+                SelectSaveStatePath(_lastLoadedSaveStatePath);
+            }
         }
 
         /// <summary>
@@ -852,6 +857,7 @@ namespace C64Emulator
                     Array.Copy(_system.FrameBuffer.CompletedPixels, _frameSnapshot, _frameSnapshot.Length);
                 }
 
+                _lastLoadedSaveStatePath = entry.Path;
                 _saveOverlayVisible = false;
                 _overlayStatusText = "SAVE LOADED";
                 _saveOverlayStatusText = "SAVE LOADED";
@@ -886,6 +892,11 @@ namespace C64Emulator
             {
                 SaveStateMetadata entry = selectedEntry.Metadata;
                 File.Delete(entry.Path);
+                if (string.Equals(_lastLoadedSaveStatePath, entry.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastLoadedSaveStatePath = null;
+                }
+
                 _saveOverlayStatusText = "SAVE DELETED";
                 ReloadSaveStateEntries();
             }
