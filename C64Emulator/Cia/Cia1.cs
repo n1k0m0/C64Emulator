@@ -44,6 +44,8 @@ namespace C64Emulator.Core
         private byte _joystickPort2State = 0x1F;
         private byte _gamepadJoystickPort1State = 0x1F;
         private byte _gamepadJoystickPort2State = 0x1F;
+        private byte _networkJoystickPort1State = 0x1F;
+        private byte _networkJoystickPort2State = 0x1F;
         private JoystickPort _activeJoystickPort = JoystickPort.Port2;
         private byte _serialDataRegister;
         private int _todCycleAccumulator;
@@ -80,6 +82,8 @@ namespace C64Emulator.Core
             _joystickPort2State = 0x1F;
             _gamepadJoystickPort1State = 0x1F;
             _gamepadJoystickPort2State = 0x1F;
+            _networkJoystickPort1State = 0x1F;
+            _networkJoystickPort2State = 0x1F;
             _serialDataRegister = 0;
             _todCycleAccumulator = 0;
             _todTenths = 0;
@@ -268,8 +272,8 @@ namespace C64Emulator.Core
                 _todMinutes,
                 _todSeconds,
                 _todTenths,
-                _joystickPort1State & _gamepadJoystickPort1State,
-                _joystickPort2State & _gamepadJoystickPort2State);
+                _joystickPort1State & _gamepadJoystickPort1State & _networkJoystickPort1State,
+                _joystickPort2State & _gamepadJoystickPort2State & _networkJoystickPort2State);
         }
 
         /// <summary>
@@ -290,6 +294,32 @@ namespace C64Emulator.Core
             {
                 _gamepadJoystickPort2State = activeLowJoystickState;
             }
+        }
+
+        /// <summary>
+        /// Sets a network-controlled joystick state for one or both C64 joystick ports.
+        /// </summary>
+        public void SetNetworkJoystickState(JoystickPort joystickPort, byte activeLowJoystickState)
+        {
+            activeLowJoystickState = (byte)(activeLowJoystickState | 0xE0);
+            if (joystickPort == JoystickPort.Port1 || joystickPort == JoystickPort.Both)
+            {
+                _networkJoystickPort1State = activeLowJoystickState;
+            }
+
+            if (joystickPort == JoystickPort.Port2 || joystickPort == JoystickPort.Both)
+            {
+                _networkJoystickPort2State = activeLowJoystickState;
+            }
+        }
+
+        /// <summary>
+        /// Resets network-controlled joystick input to neutral.
+        /// </summary>
+        public void ClearNetworkJoystickState()
+        {
+            _networkJoystickPort1State = 0x1F;
+            _networkJoystickPort2State = 0x1F;
         }
 
         /// <summary>
@@ -445,7 +475,7 @@ namespace C64Emulator.Core
                 }
             }
 
-            result = (byte)(result & ((_joystickPort2State & _gamepadJoystickPort2State) | 0xE0));
+            result = (byte)(result & ((_joystickPort2State & _gamepadJoystickPort2State & _networkJoystickPort2State) | 0xE0));
             return result;
         }
 
@@ -473,7 +503,7 @@ namespace C64Emulator.Core
                 }
             }
 
-            result = (byte)(result & ((_joystickPort1State & _gamepadJoystickPort1State) | 0xE0));
+            result = (byte)(result & ((_joystickPort1State & _gamepadJoystickPort1State & _networkJoystickPort1State) | 0xE0));
             return result;
         }
 

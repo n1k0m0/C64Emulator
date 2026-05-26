@@ -56,6 +56,20 @@ namespace C64Emulator.Core
         public int MediaBrowserTargetDrive { get; set; } = 8;
 
         public string MediaBrowserDirectory { get; set; } = string.Empty;
+
+        public int NetworkServerPort { get; set; } = 6464;
+
+        public string NetworkServerPassword { get; set; } = string.Empty;
+
+        public string NetworkClientHost { get; set; } = "127.0.0.1";
+
+        public int NetworkClientPort { get; set; } = 6464;
+
+        public string NetworkClientPassword { get; set; } = string.Empty;
+
+        public string NetworkPlayerName { get; set; } = "player";
+
+        public string NetworkRequestedRole { get; set; } = "Player";
     }
 
     /// <summary>

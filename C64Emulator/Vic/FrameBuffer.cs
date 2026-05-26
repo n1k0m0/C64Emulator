@@ -38,6 +38,10 @@ namespace C64Emulator.Core
         /// Gets the most recently completed full-frame pixel array.
         /// </summary>
         public uint[] CompletedPixels { get; private set; }
+        /// <summary>
+        /// Gets an incrementing id for the most recently completed full frame.
+        /// </summary>
+        public long CompletedFrameId { get; private set; }
 
         /// <summary>
         /// Initializes a new FrameBuffer instance.
@@ -82,6 +86,7 @@ namespace C64Emulator.Core
             }
 
             System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
+            CompletedFrameId++;
         }
 
         /// <summary>
@@ -90,6 +95,7 @@ namespace C64Emulator.Core
         public void CaptureCompletedFrame()
         {
             System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
+            CompletedFrameId++;
         }
 
         /// <summary>
@@ -114,6 +120,7 @@ namespace C64Emulator.Core
             {
                 System.Array.Copy(pixels, Pixels, Pixels.Length);
                 System.Array.Copy(pixels, CompletedPixels, CompletedPixels.Length);
+                CompletedFrameId++;
             }
         }
     }

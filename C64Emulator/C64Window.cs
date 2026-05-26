@@ -20,6 +20,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using C64Emulator.Core;
+using C64Emulator.Network;
 using OpenTK.Input;
 using SharpPixels;
 using Hat = OpenTK.Windowing.Common.Input.Hat;
@@ -61,6 +62,16 @@ namespace C64Emulator
             Power
         }
 
+        /// <summary>
+        /// Lists the host-facing network session modes.
+        /// </summary>
+        private enum NetworkSessionMode
+        {
+            Local,
+            Host,
+            Client
+        }
+
         private const int MaxCycleBatch = 2048;
         private const int NormalCycleBatch = 512;
         private const long WaitCycleQuantum = 256;
@@ -71,6 +82,9 @@ namespace C64Emulator
         private const int AudioOverlayItemCount = 15;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
+        private const int NetworkOverlayItemCount = 13;
+        private const int NetworkOverlayServerItemCount = 6;
+        private const double RemoteInputRefreshSeconds = 0.05;
         private const int MediaBrowserVisibleRows = 9;
         private const int SaveOverlayVisibleRows = 12;
         private const double DriveFooterVisibleHoldSeconds = 1.2;
@@ -94,6 +108,7 @@ namespace C64Emulator
         private volatile bool _audioOverlayVisible;
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
+        private bool _networkOverlayVisible;
         private volatile bool _saveOverlayVisible;
         private volatile bool _turboMode;
         private volatile bool _turboTimingResetPending;
@@ -106,13 +121,30 @@ namespace C64Emulator
         private ConfirmationAction _confirmationAction;
         private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
         private ResetMode _resetMode = ResetMode.Warm;
+        private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
         private byte _lastGamepadJoystickState = 0x1F;
+        private byte _remoteKeyboardJoystickState = 0xFF;
+        private byte _remoteGamepadJoystickState = 0xFF;
+        private byte _lastRemoteJoystickState = 0xFF;
         private int _audioOverlaySelection;
         private int _audioOverlayScroll;
+        private int _networkOverlaySelection;
+        private int _networkSelectedClientIndex;
+        private int _networkServerPort = C64NetProtocol.DefaultPort;
+        private int _networkClientPort = C64NetProtocol.DefaultPort;
         private int _mediaBrowserSelection;
         private int _mediaBrowserScroll;
         private int _mediaBrowserTargetDrive = 8;
         private string _mediaBrowserLastDirectory;
+        private string _networkHost = "127.0.0.1";
+        private string _networkServerPassword = string.Empty;
+        private string _networkClientPassword = string.Empty;
+        private string _networkPlayerName = "player";
+        private string _networkStatusText = "LOCAL";
+        private string _networkStatusToastText = string.Empty;
+        private string _networkHostOverlayStatusText = string.Empty;
+        private string _lastBroadcastNetworkHostOverlayStatus = string.Empty;
+        private long _networkStatusToastUntilTicks;
         private int _saveOverlaySelection;
         private int _saveOverlayScroll;
         private string _mediaBrowserCurrentDirectory;
@@ -123,11 +155,34 @@ namespace C64Emulator
         private string _overlayStatusText = "READY";
         private string _saveOverlayStatusText = "F12 SAVE MENU";
         private string _turboToastText = string.Empty;
+        private C64NetClientRole _networkRequestedRole = C64NetClientRole.Player;
+        private C64NetServer _networkServer;
+        private C64NetClient _networkClient;
+        private readonly object _networkFrameSync = new object();
+        private readonly object _networkClientsSync = new object();
+        private readonly object _networkBroadcastSync = new object();
+        private uint[] _networkFramePixels;
+        private uint[] _networkBroadcastFrameSnapshot;
+        private int _networkFrameWidth;
+        private int _networkFrameHeight;
+        private long _networkFrameId;
+        private long _lastDisplayedNetworkFrameId;
+        private long _lastBroadcastNetworkCompletedFrameId = -1;
+        private int _networkFramesReceivedCounter;
+        private int _networkReceiveFps;
+        private long _networkReceiveFpsWindowStartTicks;
+        private long _networkReceiveFpsNextTicks;
+        private int _networkFramesSentCounter;
+        private int _networkSendFps;
+        private long _networkSendFpsWindowStartTicks;
+        private long _networkSendFpsNextTicks;
+        private List<C64NetClientSnapshot> _networkClients = new List<C64NetClientSnapshot>();
         private double _smoothedMhz;
         private double _driveFooterVisibility;
         private double _driveFooterIdleSeconds;
         private double _driveFooterPulsePhase;
         private double _turboToastSecondsRemaining;
+        private double _remoteInputRefreshAccumulator;
 
         /// <summary>
         /// Handles the c64 window operation.
@@ -166,6 +221,7 @@ namespace C64Emulator
         private void CreateSystemInstance()
         {
             _system = new C64System(_model);
+            _system.AudioBytesGenerated += HandleSystemAudioBytesGenerated;
             // Standard disk loads now run over the drive-side IEC state
             // machine without the low-level CPU IEC hooks enabled.
             _system.EnableKernalIecHooks = false;
@@ -176,6 +232,11 @@ namespace C64Emulator
             if (_frameSnapshot == null || _frameSnapshot.Length != framePixelCount)
             {
                 _frameSnapshot = new uint[framePixelCount];
+            }
+
+            if (_networkBroadcastFrameSnapshot == null || _networkBroadcastFrameSnapshot.Length != framePixelCount)
+            {
+                _networkBroadcastFrameSnapshot = new uint[framePixelCount];
             }
         }
 
@@ -205,6 +266,13 @@ namespace C64Emulator
             _driveOverlayEnabled = settings.DriveOverlayEnabled;
             _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
             _mediaBrowserLastDirectory = NormalizeExistingDirectory(settings.MediaBrowserDirectory);
+            _networkServerPort = ClampNetworkPort(settings.NetworkServerPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkServerPort);
+            _networkClientPort = ClampNetworkPort(settings.NetworkClientPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkClientPort);
+            _networkHost = string.IsNullOrWhiteSpace(settings.NetworkClientHost) ? "127.0.0.1" : settings.NetworkClientHost.Trim();
+            _networkServerPassword = settings.NetworkServerPassword ?? string.Empty;
+            _networkClientPassword = settings.NetworkClientPassword ?? string.Empty;
+            _networkPlayerName = NormalizeNetworkPlayerName(settings.NetworkPlayerName);
+            _networkRequestedRole = ParseEnum(settings.NetworkRequestedRole, C64NetClientRole.Player);
 
             if (!_gamepadEnabled)
             {
@@ -251,7 +319,14 @@ namespace C64Emulator
                 EnableInputInjection = _system.EnableInputInjection,
                 DriveOverlayEnabled = _driveOverlayEnabled,
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
-                MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty
+                MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty,
+                NetworkServerPort = _networkServerPort,
+                NetworkServerPassword = _networkServerPassword ?? string.Empty,
+                NetworkClientHost = _networkHost ?? string.Empty,
+                NetworkClientPort = _networkClientPort,
+                NetworkClientPassword = _networkClientPassword ?? string.Empty,
+                NetworkPlayerName = NormalizeNetworkPlayerName(_networkPlayerName),
+                NetworkRequestedRole = _networkRequestedRole.ToString()
             };
         }
 
@@ -347,7 +422,7 @@ namespace C64Emulator
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    if (_saveOverlayVisible || _audioOverlayVisible)
+                    if (_networkOverlayVisible || _saveOverlayVisible || _audioOverlayVisible)
                     {
                         Thread.Sleep(5);
                         continue;
@@ -356,6 +431,7 @@ namespace C64Emulator
                     if (_turboMode)
                     {
                         _system.RunCycles(MaxCycleBatch);
+                        BroadcastNetworkCompletedFrameIfReady();
                         Thread.Yield();
                         continue;
                     }
@@ -378,6 +454,7 @@ namespace C64Emulator
 
                     int batchSize = (int)Math.Min(cyclesBehind, NormalCycleBatch);
                     _system.RunCycles(batchSize);
+                    BroadcastNetworkCompletedFrameIfReady();
                 }
             }
             catch (Exception ex)
@@ -394,6 +471,8 @@ namespace C64Emulator
             if (disposing)
             {
                 _shutdown.Cancel();
+                StopNetworkClientSession();
+                StopNetworkServer();
                 StopEmulation();
                 if (_system != null)
                 {
@@ -411,6 +490,13 @@ namespace C64Emulator
         public override void OnUserUpdate(double time)
         {
             PollGamepadInput();
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                DrawRemoteClientFrame(time);
+                return;
+            }
+
+            ApplyNetworkServerJoystickInput();
 
             long currentCycle;
             ushort currentPc;
@@ -494,6 +580,8 @@ namespace C64Emulator
 
             UpdateTurboToastState(time);
             DrawFrame(_frameSnapshot, _system.Model.VisibleWidth, _system.Model.VisibleHeight);
+            BroadcastNetworkCompletedFrameIfReady();
+            BroadcastNetworkHostOverlayStatus();
             DrawDriveFooter(
                 _system.Model.VisibleWidth,
                 _system.Model.VisibleHeight,
@@ -502,7 +590,11 @@ namespace C64Emulator
                 drive10Mounted, drive10LedOn, drive10Active,
                 drive11Mounted, drive11LedOn, drive11Active);
 
-            if (_saveOverlayVisible)
+            if (_networkOverlayVisible)
+            {
+                DrawNetworkOverlay();
+            }
+            else if (_saveOverlayVisible)
             {
                 DrawSaveOverlay();
             }
@@ -515,27 +607,40 @@ namespace C64Emulator
                 DrawTurboToast();
             }
 
-            if (_debugOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
+            if (_debugOverlayVisible && !_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
             {
                 DrawDebugOverlay(timing, currentPc, currentOpcode, memoryDebugInfo, cpuDebugInfo, ciaDebugInfo, sidDebugInfo, iecDebugInfo, drive8DebugInfo);
             }
 
-            long cyclesThisFrame = currentCycle - _lastRenderedCycle;
-            _lastRenderedCycle = currentCycle;
-            if (time > 0)
-            {
-                double instantMhz = (cyclesThisFrame / time) / 1000000.0;
-                double alpha = 1.0 - Math.Exp(-time / 0.25);
-                _smoothedMhz = _smoothedMhz <= 0.0 ? instantMhz : _smoothedMhz + ((instantMhz - _smoothedMhz) * alpha);
-            }
+            DrawNetworkStatusToast();
+            UpdateNetworkSendFps();
 
-            Title = string.Format(
-                "C64 Emulator {0}{1:F2} MHz - PC:{2:X4} OPC:{3:X2} - FPS:{4}",
-                _turboMode ? "TURBO " : string.Empty,
-                _smoothedMhz,
-                currentPc,
-                currentOpcode,
-                FPS);
+            if (_networkMode == NetworkSessionMode.Host)
+            {
+                Title = string.Format(
+                    "C64 Emulator SERVER - NET:{0} FPS RENDER:{1}",
+                    _networkSendFps,
+                    FPS);
+            }
+            else
+            {
+                long cyclesThisFrame = currentCycle - _lastRenderedCycle;
+                _lastRenderedCycle = currentCycle;
+                if (time > 0)
+                {
+                    double instantMhz = (cyclesThisFrame / time) / 1000000.0;
+                    double alpha = 1.0 - Math.Exp(-time / 0.25);
+                    _smoothedMhz = _smoothedMhz <= 0.0 ? instantMhz : _smoothedMhz + ((instantMhz - _smoothedMhz) * alpha);
+                }
+
+                Title = string.Format(
+                    "C64 Emulator {0}{1:F2} MHz - PC:{2:X4} OPC:{3:X2} - FPS:{4}",
+                    _turboMode ? "TURBO " : string.Empty,
+                    _smoothedMhz,
+                    currentPc,
+                    currentOpcode,
+                    FPS);
+            }
         }
 
         /// <summary>
@@ -569,6 +674,12 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserFileDrop(string[] fileNames)
         {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                ShowNetworkStatus("REMOTE SESSION ACTIVE");
+                return;
+            }
+
             MountDroppedMedia(fileNames);
         }
 
@@ -577,6 +688,24 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
         {
+            if (keyEventArgs.Key == Key.F7)
+            {
+                ToggleNetworkOverlay();
+                return;
+            }
+
+            if (_networkOverlayVisible)
+            {
+                HandleNetworkOverlayKeyDown(keyEventArgs.Key, keyEventArgs.Modifiers);
+                return;
+            }
+
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                HandleRemoteClientKeyDown(keyEventArgs);
+                return;
+            }
+
             if (keyEventArgs.Key == Key.F12)
             {
                 ToggleSaveOverlay();
@@ -643,6 +772,21 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyUp(SharpPixels.KeyEventArgs keyEventArgs)
         {
+            if (keyEventArgs.Key == Key.F7 || _networkOverlayVisible)
+            {
+                return;
+            }
+
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                if (!_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
+                {
+                    HandleRemoteClientJoystickKey(keyEventArgs.Key, false);
+                }
+
+                return;
+            }
+
             if (keyEventArgs.Key == Key.F12 || _saveOverlayVisible)
             {
                 return;
@@ -718,6 +862,30 @@ namespace C64Emulator
             _mediaBrowserVisible = false;
             _resetConfirmVisible = false;
             ResetEmulationTiming();
+        }
+
+        /// <summary>
+        /// Toggles the network overlay.
+        /// </summary>
+        private void ToggleNetworkOverlay()
+        {
+            _networkOverlayVisible = !_networkOverlayVisible;
+            if (_networkOverlayVisible)
+            {
+                _audioOverlayVisible = false;
+                _saveOverlayVisible = false;
+                _mediaBrowserVisible = false;
+                _resetConfirmVisible = false;
+                ClampNetworkSelectedClientIndex();
+                if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
+                {
+                    _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 11 : 2;
+                }
+            }
+            else if (_networkMode != NetworkSessionMode.Client)
+            {
+                ResetEmulationTiming();
+            }
         }
 
         /// <summary>
@@ -1234,6 +1402,12 @@ namespace C64Emulator
         /// </summary>
         private void PollGamepadInput()
         {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                PollRemoteClientGamepadInput();
+                return;
+            }
+
             if (!_gamepadEnabled)
             {
                 return;
@@ -1372,6 +1546,622 @@ namespace C64Emulator
         private static bool IsHatRight(Hat hat)
         {
             return hat == Hat.Right || hat == Hat.RightUp || hat == Hat.RightDown;
+        }
+
+        /// <summary>
+        /// Broadcasts generated SID audio to connected network clients.
+        /// </summary>
+        private void HandleSystemAudioBytesGenerated(byte[] buffer, int count)
+        {
+            C64NetServer server = _networkServer;
+            if (server != null && server.IsRunning && count > 0)
+            {
+                server.BroadcastAudio(buffer, count);
+            }
+        }
+
+        /// <summary>
+        /// Applies the current aggregate client joystick state to the emulated machine.
+        /// </summary>
+        private void ApplyNetworkServerJoystickInput()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning)
+            {
+                if (_networkMode == NetworkSessionMode.Host)
+                {
+                    _system.ClearNetworkJoystickState();
+                    _networkMode = NetworkSessionMode.Local;
+                }
+
+                return;
+            }
+
+            _system.SetNetworkJoystickState(JoystickPort.Port1, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port1));
+            _system.SetNetworkJoystickState(JoystickPort.Port2, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port2));
+        }
+
+        /// <summary>
+        /// Broadcasts each completed C64 video frame once.
+        /// </summary>
+        private void BroadcastNetworkCompletedFrameIfReady()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning || _system == null || _networkBroadcastFrameSnapshot == null)
+            {
+                return;
+            }
+
+            lock (_networkBroadcastSync)
+            {
+                long completedFrameId;
+                lock (_system.SyncRoot)
+                {
+                    completedFrameId = _system.FrameBuffer.CompletedFrameId;
+                    if (completedFrameId == _lastBroadcastNetworkCompletedFrameId)
+                    {
+                        return;
+                    }
+
+                    Array.Copy(_system.FrameBuffer.CompletedPixels, _networkBroadcastFrameSnapshot, _networkBroadcastFrameSnapshot.Length);
+                }
+
+                _lastBroadcastNetworkCompletedFrameId = completedFrameId;
+                server.BroadcastVideoFrame(_networkBroadcastFrameSnapshot, _system.Model.VisibleWidth, _system.Model.VisibleHeight);
+                Interlocked.Increment(ref _networkFramesSentCounter);
+            }
+        }
+
+        /// <summary>
+        /// Tells remote clients whether the host is currently inside a local menu.
+        /// </summary>
+        private void BroadcastNetworkHostOverlayStatus()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning)
+            {
+                _lastBroadcastNetworkHostOverlayStatus = string.Empty;
+                return;
+            }
+
+            string status = GetNetworkHostOverlayStatus();
+            if (string.Equals(status, _lastBroadcastNetworkHostOverlayStatus, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastBroadcastNetworkHostOverlayStatus = status;
+            server.SetHostOverlayStatus(status);
+        }
+
+        private string GetNetworkHostOverlayStatus()
+        {
+            if (_networkOverlayVisible)
+            {
+                return "SERVER IN NETWORK MENU";
+            }
+
+            if (_saveOverlayVisible)
+            {
+                return "SERVER IN SAVE MENU";
+            }
+
+            if (_audioOverlayVisible)
+            {
+                if (_resetConfirmVisible)
+                {
+                    return "SERVER RESET PROMPT";
+                }
+
+                if (_mediaBrowserVisible)
+                {
+                    return "SERVER IN MEDIA MENU";
+                }
+
+                return "SERVER IN SETTINGS MENU";
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Draws and services the remote-client presentation path.
+        /// </summary>
+        private void DrawRemoteClientFrame(double time)
+        {
+            if (_networkClient == null || !_networkClient.IsConnected)
+            {
+                StopNetworkClientSession();
+                DrawFilledRectangle(0, 0, PixelsWidth, PixelsHeight, 0, 0, 0);
+                DrawOverlayText(28, (PixelsHeight / 2) - 10, "REMOTE SESSION CLOSED", 1, 240, 248, 255);
+                return;
+            }
+
+            SendRemoteClientJoystickInput(false, time);
+            UpdateNetworkReceiveFps();
+
+            uint[] pixels;
+            int width;
+            int height;
+            long frameId;
+            lock (_networkFrameSync)
+            {
+                pixels = _networkFramePixels;
+                width = _networkFrameWidth;
+                height = _networkFrameHeight;
+                frameId = _networkFrameId;
+            }
+
+            if (pixels != null && width > 0 && height > 0)
+            {
+                DrawFrame(pixels, width, height);
+                _lastDisplayedNetworkFrameId = frameId;
+            }
+            else
+            {
+                DrawFilledRectangle(0, 0, PixelsWidth, PixelsHeight, 0, 0, 0);
+                DrawOverlayText(24, (PixelsHeight / 2) - 10, "WAITING FOR SERVER FRAME", 1, 240, 248, 255);
+            }
+
+            if (_networkOverlayVisible)
+            {
+                DrawNetworkOverlay();
+            }
+            else if (_saveOverlayVisible)
+            {
+                DrawSaveOverlay();
+            }
+            else if (_audioOverlayVisible)
+            {
+                DrawAudioOverlay(
+                    _system.SidMasterVolume,
+                    _system.SidNoiseLevel,
+                    _system.CurrentSidChipModel,
+                    _system.CurrentJoystickPort,
+                    _system.MountedMedia,
+                    _system.EnableLoadHack,
+                    _system.ForceSoftwareIecTransport,
+                    _system.EnableInputInjection);
+            }
+
+            DrawNetworkStatusToast();
+            DrawNetworkHostOverlayPopup();
+
+            Title = string.Format(
+                "C64 Emulator REMOTE {0} - NET:{1} FPS RENDER:{2}",
+                FormatNetworkPermission(_networkClient != null ? _networkClient.Permission : C64NetJoystickPermission.Observer),
+                _networkReceiveFps,
+                FPS);
+        }
+
+        private void UpdateNetworkReceiveFps()
+        {
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (_networkReceiveFpsNextTicks <= 0)
+            {
+                _networkReceiveFpsWindowStartTicks = nowTicks;
+                _networkReceiveFpsNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+                return;
+            }
+
+            if (nowTicks < _networkReceiveFpsNextTicks)
+            {
+                return;
+            }
+
+            long elapsedTicks = Math.Max(TimeSpan.TicksPerMillisecond, nowTicks - _networkReceiveFpsWindowStartTicks);
+            int frameCount = Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
+            _networkReceiveFps = (int)Math.Round((frameCount * (double)TimeSpan.TicksPerSecond) / elapsedTicks);
+            _networkReceiveFpsWindowStartTicks = nowTicks;
+            _networkReceiveFpsNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+        }
+
+        private void UpdateNetworkSendFps()
+        {
+            long nowTicks = DateTime.UtcNow.Ticks;
+            if (_networkSendFpsNextTicks <= 0)
+            {
+                _networkSendFpsWindowStartTicks = nowTicks;
+                _networkSendFpsNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+                return;
+            }
+
+            if (nowTicks < _networkSendFpsNextTicks)
+            {
+                return;
+            }
+
+            long elapsedTicks = Math.Max(TimeSpan.TicksPerMillisecond, nowTicks - _networkSendFpsWindowStartTicks);
+            int frameCount = Interlocked.Exchange(ref _networkFramesSentCounter, 0);
+            _networkSendFps = (int)Math.Round((frameCount * (double)TimeSpan.TicksPerSecond) / elapsedTicks);
+            _networkSendFpsWindowStartTicks = nowTicks;
+            _networkSendFpsNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+        }
+
+        /// <summary>
+        /// Starts the host-side network server.
+        /// </summary>
+        private void StartNetworkServer()
+        {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                StopNetworkClientSession();
+            }
+
+            if (_networkServer == null)
+            {
+                _networkServer = new C64NetServer(_system.Model.VisibleWidth, _system.Model.VisibleHeight);
+                _networkServer.StatusChanged += HandleNetworkStatusChanged;
+            }
+
+            try
+            {
+                _networkServer.Start(_networkServerPort, _networkServerPassword);
+                _networkServerPort = _networkServer.Port;
+                _networkMode = NetworkSessionMode.Host;
+                _lastBroadcastNetworkHostOverlayStatus = string.Empty;
+                _lastBroadcastNetworkCompletedFrameId = -1;
+                Interlocked.Exchange(ref _networkFramesSentCounter, 0);
+                _networkSendFps = 0;
+                _networkSendFpsWindowStartTicks = DateTime.UtcNow.Ticks;
+                _networkSendFpsNextTicks = _networkSendFpsWindowStartTicks + TimeSpan.TicksPerSecond;
+                ShowNetworkStatus("SERVER LISTENING");
+                _system.LocalAudioEnabled = true;
+                SaveSettings();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                ShowNetworkStatus("SERVER START FAILED");
+            }
+        }
+
+        /// <summary>
+        /// Stops the host-side network server.
+        /// </summary>
+        private void StopNetworkServer()
+        {
+            if (_networkServer != null)
+            {
+                _networkServer.Stop();
+            }
+
+            if (_system != null)
+            {
+                _system.ClearNetworkJoystickState();
+            }
+
+            lock (_networkClientsSync)
+            {
+                _networkClients.Clear();
+            }
+
+            if (_networkMode == NetworkSessionMode.Host)
+            {
+                _networkMode = NetworkSessionMode.Local;
+            }
+
+            _lastBroadcastNetworkHostOverlayStatus = string.Empty;
+            _lastBroadcastNetworkCompletedFrameId = -1;
+            Interlocked.Exchange(ref _networkFramesSentCounter, 0);
+            _networkSendFps = 0;
+            _networkSendFpsWindowStartTicks = 0;
+            _networkSendFpsNextTicks = 0;
+        }
+
+        /// <summary>
+        /// Starts a remote-client session and pauses local emulation.
+        /// </summary>
+        private void StartNetworkClientSession()
+        {
+            if (_networkMode == NetworkSessionMode.Host)
+            {
+                StopNetworkServer();
+            }
+
+            if (_networkClient == null)
+            {
+                _networkClient = new C64NetClient();
+                _networkClient.FrameReceived += HandleNetworkFrameReceived;
+                _networkClient.ClientListReceived += HandleNetworkClientListReceived;
+                _networkClient.HostOverlayStatusChanged += HandleNetworkHostOverlayStatusChanged;
+                _networkClient.StatusChanged += HandleNetworkStatusChanged;
+            }
+
+            string status;
+            if (!_networkClient.Connect(_networkHost, _networkClientPort, _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status))
+            {
+                ShowNetworkStatus(status);
+                return;
+            }
+
+            StopEmulation();
+            _system.LocalAudioEnabled = false;
+            _networkMode = NetworkSessionMode.Client;
+            _remoteKeyboardJoystickState = 0xFF;
+            _remoteGamepadJoystickState = 0xFF;
+            _lastRemoteJoystickState = 0xFF;
+            _networkHostOverlayStatusText = string.Empty;
+            Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
+            _networkReceiveFps = 0;
+            _networkReceiveFpsWindowStartTicks = DateTime.UtcNow.Ticks;
+            _networkReceiveFpsNextTicks = _networkReceiveFpsWindowStartTicks + TimeSpan.TicksPerSecond;
+            ShowNetworkStatus(status);
+            SaveSettings();
+        }
+
+        /// <summary>
+        /// Leaves a remote-client session and resumes local emulation.
+        /// </summary>
+        private void StopNetworkClientSession()
+        {
+            if (_networkClient != null)
+            {
+                _networkClient.Disconnect();
+            }
+
+            lock (_networkFrameSync)
+            {
+                _networkFramePixels = null;
+                _networkFrameWidth = 0;
+                _networkFrameHeight = 0;
+                _networkFrameId = 0;
+            }
+
+            lock (_networkClientsSync)
+            {
+                _networkClients.Clear();
+            }
+
+            _networkHostOverlayStatusText = string.Empty;
+            Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
+            _networkReceiveFps = 0;
+            _networkReceiveFpsWindowStartTicks = 0;
+            _networkReceiveFpsNextTicks = 0;
+
+            if (_system != null)
+            {
+                _system.LocalAudioEnabled = true;
+            }
+
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                _networkMode = NetworkSessionMode.Local;
+                if (!_shutdown.IsCancellationRequested && _emulationTask == null)
+                {
+                    StartEmulation();
+                }
+            }
+        }
+
+        private void HandleNetworkFrameReceived(C64NetVideoFrame frame)
+        {
+            if (frame == null || frame.Pixels == null)
+            {
+                return;
+            }
+
+            lock (_networkFrameSync)
+            {
+                _networkFramePixels = frame.Pixels;
+                _networkFrameWidth = frame.Width;
+                _networkFrameHeight = frame.Height;
+                _networkFrameId = frame.FrameId;
+            }
+
+            Interlocked.Increment(ref _networkFramesReceivedCounter);
+        }
+
+        private void HandleNetworkClientListReceived(List<C64NetClientSnapshot> clients)
+        {
+            lock (_networkClientsSync)
+            {
+                _networkClients = clients ?? new List<C64NetClientSnapshot>();
+                ClampNetworkSelectedClientIndex();
+            }
+        }
+
+        private void HandleNetworkHostOverlayStatusChanged(string status)
+        {
+            _networkHostOverlayStatusText = status ?? string.Empty;
+        }
+
+        private void HandleNetworkStatusChanged(string status)
+        {
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                ShowNetworkStatus(status);
+            }
+        }
+
+        private void ShowNetworkStatus(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return;
+            }
+
+            _networkStatusText = status;
+            _networkStatusToastText = status;
+            Interlocked.Exchange(ref _networkStatusToastUntilTicks, DateTime.UtcNow.AddSeconds(3.0).Ticks);
+        }
+
+        private void HandleRemoteClientKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
+        {
+            Key key = keyEventArgs.Key;
+            if (key == Key.F12)
+            {
+                _audioOverlayVisible = false;
+                _mediaBrowserVisible = false;
+                _resetConfirmVisible = false;
+                _saveOverlayVisible = !_saveOverlayVisible;
+                _saveOverlayStatusText = "REMOTE SESSION";
+                return;
+            }
+
+            if (_saveOverlayVisible)
+            {
+                if (key == Key.Escape || key == Key.BackSpace || key == Key.F12)
+                {
+                    CloseSaveOverlay();
+                }
+
+                return;
+            }
+
+            if (key == Key.F10)
+            {
+                ToggleAudioOverlay();
+                return;
+            }
+
+            if (_audioOverlayVisible)
+            {
+                HandleAudioOverlayKeyDown(key);
+                return;
+            }
+
+            if (key == Key.F11)
+            {
+                ToggleDisplayMode();
+                return;
+            }
+
+            if (key == Key.F8)
+            {
+                ToggleDriveOverlay();
+                return;
+            }
+
+            if (key == Key.F9)
+            {
+                ShowNetworkStatus("TURBO DISABLED REMOTE");
+                return;
+            }
+
+            HandleRemoteClientJoystickKey(key, true);
+        }
+
+        private void PollRemoteClientGamepadInput()
+        {
+            if (!_gamepadEnabled)
+            {
+                _remoteGamepadJoystickState = 0xFF;
+                SendRemoteClientJoystickInput(false, 0.0);
+                return;
+            }
+
+            byte joystickState = 0x1F;
+            bool connected = false;
+            for (int index = 0; index < JoystickStates.Count; index++)
+            {
+                JoystickState joystick = JoystickStates[index];
+                if (joystick == null)
+                {
+                    continue;
+                }
+
+                if (joystick.AxisCount <= 0 && joystick.ButtonCount <= 0 && joystick.HatCount <= 0)
+                {
+                    continue;
+                }
+
+                connected = true;
+                try
+                {
+                    joystickState = ReadJoystickState(joystick);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                    continue;
+                }
+
+                if ((joystickState & 0x1F) != 0x1F)
+                {
+                    break;
+                }
+            }
+
+            _gamepadConnected = connected;
+            _remoteGamepadJoystickState = connected ? joystickState : (byte)0xFF;
+            SendRemoteClientJoystickInput(false, 0.0);
+        }
+
+        private void HandleRemoteClientJoystickKey(Key key, bool pressed)
+        {
+            byte mask;
+            if (!TryGetJoystickMask(key, out mask))
+            {
+                return;
+            }
+
+            if (pressed)
+            {
+                _remoteKeyboardJoystickState = (byte)(_remoteKeyboardJoystickState & ~mask);
+            }
+            else
+            {
+                _remoteKeyboardJoystickState = (byte)(_remoteKeyboardJoystickState | mask);
+            }
+
+            SendRemoteClientJoystickInput(true, 0.0);
+        }
+
+        private void SendRemoteClientJoystickInput(bool force, double elapsedSeconds)
+        {
+            C64NetClient client = _networkClient;
+            if (client == null || !client.IsConnected)
+            {
+                return;
+            }
+
+            _remoteInputRefreshAccumulator += elapsedSeconds;
+            bool refresh = _remoteInputRefreshAccumulator >= RemoteInputRefreshSeconds;
+            if (refresh)
+            {
+                _remoteInputRefreshAccumulator = 0.0;
+            }
+
+            byte state = (byte)((_remoteKeyboardJoystickState & _remoteGamepadJoystickState) | 0xE0);
+            client.SendJoystickState(state, force || refresh || state != _lastRemoteJoystickState);
+            _lastRemoteJoystickState = state;
+        }
+
+        private static bool TryGetJoystickMask(Key key, out byte mask)
+        {
+            if (key == Key.Up)
+            {
+                mask = 0x01;
+                return true;
+            }
+
+            if (key == Key.Down)
+            {
+                mask = 0x02;
+                return true;
+            }
+
+            if (key == Key.Left)
+            {
+                mask = 0x04;
+                return true;
+            }
+
+            if (key == Key.Right)
+            {
+                mask = 0x08;
+                return true;
+            }
+
+            if (key == Key.ControlLeft || key == Key.LControl)
+            {
+                mask = 0x10;
+                return true;
+            }
+
+            mask = 0;
+            return false;
         }
 
         /// <summary>
@@ -1866,6 +2656,12 @@ namespace C64Emulator
         /// </summary>
         private void DrawSaveOverlay()
         {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                DrawRemoteSaveOverlay();
+                return;
+            }
+
             int overlayWidth = Math.Min(PixelsWidth - 12, 376);
             int overlayHeight = Math.Min(PixelsHeight - 12, 292);
             int overlayX = (PixelsWidth - overlayWidth) / 2;
@@ -1943,6 +2739,25 @@ namespace C64Emulator
                 DrawFilledRectangle(thumbnailX, thumbnailY, thumbnailWidth, thumbnailHeight, 24, 24, 32);
                 DrawOverlayText(thumbnailX + 20, thumbnailY + 34, selectedOverlayEntry != null && selectedOverlayEntry.IsDirectory ? "FOLDER" : "NO IMAGE", 1, 115, 142, 196);
             }
+        }
+
+        private void DrawRemoteSaveOverlay()
+        {
+            int overlayWidth = Math.Min(PixelsWidth - 18, 330);
+            int overlayHeight = 112;
+            int overlayX = (PixelsWidth - overlayWidth) / 2;
+            int overlayY = (PixelsHeight - overlayHeight) / 2;
+
+            DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 8, 10, 18, 232);
+            DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 105, 112, 122);
+            DrawLine(overlayX, overlayY + overlayHeight - 1, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 105, 112, 122);
+            DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 105, 112, 122);
+            DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 105, 112, 122);
+
+            DrawOverlayText(overlayX + 14, overlayY + 12, "SAVE STATES", 2, 130, 136, 146);
+            DrawOverlayText(overlayX + 14, overlayY + 36, "UNAVAILABLE IN REMOTE SESSION", 1, 130, 136, 146);
+            DrawOverlayText(overlayX + 14, overlayY + 52, "SERVER OWNS THE C64 STATE", 1, 130, 136, 146);
+            DrawOverlayText(overlayX + 14, overlayY + 84, "ESC OR F12 CLOSE", 1, 192, 210, 225);
         }
 
         /// <summary>
@@ -2268,6 +3083,544 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Handles network overlay key down.
+        /// </summary>
+        private bool HandleNetworkOverlayKeyDown(Key key, KeyModifiers modifiers)
+        {
+            switch (key)
+            {
+                case Key.Up:
+                    MoveNetworkOverlaySelection(-1);
+                    return true;
+                case Key.Down:
+                    MoveNetworkOverlaySelection(1);
+                    return true;
+                case Key.Left:
+                case Key.Minus:
+                    AdjustNetworkMenu(-1);
+                    return true;
+                case Key.Right:
+                case Key.Plus:
+                    AdjustNetworkMenu(1);
+                    return true;
+                case Key.Enter:
+                    ActivateNetworkMenuItem();
+                    return true;
+                case Key.Escape:
+                    _networkOverlayVisible = false;
+                    if (_networkMode != NetworkSessionMode.Client)
+                    {
+                        ResetEmulationTiming();
+                    }
+
+                    return true;
+            }
+
+            return TryApplyNetworkTextKey(key, modifiers);
+        }
+
+        private void MoveNetworkOverlaySelection(int delta)
+        {
+            _networkOverlaySelection += delta;
+            if (_networkOverlaySelection < 0)
+            {
+                _networkOverlaySelection = NetworkOverlayItemCount - 1;
+            }
+
+            if (_networkOverlaySelection >= NetworkOverlayItemCount)
+            {
+                _networkOverlaySelection = 0;
+            }
+        }
+
+        private void AdjustNetworkMenu(int direction)
+        {
+            if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
+            {
+                ShowNetworkStatus("NETWORK ITEM DISABLED");
+                return;
+            }
+
+            switch (_networkOverlaySelection)
+            {
+                case 0:
+                    _networkServerPort = ClampNetworkPort(_networkServerPort + direction);
+                    SaveSettings();
+                    break;
+                case 2:
+                    if (direction != 0)
+                    {
+                        ToggleNetworkServer();
+                    }
+
+                    break;
+                case 3:
+                    MoveSelectedNetworkClient(direction);
+                    break;
+                case 5:
+                    MoveSelectedNetworkClient(direction);
+                    break;
+                case 4:
+                    CycleSelectedNetworkClientPermission();
+                    break;
+                case 8:
+                    _networkClientPort = ClampNetworkPort(_networkClientPort + direction);
+                    SaveSettings();
+                    break;
+                case 10:
+                    _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
+                        ? C64NetClientRole.Player
+                        : C64NetClientRole.Observer;
+                    SaveSettings();
+                    break;
+                case 11:
+                    if (direction != 0)
+                    {
+                        ToggleNetworkClientSession();
+                    }
+
+                    break;
+                case 12:
+                    CycleVideoFilter();
+                    break;
+            }
+        }
+
+        private void ActivateNetworkMenuItem()
+        {
+            if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
+            {
+                ShowNetworkStatus("NETWORK ITEM DISABLED");
+                return;
+            }
+
+            switch (_networkOverlaySelection)
+            {
+                case 2:
+                    ToggleNetworkServer();
+                    break;
+                case 3:
+                    MoveSelectedNetworkClient(1);
+                    break;
+                case 4:
+                    CycleSelectedNetworkClientPermission();
+                    break;
+                case 5:
+                    KickSelectedNetworkClient();
+                    break;
+                case 10:
+                    _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
+                        ? C64NetClientRole.Player
+                        : C64NetClientRole.Observer;
+                    SaveSettings();
+                    break;
+                case 11:
+                    ToggleNetworkClientSession();
+                    break;
+                case 12:
+                    CycleVideoFilter();
+                    break;
+            }
+        }
+
+        private void ToggleNetworkServer()
+        {
+            C64NetServer server = _networkServer;
+            if (server != null && server.IsRunning)
+            {
+                StopNetworkServer();
+                ShowNetworkStatus("SERVER STOPPED");
+                return;
+            }
+
+            StartNetworkServer();
+        }
+
+        private void ToggleNetworkClientSession()
+        {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                StopNetworkClientSession();
+                ShowNetworkStatus("CLIENT LEFT");
+                return;
+            }
+
+            StartNetworkClientSession();
+        }
+
+        private bool TryApplyNetworkTextKey(Key key, KeyModifiers modifiers)
+        {
+            if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
+            {
+                return false;
+            }
+
+            bool serverPortField = _networkOverlaySelection == 0;
+            bool clientPortField = _networkOverlaySelection == 8;
+            if (serverPortField || clientPortField)
+            {
+                if (key == Key.BackSpace)
+                {
+                    int port = (serverPortField ? _networkServerPort : _networkClientPort) / 10;
+                    if (port <= 0)
+                    {
+                        port = C64NetProtocol.DefaultPort;
+                    }
+
+                    SetNetworkMenuPort(serverPortField, port);
+                    return true;
+                }
+
+                if (key == Key.Delete)
+                {
+                    SetNetworkMenuPort(serverPortField, 0);
+                    return true;
+                }
+
+                int digit;
+                if (TryGetDigit(key, out digit))
+                {
+                    int currentPort = serverPortField ? _networkServerPort : _networkClientPort;
+                    SetNetworkMenuPort(serverPortField, ClampNetworkPort((currentPort * 10) + digit));
+                    return true;
+                }
+
+                return false;
+            }
+
+            bool serverPasswordField = _networkOverlaySelection == 1;
+            bool playerNameField = _networkOverlaySelection == 6;
+            bool hostField = _networkOverlaySelection == 7;
+            bool clientPasswordField = _networkOverlaySelection == 9;
+            if (!serverPasswordField && !playerNameField && !hostField && !clientPasswordField)
+            {
+                return false;
+            }
+
+            if (key == Key.BackSpace)
+            {
+                if (serverPasswordField && _networkServerPassword.Length > 0)
+                {
+                    _networkServerPassword = _networkServerPassword.Substring(0, _networkServerPassword.Length - 1);
+                    SaveSettings();
+                }
+                else if (playerNameField && _networkPlayerName.Length > 0)
+                {
+                    _networkPlayerName = _networkPlayerName.Substring(0, _networkPlayerName.Length - 1);
+                    SaveSettings();
+                }
+                else if (hostField && _networkHost.Length > 0)
+                {
+                    _networkHost = _networkHost.Substring(0, _networkHost.Length - 1);
+                    SaveSettings();
+                }
+                else if (clientPasswordField && _networkClientPassword.Length > 0)
+                {
+                    _networkClientPassword = _networkClientPassword.Substring(0, _networkClientPassword.Length - 1);
+                    SaveSettings();
+                }
+
+                return true;
+            }
+
+            if (key == Key.Delete)
+            {
+                if (serverPasswordField)
+                {
+                    _networkServerPassword = string.Empty;
+                }
+                else if (playerNameField)
+                {
+                    _networkPlayerName = string.Empty;
+                }
+                else if (hostField)
+                {
+                    _networkHost = string.Empty;
+                }
+                else
+                {
+                    _networkClientPassword = string.Empty;
+                }
+
+                SaveSettings();
+                return true;
+            }
+
+            char character;
+            if (!TryMapNetworkTextKey(key, modifiers, out character))
+            {
+                return false;
+            }
+
+            if (serverPasswordField)
+            {
+                if (_networkServerPassword.Length < 32)
+                {
+                    _networkServerPassword += character;
+                    SaveSettings();
+                }
+            }
+            else if (playerNameField && IsNetworkPlayerNameCharacter(character) && _networkPlayerName.Length < 24)
+            {
+                _networkPlayerName += character;
+                SaveSettings();
+            }
+            else if (hostField && IsNetworkHostCharacter(character) && _networkHost.Length < 64)
+            {
+                _networkHost += char.ToLowerInvariant(character);
+                SaveSettings();
+            }
+            else if (clientPasswordField)
+            {
+                if (_networkClientPassword.Length < 32)
+                {
+                    _networkClientPassword += character;
+                    SaveSettings();
+                }
+            }
+
+            return true;
+        }
+
+        private void SetNetworkMenuPort(bool serverPortField, int port)
+        {
+            if (serverPortField)
+            {
+                _networkServerPort = ClampNetworkPort(port);
+            }
+            else
+            {
+                _networkClientPort = ClampNetworkPort(port);
+            }
+
+            SaveSettings();
+        }
+
+        private void MoveSelectedNetworkClient(int delta)
+        {
+            List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
+            if (clients.Count == 0)
+            {
+                _networkSelectedClientIndex = 0;
+                return;
+            }
+
+            _networkSelectedClientIndex += delta;
+            if (_networkSelectedClientIndex < 0)
+            {
+                _networkSelectedClientIndex = clients.Count - 1;
+            }
+
+            if (_networkSelectedClientIndex >= clients.Count)
+            {
+                _networkSelectedClientIndex = 0;
+            }
+        }
+
+        private void CycleSelectedNetworkClientPermission()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning)
+            {
+                return;
+            }
+
+            C64NetClientSnapshot client = GetSelectedNetworkClient();
+            if (client != null)
+            {
+                server.CycleClientPermission(client.ClientId);
+            }
+        }
+
+        private void KickSelectedNetworkClient()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning)
+            {
+                return;
+            }
+
+            C64NetClientSnapshot client = GetSelectedNetworkClient();
+            if (client != null)
+            {
+                server.KickClient(client.ClientId);
+            }
+        }
+
+        private List<C64NetClientSnapshot> GetNetworkClientSnapshots()
+        {
+            C64NetServer server = _networkServer;
+            if (server != null && server.IsRunning)
+            {
+                List<C64NetClientSnapshot> serverClients = server.GetClientSnapshots();
+                lock (_networkClientsSync)
+                {
+                    _networkClients = serverClients;
+                }
+
+                ClampNetworkSelectedClientIndex();
+                return serverClients;
+            }
+
+            lock (_networkClientsSync)
+            {
+                var clients = new List<C64NetClientSnapshot>(_networkClients);
+                ClampNetworkSelectedClientIndex();
+                return clients;
+            }
+        }
+
+        private C64NetClientSnapshot GetSelectedNetworkClient()
+        {
+            List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
+            if (clients.Count == 0)
+            {
+                return null;
+            }
+
+            int index = Math.Max(0, Math.Min(_networkSelectedClientIndex, clients.Count - 1));
+            return clients[index];
+        }
+
+        private void ClampNetworkSelectedClientIndex()
+        {
+            int count = _networkClients == null ? 0 : _networkClients.Count;
+            if (count <= 0)
+            {
+                _networkSelectedClientIndex = 0;
+                return;
+            }
+
+            if (_networkSelectedClientIndex >= count)
+            {
+                _networkSelectedClientIndex = count - 1;
+            }
+
+            if (_networkSelectedClientIndex < 0)
+            {
+                _networkSelectedClientIndex = 0;
+            }
+        }
+
+        private static int ClampNetworkPort(int port)
+        {
+            if (port < 0)
+            {
+                return 0;
+            }
+
+            if (port > 65535)
+            {
+                return 65535;
+            }
+
+            return port;
+        }
+
+        private static bool TryGetDigit(Key key, out int digit)
+        {
+            switch (key)
+            {
+                case Key.Number0:
+                    digit = 0;
+                    return true;
+                case Key.Number1:
+                    digit = 1;
+                    return true;
+                case Key.Number2:
+                    digit = 2;
+                    return true;
+                case Key.Number3:
+                    digit = 3;
+                    return true;
+                case Key.Number4:
+                    digit = 4;
+                    return true;
+                case Key.Number5:
+                    digit = 5;
+                    return true;
+                case Key.Number6:
+                    digit = 6;
+                    return true;
+                case Key.Number7:
+                    digit = 7;
+                    return true;
+                case Key.Number8:
+                    digit = 8;
+                    return true;
+                case Key.Number9:
+                    digit = 9;
+                    return true;
+                default:
+                    digit = 0;
+                    return false;
+            }
+        }
+
+        private static bool TryMapNetworkTextKey(Key key, KeyModifiers modifiers, out char character)
+        {
+            bool shifted = (modifiers & KeyModifiers.Shift) == KeyModifiers.Shift;
+            if (key >= Key.A && key <= Key.Z)
+            {
+                character = (char)((shifted ? 'A' : 'a') + ((int)key - (int)Key.A));
+                return true;
+            }
+
+            int digit;
+            if (TryGetDigit(key, out digit))
+            {
+                character = (char)('0' + digit);
+                return true;
+            }
+
+            switch (key)
+            {
+                case Key.Period:
+                    character = '.';
+                    return true;
+                case Key.Minus:
+                    character = '-';
+                    return true;
+                case Key.Plus:
+                    character = '+';
+                    return true;
+                case Key.BackSlash:
+                    character = '\\';
+                    return true;
+                case Key.Slash:
+                    character = '/';
+                    return true;
+                case Key.Space:
+                    character = ' ';
+                    return true;
+                default:
+                    character = '\0';
+                    return false;
+            }
+        }
+
+        private static bool IsNetworkHostCharacter(char character)
+        {
+            return char.IsLetterOrDigit(character) || character == '.' || character == '-';
+        }
+
+        private static bool IsNetworkPlayerNameCharacter(char character)
+        {
+            return char.IsLetterOrDigit(character) || character == ' ' || character == '-' || character == '.' || character == '_';
+        }
+
+        private static string NormalizeNetworkPlayerName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return "player";
+            }
+
+            string trimmed = name.Trim();
+            return trimmed.Length <= 24 ? trimmed : trimmed.Substring(0, 24);
+        }
+
+        /// <summary>
         /// Handles audio overlay key down.
         /// </summary>
         private bool HandleAudioOverlayKeyDown(Key key)
@@ -2288,13 +3641,31 @@ namespace C64Emulator
                     return true;
                 case Key.Left:
                 case Key.Minus:
+                    if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
+                    {
+                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        return true;
+                    }
+
                     AdjustAudioSetting(-1);
                     return true;
                 case Key.Right:
                 case Key.Plus:
+                    if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
+                    {
+                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        return true;
+                    }
+
                     AdjustAudioSetting(1);
                     return true;
                 case Key.Enter:
+                    if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
+                    {
+                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        return true;
+                    }
+
                     if (_audioOverlaySelection == 4)
                     {
                         OpenMediaBrowser();
@@ -2632,6 +4003,274 @@ namespace C64Emulator
         /// <summary>
         /// Draws audio overlay.
         /// </summary>
+        /// <summary>
+        /// Draws the network overlay.
+        /// </summary>
+        private void DrawNetworkOverlay()
+        {
+            List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
+            int overlayWidth = 386;
+            int overlayHeight = Math.Min(PixelsHeight - 8, 268);
+            int overlayX = (PixelsWidth - overlayWidth) / 2;
+            int overlayY = (PixelsHeight - overlayHeight) / 2;
+
+            DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 10, 14, 24, 228);
+            DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 108, 214, 182);
+            DrawLine(overlayX, overlayY + overlayHeight - 1, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
+            DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 108, 214, 182);
+            DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
+
+            DrawOverlayText(overlayX + 14, overlayY + 11, "NETWORK", 2, 240, 248, 255);
+            DrawOverlayText(overlayX + 14, overlayY + 29, "F7 CLOSE  ENTER ACT  DEL CLEAR  TYPE EDIT", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 248, overlayY + 13, FormatNetworkMode(_networkMode), 1, 108, 214, 182);
+
+            int menuX = overlayX + 14;
+            int menuY = overlayY + 45;
+            for (int index = 0; index < NetworkOverlayItemCount; index++)
+            {
+                DrawNetworkMenuRow(menuX, GetNetworkMenuRowY(menuY, index), index);
+            }
+
+            int separatorY = menuY + (NetworkOverlayServerItemCount * 10) + 3;
+            DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
+
+            int clientsY = overlayY + overlayHeight - 73;
+            DrawOverlayText(menuX, clientsY, "CLIENTS " + clients.Count, 1, 108, 214, 182);
+            if (clients.Count == 0)
+            {
+                DrawOverlayText(menuX, clientsY + 13, "NO REMOTE CLIENTS", 1, 192, 210, 225);
+            }
+            else
+            {
+                int firstClient = Math.Max(0, Math.Min(_networkSelectedClientIndex, Math.Max(0, clients.Count - 4)));
+                for (int row = 0; row < 4 && firstClient + row < clients.Count; row++)
+                {
+                    C64NetClientSnapshot client = clients[firstClient + row];
+                    bool selected = firstClient + row == _networkSelectedClientIndex;
+                    byte red = selected ? (byte)255 : (byte)232;
+                    byte green = selected ? (byte)243 : (byte)238;
+                    byte blue = selected ? (byte)168 : (byte)244;
+                    string text = string.Format(
+                        "{0}{1} {2} {3}",
+                        selected ? "> " : "  ",
+                        client.ClientId,
+                        FormatOverlayValue(FormatNetworkClientDisplay(client), 23),
+                        FormatNetworkPermission(client.Permission));
+                    DrawOverlayText(menuX, clientsY + 13 + (row * 12), FormatOverlayValue(text, 56), 1, red, green, blue);
+                }
+            }
+
+            DrawOverlayText(menuX, overlayY + overlayHeight - 15, "STATUS " + FormatOverlayValue(_networkStatusText, 45), 1, 108, 214, 182);
+        }
+
+        private void DrawNetworkStatusToast()
+        {
+            long untilTicks = Interlocked.Read(ref _networkStatusToastUntilTicks);
+            if (untilTicks <= DateTime.UtcNow.Ticks || string.IsNullOrWhiteSpace(_networkStatusToastText))
+            {
+                return;
+            }
+
+            string text = FormatOverlayValue(_networkStatusToastText, 36);
+            int width = Math.Min(PixelsWidth - 20, Math.Max(160, (text.Length * 6) + 24));
+            int height = 28;
+            int x = (PixelsWidth - width) / 2;
+            int y = PixelsHeight - height - 12;
+            DrawFilledRectangleWithAlpha(x, y, width, height, 8, 10, 18, 225);
+            DrawLine(x, y, x + width - 1, y, 108, 214, 182);
+            DrawLine(x, y + height - 1, x + width - 1, y + height - 1, 108, 214, 182);
+            DrawOverlayText(x + 12, y + 10, text, 1, 240, 248, 255);
+        }
+
+        private void DrawNetworkHostOverlayPopup()
+        {
+            if (_networkMode != NetworkSessionMode.Client || string.IsNullOrWhiteSpace(_networkHostOverlayStatusText))
+            {
+                return;
+            }
+
+            string text = FormatOverlayValue(_networkHostOverlayStatusText, 38);
+            int width = Math.Min(PixelsWidth - 20, Math.Max(178, (text.Length * 6) + 24));
+            int height = 28;
+            int x = (PixelsWidth - width) / 2;
+            int y = 12;
+            DrawFilledRectangleWithAlpha(x, y, width, height, 18, 20, 32, 232);
+            DrawLine(x, y, x + width - 1, y, 255, 243, 168);
+            DrawLine(x, y + height - 1, x + width - 1, y + height - 1, 255, 243, 168);
+            DrawOverlayText(x + 12, y + 10, text, 1, 255, 243, 168);
+        }
+
+        private void DrawNetworkMenuRow(int x, int y, int index)
+        {
+            bool selected = _networkOverlaySelection == index;
+            bool enabled = IsNetworkMenuRowEnabled(index);
+            byte labelRed = enabled ? (selected ? (byte)255 : (byte)192) : (byte)100;
+            byte labelGreen = enabled ? (selected ? (byte)243 : (byte)210) : (byte)108;
+            byte labelBlue = enabled ? (selected ? (byte)168 : (byte)225) : (byte)118;
+            DrawOverlayText(x, y, (selected ? "> " : "  ") + GetNetworkMenuLabel(index), 1, labelRed, labelGreen, labelBlue);
+            byte valueRed = enabled ? (byte)240 : (byte)118;
+            byte valueGreen = enabled ? (byte)248 : (byte)124;
+            byte valueBlue = enabled ? (byte)255 : (byte)132;
+            DrawOverlayText(x + 150, y, FormatOverlayValue(GetNetworkMenuValue(index), 28), 1, valueRed, valueGreen, valueBlue);
+        }
+
+        private static int GetNetworkMenuRowY(int menuY, int index)
+        {
+            int extraGap = index >= NetworkOverlayServerItemCount ? 12 : 0;
+            return menuY + (index * 10) + extraGap;
+        }
+
+        private bool IsNetworkMenuRowEnabled(int index)
+        {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                return index == 11 || index == 12;
+            }
+
+            if (_networkMode == NetworkSessionMode.Host)
+            {
+                return index <= 5 || index == 12;
+            }
+
+            return true;
+        }
+
+        private string GetNetworkMenuLabel(int index)
+        {
+            switch (index)
+            {
+                case 0:
+                    return "SERVER PORT";
+                case 1:
+                    return "SERVER PASSWORD";
+                case 2:
+                    return "SERVER";
+                case 3:
+                    return "SELECT CLIENT";
+                case 4:
+                    return "CLIENT RIGHT";
+                case 5:
+                    return "KICK CLIENT";
+                case 6:
+                    return "PLAYER NAME";
+                case 7:
+                    return "CLIENT HOST";
+                case 8:
+                    return "CLIENT PORT";
+                case 9:
+                    return "CLIENT PASSWORD";
+                case 10:
+                    return "CLIENT ROLE";
+                case 11:
+                    return "CLIENT";
+                case 12:
+                    return "VIDEO FILTER";
+                default:
+                    return string.Empty;
+            }
+        }
+
+        private string GetNetworkMenuValue(int index)
+        {
+            C64NetClientSnapshot client;
+            switch (index)
+            {
+                case 0:
+                    return _networkServerPort <= 0 ? "TYPE PORT" : _networkServerPort.ToString();
+                case 1:
+                    return FormatNetworkPassword(_networkServerPassword);
+                case 2:
+                    return _networkServer != null && _networkServer.IsRunning ? "STOP SERVER" : "START SERVER";
+                case 3:
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : "#" + client.ClientId + " " + FormatNetworkClientDisplay(client);
+                case 4:
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : FormatNetworkPermission(client.Permission);
+                case 5:
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : FormatNetworkClientDisplay(client);
+                case 6:
+                    return NormalizeNetworkPlayerName(_networkPlayerName);
+                case 7:
+                    return string.IsNullOrWhiteSpace(_networkHost) ? "TYPE HOST" : _networkHost;
+                case 8:
+                    return _networkClientPort <= 0 ? "TYPE PORT" : _networkClientPort.ToString();
+                case 9:
+                    return FormatNetworkPassword(_networkClientPassword);
+                case 10:
+                    return _networkRequestedRole == C64NetClientRole.Observer ? "OBSERVER" : "PLAYER";
+                case 11:
+                    return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
+                case 12:
+                    return FormatVideoFilter(_videoFilterMode);
+                default:
+                    return string.Empty;
+            }
+        }
+
+        private bool CanAdjustAudioOverlayItem(int menuIndex)
+        {
+            if (_networkMode != NetworkSessionMode.Client)
+            {
+                return true;
+            }
+
+            return menuIndex == 5 || menuIndex == 6 || menuIndex == 8;
+        }
+
+        private static string FormatNetworkPassword(string password)
+        {
+            if (string.IsNullOrEmpty(password))
+            {
+                return "NONE";
+            }
+
+            return new string('*', Math.Min(27, password.Length));
+        }
+
+        private static string FormatNetworkClientDisplay(C64NetClientSnapshot client)
+        {
+            if (client == null)
+            {
+                return "NONE";
+            }
+
+            string address = !string.IsNullOrWhiteSpace(client.RemoteAddress)
+                ? client.RemoteAddress
+                : (!string.IsNullOrWhiteSpace(client.RemoteEndpoint) ? client.RemoteEndpoint : "UNKNOWN");
+            string name = string.IsNullOrWhiteSpace(client.Name) ? "player" : client.Name.Trim();
+            return address + " - " + name;
+        }
+
+        private static string FormatNetworkMode(NetworkSessionMode mode)
+        {
+            switch (mode)
+            {
+                case NetworkSessionMode.Host:
+                    return "HOST";
+                case NetworkSessionMode.Client:
+                    return "CLIENT";
+                default:
+                    return "LOCAL";
+            }
+        }
+
+        private static string FormatNetworkPermission(C64NetJoystickPermission permission)
+        {
+            switch (permission)
+            {
+                case C64NetJoystickPermission.Port1:
+                    return "PORT 1";
+                case C64NetJoystickPermission.Port2:
+                    return "PORT 2";
+                case C64NetJoystickPermission.Both:
+                    return "BOTH";
+                default:
+                    return "OBSERVER";
+            }
+        }
+
         private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
             int overlayWidth = 280;
@@ -2692,52 +4331,61 @@ namespace C64Emulator
         /// </summary>
         private void DrawAudioOverlayMenuItem(int menuIndex, int x, int y, float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
+            bool enabled = CanAdjustAudioOverlayItem(menuIndex);
             switch (menuIndex)
             {
                 case 0:
-                    DrawOverlayItem(x, y, "MASTER VOLUME", sidMasterVolume / 1.5f, FormatHostVolume(sidMasterVolume), "LOW", "HIGH", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "MASTER VOLUME", sidMasterVolume / 1.5f, FormatHostVolume(sidMasterVolume), "LOW", "HIGH", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 1:
-                    DrawOverlayItem(x, y, "NOISE LEVEL", sidNoiseLevel, FormatPercent(sidNoiseLevel), "SOFT", "HARSH", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "NOISE LEVEL", sidNoiseLevel, FormatPercent(sidNoiseLevel), "SOFT", "HARSH", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 2:
-                    DrawOverlayItem(x, y, "SID MODEL", sidChipModel == SidChipModel.Mos8580 ? 1.0f : 0.0f, sidChipModel == SidChipModel.Mos6581 ? "6581" : "8580", "6581", "8580", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "SID MODEL", sidChipModel == SidChipModel.Mos8580 ? 1.0f : 0.0f, sidChipModel == SidChipModel.Mos6581 ? "6581" : "8580", "6581", "8580", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 3:
-                    DrawOverlayItem(x, y, "JOYSTICK", GetJoystickPortFill(joystickPort), FormatJoystickPort(joystickPort), "PORT 1", "BOTH", _audioOverlaySelection == menuIndex);
+                    if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
+                    {
+                        DrawOverlayItem(x, y, "JOYSTICK", 0.0f, FormatNetworkPermission(_networkClient.Permission), "SERVER", "HOST", _audioOverlaySelection == menuIndex, false);
+                    }
+                    else
+                    {
+                        DrawOverlayItem(x, y, "JOYSTICK", GetJoystickPortFill(joystickPort), FormatJoystickPort(joystickPort), "PORT 1", "BOTH", _audioOverlaySelection == menuIndex, enabled);
+                    }
+
                     break;
                 case 4:
-                    DrawOverlayActionItem(x, y, "MEDIA", mountedMediaInfo.HasMedia ? mountedMediaInfo.ShortLabel : "BROWSE", _audioOverlaySelection == menuIndex);
+                    DrawOverlayActionItem(x, y, "MEDIA", mountedMediaInfo.HasMedia ? mountedMediaInfo.ShortLabel : "BROWSE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 5:
-                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 6:
-                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
-                    DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex);
+                    DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
         }
@@ -3612,17 +5260,20 @@ namespace C64Emulator
         /// <summary>
         /// Draws overlay item.
         /// </summary>
-        private void DrawOverlayItem(int x, int y, string label, float normalizedValue, string valueText, string minimumLabel, string maximumLabel, bool selected)
+        private void DrawOverlayItem(int x, int y, string label, float normalizedValue, string valueText, string minimumLabel, string maximumLabel, bool selected, bool enabled = true)
         {
-            byte labelRed = selected ? (byte)255 : (byte)210;
-            byte labelGreen = selected ? (byte)243 : (byte)220;
-            byte labelBlue = selected ? (byte)168 : (byte)210;
-            byte barRed = selected ? (byte)182 : (byte)110;
-            byte barGreen = selected ? (byte)214 : (byte)130;
-            byte barBlue = selected ? (byte)108 : (byte)160;
+            byte labelRed = !enabled ? (byte)105 : (selected ? (byte)255 : (byte)210);
+            byte labelGreen = !enabled ? (byte)112 : (selected ? (byte)243 : (byte)220);
+            byte labelBlue = !enabled ? (byte)122 : (selected ? (byte)168 : (byte)210);
+            byte valueRed = enabled ? (byte)240 : (byte)130;
+            byte valueGreen = enabled ? (byte)248 : (byte)136;
+            byte valueBlue = enabled ? (byte)255 : (byte)146;
+            byte barRed = !enabled ? (byte)76 : (selected ? (byte)182 : (byte)110);
+            byte barGreen = !enabled ? (byte)84 : (selected ? (byte)214 : (byte)130);
+            byte barBlue = !enabled ? (byte)98 : (selected ? (byte)108 : (byte)160);
 
             DrawOverlayText(x, y, (selected ? "> " : "  ") + label, 2, labelRed, labelGreen, labelBlue);
-            DrawOverlayText(x + 192, y, valueText, 2, 240, 248, 255);
+            DrawOverlayText(x + 192, y, valueText, 2, valueRed, valueGreen, valueBlue);
 
             int barX = x + 6;
             int barY = y + 18;
@@ -3635,14 +5286,17 @@ namespace C64Emulator
         /// <summary>
         /// Draws overlay action item.
         /// </summary>
-        private void DrawOverlayActionItem(int x, int y, string label, string valueText, bool selected)
+        private void DrawOverlayActionItem(int x, int y, string label, string valueText, bool selected, bool enabled = true)
         {
-            byte labelRed = selected ? (byte)255 : (byte)210;
-            byte labelGreen = selected ? (byte)243 : (byte)220;
-            byte labelBlue = selected ? (byte)168 : (byte)210;
+            byte labelRed = !enabled ? (byte)105 : (selected ? (byte)255 : (byte)210);
+            byte labelGreen = !enabled ? (byte)112 : (selected ? (byte)243 : (byte)220);
+            byte labelBlue = !enabled ? (byte)122 : (selected ? (byte)168 : (byte)210);
+            byte valueRed = enabled ? (byte)240 : (byte)130;
+            byte valueGreen = enabled ? (byte)248 : (byte)136;
+            byte valueBlue = enabled ? (byte)255 : (byte)146;
 
             DrawOverlayText(x, y, (selected ? "> " : "  ") + label, 2, labelRed, labelGreen, labelBlue);
-            DrawOverlayText(x + 150, y, valueText, 2, 240, 248, 255);
+            DrawOverlayText(x + 150, y, valueText, 2, valueRed, valueGreen, valueBlue);
             DrawFilledRectangle(x + 6, y + 18, 188, 6, 36, 46, 62);
         }
 

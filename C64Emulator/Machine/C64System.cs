@@ -291,6 +291,42 @@ namespace C64Emulator.Core
             get { return _frameBuffer; }
         }
 
+        public event Action<byte[], int> AudioBytesGenerated
+        {
+            add
+            {
+                lock (_syncRoot)
+                {
+                    _sid.AudioBytesGenerated += value;
+                }
+            }
+            remove
+            {
+                lock (_syncRoot)
+                {
+                    _sid.AudioBytesGenerated -= value;
+                }
+            }
+        }
+
+        public bool LocalAudioEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _sid.LocalAudioEnabled;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _sid.LocalAudioEnabled = value;
+                }
+            }
+        }
+
         public C64Model Model
         {
             get { return _model; }
@@ -848,6 +884,28 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 _cia1.SetGamepadJoystickState(activeLowJoystickState);
+            }
+        }
+
+        /// <summary>
+        /// Sets network-controlled joystick input for the selected C64 port.
+        /// </summary>
+        public void SetNetworkJoystickState(JoystickPort joystickPort, byte activeLowJoystickState)
+        {
+            lock (_syncRoot)
+            {
+                _cia1.SetNetworkJoystickState(joystickPort, activeLowJoystickState);
+            }
+        }
+
+        /// <summary>
+        /// Clears all network-controlled joystick input.
+        /// </summary>
+        public void ClearNetworkJoystickState()
+        {
+            lock (_syncRoot)
+            {
+                _cia1.ClearNetworkJoystickState();
             }
         }
 

@@ -12,9 +12,9 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 ## Screenshots
 
-| C64 boot screen | Settings overlay | Save/load overlay |
-| --- | --- | --- |
-| <img src="docs/screenshots/c64-boot-screen.png" alt="C64 boot screen" width="260"> | <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="260"> | <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="260"> |
+| C64 boot screen | Settings overlay | Save/load overlay | Network overlay |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/c64-boot-screen.png" alt="C64 boot screen" width="220"> | <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="220"> | <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="220"> | <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="220"> |
 
 | Giana Sisters: intro | Giana Sisters: level 1 | Giana Sisters: end boss fight |
 | --- | --- | --- |
@@ -42,12 +42,14 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
+- Network multiplayer/remote-play sessions over TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
+| `F7` | Open the network multiplayer overlay. The emulator pauses while this menu is open on the host. |
 | `F8` | Toggle the drive activity footer overlay. |
 | `F9` | Toggle turbo mode. |
 | `F10` | Open the settings/media overlay. The emulator pauses while this menu is open. |
@@ -60,6 +62,51 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | `Enter` / `L` in savestate menu | Load the selected savestate. |
 | `Del` in savestate menu | Delete the selected savestate. |
 | `Esc` | Close the active emulator overlay. |
+
+## F7 Network Multiplayer Menu
+
+`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host.
+
+<img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
+
+The server always sends the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`) and fullscreen mode. Network video is sent once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Slow clients keep only the latest pending video frame, so they do not stall faster clients.
+
+Server-side entries:
+
+| Entry | Values / Action | Details |
+| --- | --- | --- |
+| `SERVER PORT` | TCP port | Port used for incoming C64Net sessions. The default is `6464`. |
+| `SERVER PASSWORD` | `NONE` or hidden text | Optional session password. Password characters are shown as `*` in the menu. |
+| `SERVER` | `START SERVER` / `STOP SERVER` | Starts or stops the host session. |
+| `SELECT CLIENT` | Connected client | Selects a connected client by id, address, and player name. |
+| `CLIENT RIGHT` | `OBSERVER`, `PORT 1`, `PORT 2`, `BOTH` | Chooses whether the selected client may control a joystick port. |
+| `KICK CLIENT` | Connected client | Disconnects the selected client. Kicked clients cannot rejoin the same server session; restarting the server clears this session ban list. |
+
+Client-side entries:
+
+| Entry | Values / Action | Details |
+| --- | --- | --- |
+| `PLAYER NAME` | Text | Name announced to the host. The default is `player`. |
+| `CLIENT HOST` | Host name or IP | Address of the host to connect to. |
+| `CLIENT PORT` | TCP port | Port of the host session. |
+| `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
+| `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick rights after connection. |
+| `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
+| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. |
+
+Network menu controls:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move through network menu entries. |
+| `Left` / `Right` | Adjust values, switch roles, cycle selected clients, or start/stop/join/leave where applicable. |
+| `-` / `+` | Same as `Left` / `Right`. |
+| `Enter` | Activate the selected entry. |
+| `Del` | Clear editable text fields. |
+| `Backspace` | Delete the previous character in editable text fields. |
+| `Esc` / `F7` | Close the network menu. |
+
+When the host is in a menu, connected clients receive a persistent popup such as `SERVER IN NETWORK MENU` or `SERVER IN SETTINGS MENU`, so observers and remote players know why the C64 picture is paused.
 
 ## F10 Settings Menu
 
@@ -127,6 +174,7 @@ C64Emulator/
   Media/         PRG loading, D64 parsing, and mounted media state
   Iec/           IEC bus and high-level drive protocol bridge
   Drive1541/     1541 drive hardware, VIA, bus, and disk mechanism
+  Network/       C64Net TCP protocol, host server, and remote client transport
   Properties/
 SharpPixels/
   SharpPixels.csproj

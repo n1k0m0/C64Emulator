@@ -74,6 +74,8 @@ namespace C64Emulator.Core
         private float _volumeDacCurrent;
         private float _volumeDacDcBlock;
 
+        public event Action<byte[], int> AudioBytesGenerated;
+
         /// <summary>
         /// Initializes a new Sid instance.
         /// </summary>
@@ -95,6 +97,8 @@ namespace C64Emulator.Core
 
             Reset();
         }
+
+        public bool LocalAudioEnabled { get; set; } = true;
 
         public float MasterVolume
         {
@@ -483,7 +487,15 @@ namespace C64Emulator.Core
                 return;
             }
 
-            if (_audioOutput != null)
+            Action<byte[], int> handler = AudioBytesGenerated;
+            if (handler != null)
+            {
+                byte[] networkCopy = new byte[_audioByteCount];
+                Buffer.BlockCopy(_audioBytes, 0, networkCopy, 0, _audioByteCount);
+                handler(networkCopy, networkCopy.Length);
+            }
+
+            if (LocalAudioEnabled && _audioOutput != null)
             {
                 _audioOutput.Write(_audioBytes, _audioByteCount);
             }

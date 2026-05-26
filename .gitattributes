@@ -1,0 +1,10 @@
+* text=auto eol=crlf
+
+*.bin binary
+*.ico binary
+*.png binary
+*.zip binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.pdb binary
