@@ -112,6 +112,8 @@ When the host is in a menu, connected clients receive a persistent popup such as
 
 `F10` opens the main runtime settings overlay. Emulation is paused while this menu is open, so it is safe to change media, reset behavior, input, video, and compatibility options without the machine continuing to run in the background.
 
+<img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="403">
+
 Navigation inside the menu:
 
 | Key | Action |
@@ -281,6 +283,8 @@ The D64 parser handles the common 35-track layout and extended image sizes where
 ## Savestates
 
 Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay.
+
+<img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="403">
 
 ## Settings
 
