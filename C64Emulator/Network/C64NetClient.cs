@@ -26,30 +26,78 @@ namespace C64Emulator.Network
     /// <summary>
     /// Receives a remote C64Net session and exposes frames/audio/input state to the window.
     /// </summary>
+    /// <remarks>
+    /// A connected remote client deliberately does not run the local C64 simulation.
+    /// It receives completed host frames and host audio, raises events back to the
+    /// window, and sends local joystick state upstream when the host grants input
+    /// rights. The UI remains responsible for drawing filters, fullscreen, and menus.
+    /// </remarks>
     public sealed class C64NetClient : IDisposable
     {
+        /// <summary>
+        /// Serializes writes from UI/input callbacks against ping/pong responses.
+        /// </summary>
         private readonly object _sendLock = new object();
         private TcpClient _tcpClient;
         private NetworkStream _stream;
         private CancellationTokenSource _shutdown;
         private Task _receiveTask;
         private SidAudioOutput _audioOutput;
+        /// <summary>
+        /// Last joystick state sent to the server, used to suppress unchanged packets.
+        /// </summary>
         private byte _lastSentJoystickState = 0xFF;
         private volatile bool _connected;
 
+        /// <summary>
+        /// Raised when a complete host video frame has been decoded.
+        /// </summary>
         public event Action<C64NetVideoFrame> FrameReceived;
+        /// <summary>
+        /// Raised when the host broadcasts the current client list.
+        /// </summary>
         public event Action<List<C64NetClientSnapshot>> ClientListReceived;
+        /// <summary>
+        /// Raised when the host enters or leaves a local menu overlay.
+        /// </summary>
         public event Action<string> HostOverlayStatusChanged;
+        /// <summary>
+        /// Raised when the client has a short user-facing connection status update.
+        /// </summary>
         public event Action<string> StatusChanged;
 
+        /// <summary>
+        /// Gets the host-assigned session-local client id.
+        /// </summary>
         public int ClientId { get; private set; }
+        /// <summary>
+        /// Gets the remote framebuffer width announced by the host.
+        /// </summary>
         public int VideoWidth { get; private set; }
+        /// <summary>
+        /// Gets the remote framebuffer height announced by the host.
+        /// </summary>
         public int VideoHeight { get; private set; }
+        /// <summary>
+        /// Gets the host audio sample rate.
+        /// </summary>
         public int AudioSampleRate { get; private set; }
+        /// <summary>
+        /// Gets the role accepted by the host.
+        /// </summary>
         public C64NetClientRole Role { get; private set; }
+        /// <summary>
+        /// Gets the current host-granted joystick permission.
+        /// </summary>
         public C64NetJoystickPermission Permission { get; private set; }
+        /// <summary>
+        /// Gets the latest status text shown in the network overlay.
+        /// </summary>
         public string StatusText { get; private set; } = "DISCONNECTED";
 
+        /// <summary>
+        /// Gets whether the client considers the remote session active.
+        /// </summary>
         public bool IsConnected
         {
             get { return _connected; }
@@ -58,8 +106,17 @@ namespace C64Emulator.Network
         /// <summary>
         /// Connects to a host session.
         /// </summary>
+        /// <param name="host">Host name or IP address from the F7 client menu.</param>
+        /// <param name="port">TCP port from the F7 client menu.</param>
+        /// <param name="password">Optional session password.</param>
+        /// <param name="role">Requested client role.</param>
+        /// <param name="name">Player name to show on the host.</param>
+        /// <param name="status">Result status text for the overlay.</param>
+        /// <returns>True when the handshake completed and the receive loop started.</returns>
         public bool Connect(string host, int port, string password, C64NetClientRole role, string name, out string status)
         {
+            // Always start from a clean transport state. Reusing a half-closed stream can
+            // otherwise leak old audio output or receive loops into the next connection.
             Disconnect();
             status = string.Empty;
             try
@@ -69,12 +126,14 @@ namespace C64Emulator.Network
                 Task connectTask = _tcpClient.ConnectAsync(host, port);
                 if (!connectTask.Wait(3000))
                 {
+                    // Keep the UI responsive if a host address silently drops packets.
                     status = "CONNECT TIMEOUT";
                     Disconnect();
                     return false;
                 }
 
                 _stream = _tcpClient.GetStream();
+                // ClientHello is the only message the server accepts before welcome/reject.
                 C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                 {
                     Type = C64NetMessageType.ClientHello,
@@ -85,6 +144,7 @@ namespace C64Emulator.Network
                 C64NetMessage response = C64NetProtocol.ReadMessage(_stream);
                 if (response == null)
                 {
+                    // Socket closed before the host sent a protocol response.
                     status = "NO SERVER RESPONSE";
                     Disconnect();
                     return false;
@@ -92,6 +152,7 @@ namespace C64Emulator.Network
 
                 if (response.Type == C64NetMessageType.ServerReject)
                 {
+                    // Surface the server's reason verbatim; it is already short overlay text.
                     status = C64NetProtocol.ReadTextPayload(response.Payload);
                     Disconnect();
                     return false;
@@ -99,6 +160,7 @@ namespace C64Emulator.Network
 
                 if (response.Type != C64NetMessageType.ServerWelcome)
                 {
+                    // Any other first response means this is not a compatible C64Net host.
                     status = "BAD SERVER RESPONSE";
                     Disconnect();
                     return false;
@@ -125,6 +187,8 @@ namespace C64Emulator.Network
 
                 try
                 {
+                    // Remote clients play host audio locally. If audio initialization fails,
+                    // the session can still remain useful as a silent viewer/player.
                     _audioOutput = new SidAudioOutput(AudioSampleRate);
                 }
                 catch
@@ -132,6 +196,8 @@ namespace C64Emulator.Network
                     _audioOutput = null;
                 }
 
+                // Receiving is backgrounded so the UI/render thread can continue drawing
+                // the last decoded frame and collecting joystick input.
                 _shutdown = new CancellationTokenSource();
                 _receiveTask = Task.Run(() => ReceiveLoop(_shutdown.Token));
                 status = StatusText;
@@ -157,6 +223,7 @@ namespace C64Emulator.Network
             _shutdown = null;
             if (shutdown != null)
             {
+                // Signal the receive loop before closing the socket; either path may win.
                 shutdown.Cancel();
             }
 
@@ -164,6 +231,8 @@ namespace C64Emulator.Network
             {
                 if (_stream != null)
                 {
+                    // Best-effort graceful leave. Socket close below is still the real
+                    // guarantee if the peer is gone or the write fails.
                     C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                     {
                         Type = C64NetMessageType.Disconnect,
@@ -191,6 +260,8 @@ namespace C64Emulator.Network
             {
                 if (receiveTask != null && (!Task.CurrentId.HasValue || Task.CurrentId.Value != receiveTask.Id))
                 {
+                    // Avoid deadlocking when Disconnect is called from inside ReceiveLoop
+                    // after a server-initiated disconnect message.
                     receiveTask.Wait(250);
                 }
             }
@@ -216,6 +287,7 @@ namespace C64Emulator.Network
             ClientId = 0;
             Permission = C64NetJoystickPermission.Observer;
             StatusText = "DISCONNECTED";
+            // Clear stale host-menu popup text as soon as the session is gone.
             RaiseHostOverlayStatus(string.Empty);
             RaiseStatus(StatusText);
         }
@@ -223,11 +295,15 @@ namespace C64Emulator.Network
         /// <summary>
         /// Sends the current C64 active-low joystick state to the server.
         /// </summary>
+        /// <param name="activeLowJoystickState">Active-low C64 joystick state.</param>
+        /// <param name="force">True to send even when the state did not change.</param>
         public void SendJoystickState(byte activeLowJoystickState, bool force)
         {
             activeLowJoystickState = (byte)(activeLowJoystickState | 0xE0);
             if (!force && activeLowJoystickState == _lastSentJoystickState)
             {
+                // Joystick polling happens every frame; suppress unchanged packets unless
+                // the caller requests a periodic refresh.
                 return;
             }
 
@@ -245,6 +321,10 @@ namespace C64Emulator.Network
             Disconnect();
         }
 
+        /// <summary>
+        /// Receives server-to-client messages until the session ends.
+        /// </summary>
+        /// <param name="cancellationToken">Client shutdown token.</param>
         private void ReceiveLoop(CancellationToken cancellationToken)
         {
             try
@@ -254,6 +334,7 @@ namespace C64Emulator.Network
                     C64NetMessage message = C64NetProtocol.ReadMessage(_stream);
                     if (message == null)
                     {
+                        // Null means the host closed the TCP stream or the socket failed.
                         break;
                     }
 
@@ -266,6 +347,8 @@ namespace C64Emulator.Network
             }
             finally
             {
+                // The window notices IsConnected == false on its next update and returns
+                // to local emulation cleanup.
                 StatusText = "DISCONNECTED";
                 _connected = false;
                 RaiseHostOverlayStatus(string.Empty);
@@ -273,6 +356,10 @@ namespace C64Emulator.Network
             }
         }
 
+        /// <summary>
+        /// Dispatches one server-to-client protocol message.
+        /// </summary>
+        /// <param name="message">Decoded message from the host.</param>
         private void HandleMessage(C64NetMessage message)
         {
             switch (message.Type)
@@ -281,6 +368,8 @@ namespace C64Emulator.Network
                     C64NetVideoFrame frame = C64NetProtocol.ReadVideoFramePayload(message.Payload);
                     if (frame != null)
                     {
+                        // The window owns frame storage because it must synchronize with
+                        // the render thread and apply the user's local video filter.
                         Action<C64NetVideoFrame> handler = FrameReceived;
                         if (handler != null)
                         {
@@ -294,6 +383,8 @@ namespace C64Emulator.Network
                     {
                         if (_audioOutput != null && sampleRate == AudioSampleRate)
                         {
+                            // Mismatched sample rates are ignored; changing the audio
+                            // device mid-session would require a new handshake.
                             _audioOutput.Write(buffer, count);
                         }
                     }
@@ -304,19 +395,27 @@ namespace C64Emulator.Network
                     Action<List<C64NetClientSnapshot>> listHandler = ClientListReceived;
                     if (listHandler != null)
                     {
+                        // Clients use this mainly for observer information and for keeping
+                        // the F7 client list consistent with the host.
                         listHandler(clients);
                     }
 
                     break;
                 case C64NetMessageType.PermissionUpdate:
+                    // Permission is authoritative from the host. The local F10 joystick
+                    // item is displayed read-only while connected.
                     Permission = C64NetProtocol.ReadPermissionPayload(message.Payload);
                     StatusText = "PERMISSION " + FormatPermission(Permission);
                     RaiseStatus(StatusText);
                     break;
                 case C64NetMessageType.HostOverlayStatus:
+                    // Host menu state is persistent, not a short toast, so keep the last
+                    // text until the server clears it.
                     RaiseHostOverlayStatus(C64NetProtocol.ReadTextPayload(message.Payload));
                     break;
                 case C64NetMessageType.Ping:
+                    // Preserve the host timestamp to make the round-trip calculation exact
+                    // on the host side.
                     SendMessage(new C64NetMessage
                     {
                         Type = C64NetMessageType.Pong,
@@ -327,11 +426,17 @@ namespace C64Emulator.Network
                 case C64NetMessageType.Disconnect:
                     StatusText = C64NetProtocol.ReadTextPayload(message.Payload);
                     RaiseStatus(StatusText);
+                    // Disconnect performs the full cleanup and sends a best-effort leave;
+                    // that is harmless even when the server initiated the close.
                     Disconnect();
                     break;
             }
         }
 
+        /// <summary>
+        /// Sends one client-to-server message in a thread-safe way.
+        /// </summary>
+        /// <param name="message">Message to send.</param>
         private void SendMessage(C64NetMessage message)
         {
             if (_stream == null || message == null)
@@ -343,16 +448,23 @@ namespace C64Emulator.Network
             {
                 lock (_sendLock)
                 {
+                    // Input events and ping responses can originate from different
+                    // threads. Serialize writes so protocol frames never interleave.
                     C64NetProtocol.WriteMessage(_stream, message);
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
+                // Any write failure means the TCP stream is no longer usable.
                 Disconnect();
             }
         }
 
+        /// <summary>
+        /// Raises a short user-visible client status update.
+        /// </summary>
+        /// <param name="status">Status text for the network overlay/toast.</param>
         private void RaiseStatus(string status)
         {
             Action<string> handler = StatusChanged;
@@ -362,6 +474,10 @@ namespace C64Emulator.Network
             }
         }
 
+        /// <summary>
+        /// Raises the persistent host-overlay popup status.
+        /// </summary>
+        /// <param name="status">Popup text, or an empty string to clear it.</param>
         private void RaiseHostOverlayStatus(string status)
         {
             Action<string> handler = HostOverlayStatusChanged;
@@ -371,6 +487,11 @@ namespace C64Emulator.Network
             }
         }
 
+        /// <summary>
+        /// Formats a joystick permission for the remote title bar and status text.
+        /// </summary>
+        /// <param name="permission">Permission value from the host.</param>
+        /// <returns>Short display string.</returns>
         private static string FormatPermission(C64NetJoystickPermission permission)
         {
             switch (permission)

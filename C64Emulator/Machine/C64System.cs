@@ -291,6 +291,13 @@ namespace C64Emulator.Core
             get { return _frameBuffer; }
         }
 
+        /// <summary>
+        /// Raised whenever the SID flushes a chunk of PCM bytes.
+        /// </summary>
+        /// <remarks>
+        /// The network host subscribes here to forward live SID audio to remote clients
+        /// while the SID can still write to local audio output independently.
+        /// </remarks>
         public event Action<byte[], int> AudioBytesGenerated
         {
             add
@@ -309,6 +316,13 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Gets or sets whether SID audio should be played on this machine instance.
+        /// </summary>
+        /// <remarks>
+        /// Remote clients disable local SID playback because their local C64 is paused;
+        /// they play the host's network audio stream instead.
+        /// </remarks>
         public bool LocalAudioEnabled
         {
             get
@@ -879,10 +893,13 @@ namespace C64Emulator.Core
         /// <summary>
         /// Sets the active-low joystick state supplied by a host gamepad.
         /// </summary>
+        /// <param name="activeLowJoystickState">Active-low C64 joystick bits.</param>
         public void SetGamepadJoystickState(byte activeLowJoystickState)
         {
             lock (_syncRoot)
             {
+                // Joystick state ultimately affects CIA1 port reads, so route it through
+                // the same machine lock used by CPU/VIC/CIA access.
                 _cia1.SetGamepadJoystickState(activeLowJoystickState);
             }
         }
@@ -890,10 +907,14 @@ namespace C64Emulator.Core
         /// <summary>
         /// Sets network-controlled joystick input for the selected C64 port.
         /// </summary>
+        /// <param name="joystickPort">C64 joystick port to update.</param>
+        /// <param name="activeLowJoystickState">Aggregated active-low remote joystick bits.</param>
         public void SetNetworkJoystickState(JoystickPort joystickPort, byte activeLowJoystickState)
         {
             lock (_syncRoot)
             {
+                // Remote input is sampled by the frontend and merged into CIA1 under the
+                // machine lock so the emulated CPU never observes a partially updated port.
                 _cia1.SetNetworkJoystickState(joystickPort, activeLowJoystickState);
             }
         }
@@ -905,6 +926,8 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
+                // Called when hosting stops or a remote session ends, ensuring no stale
+                // remote fire/direction bit remains latched.
                 _cia1.ClearNetworkJoystickState();
             }
         }

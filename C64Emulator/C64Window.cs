@@ -63,8 +63,13 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Lists the host-facing network session modes.
+        /// Lists the network session state owned by the frontend.
         /// </summary>
+        /// <remarks>
+        /// Local means the normal emulator is running. Host means this instance still
+        /// runs the emulator and streams it. Client means local emulation is stopped and
+        /// the window only presents the remote stream plus local UI overlays.
+        /// </remarks>
         private enum NetworkSessionMode
         {
             Local,
@@ -82,8 +87,12 @@ namespace C64Emulator
         private const int AudioOverlayItemCount = 15;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
+        // The F7 overlay is a single flat menu split visually into server rows and
+        // client rows. The constants keep selection/wrapping independent of labels.
         private const int NetworkOverlayItemCount = 13;
         private const int NetworkOverlayServerItemCount = 6;
+        // Remote clients resend unchanged joystick state periodically so the host can
+        // recover from a dropped packet or a stale state after a quick reconnect.
         private const double RemoteInputRefreshSeconds = 0.05;
         private const int MediaBrowserVisibleRows = 9;
         private const int SaveOverlayVisibleRows = 12;
@@ -123,6 +132,8 @@ namespace C64Emulator
         private ResetMode _resetMode = ResetMode.Warm;
         private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
         private byte _lastGamepadJoystickState = 0x1F;
+        // Remote client input is kept separate by source and combined with active-low
+        // AND semantics before it is sent to the host.
         private byte _remoteKeyboardJoystickState = 0xFF;
         private byte _remoteGamepadJoystickState = 0xFF;
         private byte _lastRemoteJoystickState = 0xFF;
@@ -142,6 +153,8 @@ namespace C64Emulator
         private string _networkPlayerName = "player";
         private string _networkStatusText = "LOCAL";
         private string _networkStatusToastText = string.Empty;
+        // HostOverlayStatus is a persistent popup on remote clients, not just a toast.
+        // It explains why the streamed C64 image is paused while the host is in a menu.
         private string _networkHostOverlayStatusText = string.Empty;
         private string _lastBroadcastNetworkHostOverlayStatus = string.Empty;
         private long _networkStatusToastUntilTicks;
@@ -158,15 +171,21 @@ namespace C64Emulator
         private C64NetClientRole _networkRequestedRole = C64NetClientRole.Player;
         private C64NetServer _networkServer;
         private C64NetClient _networkClient;
+        // Network callbacks run on worker threads. These locks protect frame snapshots,
+        // client snapshots, and host broadcast copies crossing into the render thread.
         private readonly object _networkFrameSync = new object();
         private readonly object _networkClientsSync = new object();
         private readonly object _networkBroadcastSync = new object();
         private uint[] _networkFramePixels;
+        // Reused host-side buffer: each completed frame is copied once and then encoded
+        // once by the server before being shared with all clients.
         private uint[] _networkBroadcastFrameSnapshot;
         private int _networkFrameWidth;
         private int _networkFrameHeight;
         private long _networkFrameId;
         private long _lastDisplayedNetworkFrameId;
+        // Frame id bookkeeping prevents sending the same completed PAL frame repeatedly
+        // when the renderer runs faster than the emulated C64 frame rate.
         private long _lastBroadcastNetworkCompletedFrameId = -1;
         private int _networkFramesReceivedCounter;
         private int _networkReceiveFps;
@@ -236,6 +255,8 @@ namespace C64Emulator
 
             if (_networkBroadcastFrameSnapshot == null || _networkBroadcastFrameSnapshot.Length != framePixelCount)
             {
+                // The server broadcasts completed frames from this reusable buffer to
+                // avoid allocating a new host copy every render update.
                 _networkBroadcastFrameSnapshot = new uint[framePixelCount];
             }
         }
@@ -266,6 +287,8 @@ namespace C64Emulator
             _driveOverlayEnabled = settings.DriveOverlayEnabled;
             _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
             _mediaBrowserLastDirectory = NormalizeExistingDirectory(settings.MediaBrowserDirectory);
+            // Network UI values are user preferences. Active sessions themselves are not
+            // restored automatically because joining/hosting has external side effects.
             _networkServerPort = ClampNetworkPort(settings.NetworkServerPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkServerPort);
             _networkClientPort = ClampNetworkPort(settings.NetworkClientPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkClientPort);
             _networkHost = string.IsNullOrWhiteSpace(settings.NetworkClientHost) ? "127.0.0.1" : settings.NetworkClientHost.Trim();
@@ -320,6 +343,9 @@ namespace C64Emulator
                 DriveOverlayEnabled = _driveOverlayEnabled,
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
                 MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty,
+                // Store the F7 menu fields so host/client setup survives app restarts.
+                // Passwords are intentionally plain settings today, matching the simple
+                // local emulator settings model.
                 NetworkServerPort = _networkServerPort,
                 NetworkServerPassword = _networkServerPassword ?? string.Empty,
                 NetworkClientHost = _networkHost ?? string.Empty,
@@ -424,6 +450,9 @@ namespace C64Emulator
                 {
                     if (_networkOverlayVisible || _saveOverlayVisible || _audioOverlayVisible)
                     {
+                        // All emulator menus pause simulation. The network menu follows
+                        // the same rule so the host can safely grant/kick clients without
+                        // the game continuing underneath.
                         Thread.Sleep(5);
                         continue;
                     }
@@ -431,6 +460,8 @@ namespace C64Emulator
                     if (_turboMode)
                     {
                         _system.RunCycles(MaxCycleBatch);
+                        // In turbo mode the emulation loop may outrun rendering, so check
+                        // for completed frames here as well as in OnUserUpdate.
                         BroadcastNetworkCompletedFrameIfReady();
                         Thread.Yield();
                         continue;
@@ -492,10 +523,14 @@ namespace C64Emulator
             PollGamepadInput();
             if (_networkMode == NetworkSessionMode.Client)
             {
+                // Remote clients do not advance _system. They only draw the latest
+                // network frame, local overlays, and local presentation filters.
                 DrawRemoteClientFrame(time);
                 return;
             }
 
+            // Host mode folds client joystick states into CIA1 before the local frame is
+            // drawn, so the emulated program sees remote input like physical joystick bits.
             ApplyNetworkServerJoystickInput();
 
             long currentCycle;
@@ -580,6 +615,8 @@ namespace C64Emulator
 
             UpdateTurboToastState(time);
             DrawFrame(_frameSnapshot, _system.Model.VisibleWidth, _system.Model.VisibleHeight);
+            // Rendering can run at a different cadence than emulation. The frame id check
+            // inside this method keeps the network stream at completed C64-frame cadence.
             BroadcastNetworkCompletedFrameIfReady();
             BroadcastNetworkHostOverlayStatus();
             DrawDriveFooter(
@@ -617,6 +654,8 @@ namespace C64Emulator
 
             if (_networkMode == NetworkSessionMode.Host)
             {
+                // Host title intentionally shows network send FPS and render FPS, but not
+                // program counter/debug data, so users can see stream health at a glance.
                 Title = string.Format(
                     "C64 Emulator SERVER - NET:{0} FPS RENDER:{1}",
                     _networkSendFps,
@@ -676,6 +715,8 @@ namespace C64Emulator
         {
             if (_networkMode == NetworkSessionMode.Client)
             {
+                // While connected as a client, media ownership belongs to the host. Local
+                // drops are blocked instead of silently changing an unused local machine.
                 ShowNetworkStatus("REMOTE SESSION ACTIVE");
                 return;
             }
@@ -690,18 +731,22 @@ namespace C64Emulator
         {
             if (keyEventArgs.Key == Key.F7)
             {
+                // F7 always belongs to networking, even in a remote session.
                 ToggleNetworkOverlay();
                 return;
             }
 
             if (_networkOverlayVisible)
             {
+                // The network overlay captures text input for host/port/password fields.
                 HandleNetworkOverlayKeyDown(keyEventArgs.Key, keyEventArgs.Modifiers);
                 return;
             }
 
             if (_networkMode == NetworkSessionMode.Client)
             {
+                // Remote mode routes keys to local-only remote controls or upstream
+                // joystick input. It must not feed the stopped local C64 instance.
                 HandleRemoteClientKeyDown(keyEventArgs);
                 return;
             }
@@ -774,6 +819,8 @@ namespace C64Emulator
         {
             if (keyEventArgs.Key == Key.F7 || _networkOverlayVisible)
             {
+                // Ignore releases for keys captured by the network menu so they do not
+                // leak as C64 keyboard/joystick input after the menu closes.
                 return;
             }
 
@@ -781,6 +828,8 @@ namespace C64Emulator
             {
                 if (!_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
                 {
+                    // Only joystick keys are meaningful in remote mode; all other C64
+                    // keyboard input is intentionally server-side.
                     HandleRemoteClientJoystickKey(keyEventArgs.Key, false);
                 }
 
@@ -865,13 +914,15 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Toggles the network overlay.
+        /// Toggles the network overlay and coordinates pause/resume behavior.
         /// </summary>
         private void ToggleNetworkOverlay()
         {
             _networkOverlayVisible = !_networkOverlayVisible;
             if (_networkOverlayVisible)
             {
+                // Only one modal emulator overlay is visible at a time. Closing the
+                // others avoids ambiguous key routing between menus.
                 _audioOverlayVisible = false;
                 _saveOverlayVisible = false;
                 _mediaBrowserVisible = false;
@@ -879,11 +930,14 @@ namespace C64Emulator
                 ClampNetworkSelectedClientIndex();
                 if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
                 {
+                    // If the current mode disables the previously selected row, land on
+                    // the primary action for that mode.
                     _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 11 : 2;
                 }
             }
             else if (_networkMode != NetworkSessionMode.Client)
             {
+                // Remote clients have no running local emulation timer to resume.
                 ResetEmulationTiming();
             }
         }
@@ -1551,11 +1605,15 @@ namespace C64Emulator
         /// <summary>
         /// Broadcasts generated SID audio to connected network clients.
         /// </summary>
+        /// <param name="buffer">PCM bytes emitted by the SID.</param>
+        /// <param name="count">Number of valid bytes in <paramref name="buffer"/>.</param>
         private void HandleSystemAudioBytesGenerated(byte[] buffer, int count)
         {
             C64NetServer server = _networkServer;
             if (server != null && server.IsRunning && count > 0)
             {
+                // Audio is generated by the emulation thread; the server makes its own
+                // bounded per-client queues from this immutable chunk.
                 server.BroadcastAudio(buffer, count);
             }
         }
@@ -1570,6 +1628,8 @@ namespace C64Emulator
             {
                 if (_networkMode == NetworkSessionMode.Host)
                 {
+                    // If the server stopped asynchronously, release all remote joystick
+                    // lines and fall back to local mode.
                     _system.ClearNetworkJoystickState();
                     _networkMode = NetworkSessionMode.Local;
                 }
@@ -1577,6 +1637,7 @@ namespace C64Emulator
                 return;
             }
 
+            // The server aggregates clients by granted permission, not by requested role.
             _system.SetNetworkJoystickState(JoystickPort.Port1, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port1));
             _system.SetNetworkJoystickState(JoystickPort.Port2, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port2));
         }
@@ -1600,9 +1661,13 @@ namespace C64Emulator
                     completedFrameId = _system.FrameBuffer.CompletedFrameId;
                     if (completedFrameId == _lastBroadcastNetworkCompletedFrameId)
                     {
+                        // The render loop can execute many times per C64 frame. Do not
+                        // re-send identical completed framebuffer snapshots.
                         return;
                     }
 
+                    // Copy while holding the machine lock so the VIC cannot mutate the
+                    // frame buffer halfway through the network snapshot.
                     Array.Copy(_system.FrameBuffer.CompletedPixels, _networkBroadcastFrameSnapshot, _networkBroadcastFrameSnapshot.Length);
                 }
 
@@ -1627,6 +1692,8 @@ namespace C64Emulator
             string status = GetNetworkHostOverlayStatus();
             if (string.Equals(status, _lastBroadcastNetworkHostOverlayStatus, StringComparison.Ordinal))
             {
+                // The server also de-duplicates, but skipping here avoids needless calls
+                // from the render path.
                 return;
             }
 
@@ -1634,6 +1701,10 @@ namespace C64Emulator
             server.SetHostOverlayStatus(status);
         }
 
+        /// <summary>
+        /// Returns the status popup text that should be shown to remote clients.
+        /// </summary>
+        /// <returns>Host menu status text, or an empty string when the host is live.</returns>
         private string GetNetworkHostOverlayStatus()
         {
             if (_networkOverlayVisible)
@@ -1667,10 +1738,13 @@ namespace C64Emulator
         /// <summary>
         /// Draws and services the remote-client presentation path.
         /// </summary>
+        /// <param name="time">Elapsed render time in seconds.</param>
         private void DrawRemoteClientFrame(double time)
         {
             if (_networkClient == null || !_networkClient.IsConnected)
             {
+                // If the background client detects a disconnect, the render path performs
+                // visible cleanup and leaves the user on a clear status screen.
                 StopNetworkClientSession();
                 DrawFilledRectangle(0, 0, PixelsWidth, PixelsHeight, 0, 0, 0);
                 DrawOverlayText(28, (PixelsHeight / 2) - 10, "REMOTE SESSION CLOSED", 1, 240, 248, 255);
@@ -1686,6 +1760,7 @@ namespace C64Emulator
             long frameId;
             lock (_networkFrameSync)
             {
+                // The receive loop replaces the latest frame atomically under this lock.
                 pixels = _networkFramePixels;
                 width = _networkFrameWidth;
                 height = _networkFrameHeight;
@@ -1694,6 +1769,8 @@ namespace C64Emulator
 
             if (pixels != null && width > 0 && height > 0)
             {
+                // DrawFrame applies the client's local SHARP/CRT/TV filter to the raw
+                // server framebuffer.
                 DrawFrame(pixels, width, height);
                 _lastDisplayedNetworkFrameId = frameId;
             }
@@ -1713,6 +1790,8 @@ namespace C64Emulator
             }
             else if (_audioOverlayVisible)
             {
+                // In remote mode the settings overlay is mostly read-only, but display
+                // and filter controls still apply to the local presentation.
                 DrawAudioOverlay(
                     _system.SidMasterVolume,
                     _system.SidNoiseLevel,
@@ -1734,6 +1813,9 @@ namespace C64Emulator
                 FPS);
         }
 
+        /// <summary>
+        /// Updates the visible receive FPS counter from decoded network frames.
+        /// </summary>
         private void UpdateNetworkReceiveFps()
         {
             long nowTicks = DateTime.UtcNow.Ticks;
@@ -1749,6 +1831,8 @@ namespace C64Emulator
                 return;
             }
 
+            // Reset the counter each one-second window so the title reflects recent
+            // network delivery instead of a lifetime average.
             long elapsedTicks = Math.Max(TimeSpan.TicksPerMillisecond, nowTicks - _networkReceiveFpsWindowStartTicks);
             int frameCount = Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
             _networkReceiveFps = (int)Math.Round((frameCount * (double)TimeSpan.TicksPerSecond) / elapsedTicks);
@@ -1756,6 +1840,9 @@ namespace C64Emulator
             _networkReceiveFpsNextTicks = nowTicks + TimeSpan.TicksPerSecond;
         }
 
+        /// <summary>
+        /// Updates the visible send FPS counter from host frame broadcasts.
+        /// </summary>
         private void UpdateNetworkSendFps()
         {
             long nowTicks = DateTime.UtcNow.Ticks;
@@ -1771,6 +1858,8 @@ namespace C64Emulator
                 return;
             }
 
+            // This measures completed C64 frames sent to the server transport, not the
+            // window renderer FPS.
             long elapsedTicks = Math.Max(TimeSpan.TicksPerMillisecond, nowTicks - _networkSendFpsWindowStartTicks);
             int frameCount = Interlocked.Exchange(ref _networkFramesSentCounter, 0);
             _networkSendFps = (int)Math.Round((frameCount * (double)TimeSpan.TicksPerSecond) / elapsedTicks);
@@ -1785,6 +1874,8 @@ namespace C64Emulator
         {
             if (_networkMode == NetworkSessionMode.Client)
             {
+                // Hosting and joining are mutually exclusive because only one side owns
+                // the active C64 simulation at a time.
                 StopNetworkClientSession();
             }
 
@@ -1799,6 +1890,8 @@ namespace C64Emulator
                 _networkServer.Start(_networkServerPort, _networkServerPassword);
                 _networkServerPort = _networkServer.Port;
                 _networkMode = NetworkSessionMode.Host;
+                // Reset network counters at session start so the title bar starts from
+                // a meaningful fresh one-second window.
                 _lastBroadcastNetworkHostOverlayStatus = string.Empty;
                 _lastBroadcastNetworkCompletedFrameId = -1;
                 Interlocked.Exchange(ref _networkFramesSentCounter, 0);
@@ -1828,6 +1921,8 @@ namespace C64Emulator
 
             if (_system != null)
             {
+                // Clear remote input as soon as the host stops, otherwise the last
+                // active-low state could remain latched in CIA1.
                 _system.ClearNetworkJoystickState();
             }
 
@@ -1841,6 +1936,7 @@ namespace C64Emulator
                 _networkMode = NetworkSessionMode.Local;
             }
 
+            // Reset counters and cached state so a later server session starts cleanly.
             _lastBroadcastNetworkHostOverlayStatus = string.Empty;
             _lastBroadcastNetworkCompletedFrameId = -1;
             Interlocked.Exchange(ref _networkFramesSentCounter, 0);
@@ -1856,6 +1952,8 @@ namespace C64Emulator
         {
             if (_networkMode == NetworkSessionMode.Host)
             {
+                // Joining a remote host means this window stops owning the authoritative
+                // C64, so an existing local server must be stopped first.
                 StopNetworkServer();
             }
 
@@ -1875,6 +1973,8 @@ namespace C64Emulator
                 return;
             }
 
+            // Once connected, the local emulator is parked. The remote host provides the
+            // C64 video/audio stream and receives joystick input from this window.
             StopEmulation();
             _system.LocalAudioEnabled = false;
             _networkMode = NetworkSessionMode.Client;
@@ -1902,6 +2002,8 @@ namespace C64Emulator
 
             lock (_networkFrameSync)
             {
+                // Drop remote frame references so the next local/remote session cannot
+                // accidentally draw a stale host image.
                 _networkFramePixels = null;
                 _networkFrameWidth = 0;
                 _networkFrameHeight = 0;
@@ -1921,6 +2023,7 @@ namespace C64Emulator
 
             if (_system != null)
             {
+                // Local audio was disabled while remote audio played through C64NetClient.
                 _system.LocalAudioEnabled = true;
             }
 
@@ -1929,11 +2032,16 @@ namespace C64Emulator
                 _networkMode = NetworkSessionMode.Local;
                 if (!_shutdown.IsCancellationRequested && _emulationTask == null)
                 {
+                    // Re-enter normal standalone emulation after leaving a remote session.
                     StartEmulation();
                 }
             }
         }
 
+        /// <summary>
+        /// Stores the newest remote frame received by the client transport.
+        /// </summary>
+        /// <param name="frame">Decoded remote frame.</param>
         private void HandleNetworkFrameReceived(C64NetVideoFrame frame)
         {
             if (frame == null || frame.Pixels == null)
@@ -1943,6 +2051,8 @@ namespace C64Emulator
 
             lock (_networkFrameSync)
             {
+                // Keep only the latest decoded frame. Rendering always presents the newest
+                // available image and skips any older frames that arrived too quickly.
                 _networkFramePixels = frame.Pixels;
                 _networkFrameWidth = frame.Width;
                 _networkFrameHeight = frame.Height;
@@ -1952,6 +2062,10 @@ namespace C64Emulator
             Interlocked.Increment(ref _networkFramesReceivedCounter);
         }
 
+        /// <summary>
+        /// Stores the newest client list received from the server or local host.
+        /// </summary>
+        /// <param name="clients">Client snapshots from the transport layer.</param>
         private void HandleNetworkClientListReceived(List<C64NetClientSnapshot> clients)
         {
             lock (_networkClientsSync)
@@ -1961,11 +2075,19 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Stores the persistent popup text describing the host's current menu.
+        /// </summary>
+        /// <param name="status">Host overlay status text.</param>
         private void HandleNetworkHostOverlayStatusChanged(string status)
         {
             _networkHostOverlayStatusText = status ?? string.Empty;
         }
 
+        /// <summary>
+        /// Converts transport status callbacks into overlay status toasts.
+        /// </summary>
+        /// <param name="status">Status text from server or client transport.</param>
         private void HandleNetworkStatusChanged(string status)
         {
             if (!string.IsNullOrWhiteSpace(status))
@@ -1974,6 +2096,10 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Shows a network status line and short toast.
+        /// </summary>
+        /// <param name="status">Status text to display.</param>
         private void ShowNetworkStatus(string status)
         {
             if (string.IsNullOrWhiteSpace(status))
@@ -1983,14 +2109,22 @@ namespace C64Emulator
 
             _networkStatusText = status;
             _networkStatusToastText = status;
+            // Toasts are time-based so they can be drawn from both local and remote
+            // render paths without owning a separate UI animation object.
             Interlocked.Exchange(ref _networkStatusToastUntilTicks, DateTime.UtcNow.AddSeconds(3.0).Ticks);
         }
 
+        /// <summary>
+        /// Handles key input while the window is connected to a remote host.
+        /// </summary>
+        /// <param name="keyEventArgs">Raw key event from the frontend.</param>
         private void HandleRemoteClientKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
         {
             Key key = keyEventArgs.Key;
             if (key == Key.F12)
             {
+                // The save overlay remains available as a read-only remote status surface,
+                // but it cannot load/save local C64 state while the remote host owns state.
                 _audioOverlayVisible = false;
                 _mediaBrowserVisible = false;
                 _resetConfirmVisible = false;
@@ -2035,6 +2169,7 @@ namespace C64Emulator
 
             if (key == Key.F9)
             {
+                // Turbo is server-controlled because only the host runs emulation.
                 ShowNetworkStatus("TURBO DISABLED REMOTE");
                 return;
             }
@@ -2042,10 +2177,15 @@ namespace C64Emulator
             HandleRemoteClientJoystickKey(key, true);
         }
 
+        /// <summary>
+        /// Polls local gamepads while connected as a remote client.
+        /// </summary>
         private void PollRemoteClientGamepadInput()
         {
             if (!_gamepadEnabled)
             {
+                // Gamepad disabled means neutral remote gamepad state, while keyboard
+                // joystick keys may still contribute.
                 _remoteGamepadJoystickState = 0xFF;
                 SendRemoteClientJoystickInput(false, 0.0);
                 return;
@@ -2079,6 +2219,7 @@ namespace C64Emulator
 
                 if ((joystickState & 0x1F) != 0x1F)
                 {
+                    // Prefer the first pad that is actively pressed this frame.
                     break;
                 }
             }
@@ -2088,6 +2229,11 @@ namespace C64Emulator
             SendRemoteClientJoystickInput(false, 0.0);
         }
 
+        /// <summary>
+        /// Updates the remote keyboard joystick state for one key press/release.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="pressed">True for key down, false for key up.</param>
         private void HandleRemoteClientJoystickKey(Key key, bool pressed)
         {
             byte mask;
@@ -2098,16 +2244,23 @@ namespace C64Emulator
 
             if (pressed)
             {
+                // C64 joystick lines are active-low: clearing a bit means pressed.
                 _remoteKeyboardJoystickState = (byte)(_remoteKeyboardJoystickState & ~mask);
             }
             else
             {
+                // Releasing a key returns that joystick line high.
                 _remoteKeyboardJoystickState = (byte)(_remoteKeyboardJoystickState | mask);
             }
 
             SendRemoteClientJoystickInput(true, 0.0);
         }
 
+        /// <summary>
+        /// Combines remote keyboard/gamepad state and sends it to the host when needed.
+        /// </summary>
+        /// <param name="force">True to send regardless of change detection.</param>
+        /// <param name="elapsedSeconds">Elapsed render time used for periodic refresh.</param>
         private void SendRemoteClientJoystickInput(bool force, double elapsedSeconds)
         {
             C64NetClient client = _networkClient;
@@ -2123,11 +2276,19 @@ namespace C64Emulator
                 _remoteInputRefreshAccumulator = 0.0;
             }
 
+            // Both sources use active-low bits, so AND merges simultaneous keyboard and
+            // gamepad presses exactly like multiple low lines on the C64 joystick port.
             byte state = (byte)((_remoteKeyboardJoystickState & _remoteGamepadJoystickState) | 0xE0);
             client.SendJoystickState(state, force || refresh || state != _lastRemoteJoystickState);
             _lastRemoteJoystickState = state;
         }
 
+        /// <summary>
+        /// Maps frontend keys to C64 joystick active-low bit masks.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="mask">Output bit mask for up/down/left/right/fire.</param>
+        /// <returns>True when the key represents a joystick control.</returns>
         private static bool TryGetJoystickMask(Key key, out byte mask)
         {
             if (key == Key.Up)
@@ -3083,8 +3244,11 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Handles network overlay key down.
+        /// Handles key input captured by the F7 network overlay.
         /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="modifiers">Keyboard modifiers used for editable fields.</param>
+        /// <returns>True when the overlay consumed the key.</returns>
         private bool HandleNetworkOverlayKeyDown(Key key, KeyModifiers modifiers)
         {
             switch (key)
@@ -3110,6 +3274,7 @@ namespace C64Emulator
                     _networkOverlayVisible = false;
                     if (_networkMode != NetworkSessionMode.Client)
                     {
+                        // Closing the host/local menu resumes the paused emulation clock.
                         ResetEmulationTiming();
                     }
 
@@ -3119,6 +3284,10 @@ namespace C64Emulator
             return TryApplyNetworkTextKey(key, modifiers);
         }
 
+        /// <summary>
+        /// Moves the selected F7 menu row with wraparound.
+        /// </summary>
+        /// <param name="delta">Selection movement, usually -1 or +1.</param>
         private void MoveNetworkOverlaySelection(int delta)
         {
             _networkOverlaySelection += delta;
@@ -3133,6 +3302,10 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Adjusts or activates the currently selected network menu row.
+        /// </summary>
+        /// <param name="direction">Adjustment direction from left/right style input.</param>
         private void AdjustNetworkMenu(int direction)
         {
             if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
@@ -3144,6 +3317,7 @@ namespace C64Emulator
             switch (_networkOverlaySelection)
             {
                 case 0:
+                    // Port fields support both step adjustment and direct digit editing.
                     _networkServerPort = ClampNetworkPort(_networkServerPort + direction);
                     SaveSettings();
                     break;
@@ -3155,9 +3329,11 @@ namespace C64Emulator
 
                     break;
                 case 3:
+                    // SELECT CLIENT cycles through connected clients.
                     MoveSelectedNetworkClient(direction);
                     break;
                 case 5:
+                    // KICK CLIENT uses the same selected client cursor.
                     MoveSelectedNetworkClient(direction);
                     break;
                 case 4:
@@ -3168,6 +3344,8 @@ namespace C64Emulator
                     SaveSettings();
                     break;
                 case 10:
+                    // Role is only the requested join role. Host permissions remain
+                    // authoritative after connection.
                     _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
                         ? C64NetClientRole.Player
                         : C64NetClientRole.Observer;
@@ -3181,11 +3359,15 @@ namespace C64Emulator
 
                     break;
                 case 12:
+                    // Video filter is local presentation even during a remote session.
                     CycleVideoFilter();
                     break;
             }
         }
 
+        /// <summary>
+        /// Activates the selected network menu row with Enter.
+        /// </summary>
         private void ActivateNetworkMenuItem()
         {
             if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
@@ -3223,6 +3405,9 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Starts or stops the local host server from the F7 menu.
+        /// </summary>
         private void ToggleNetworkServer()
         {
             C64NetServer server = _networkServer;
@@ -3236,6 +3421,9 @@ namespace C64Emulator
             StartNetworkServer();
         }
 
+        /// <summary>
+        /// Joins or leaves a remote host session from the F7 menu.
+        /// </summary>
         private void ToggleNetworkClientSession()
         {
             if (_networkMode == NetworkSessionMode.Client)
@@ -3248,6 +3436,12 @@ namespace C64Emulator
             StartNetworkClientSession();
         }
 
+        /// <summary>
+        /// Applies editable text/numeric input to the selected network menu field.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="modifiers">Keyboard modifiers.</param>
+        /// <returns>True when the key changed or was handled by an editable field.</returns>
         private bool TryApplyNetworkTextKey(Key key, KeyModifiers modifiers)
         {
             if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
@@ -3259,6 +3453,8 @@ namespace C64Emulator
             bool clientPortField = _networkOverlaySelection == 8;
             if (serverPortField || clientPortField)
             {
+                // Ports are edited as numbers directly inside the pixel overlay. A blank
+                // port is represented by 0 and shown as TYPE PORT.
                 if (key == Key.BackSpace)
                 {
                     int port = (serverPortField ? _networkServerPort : _networkClientPort) / 10;
@@ -3299,6 +3495,8 @@ namespace C64Emulator
 
             if (key == Key.BackSpace)
             {
+                // Text editing is intentionally simple: ASCII-like keys, backspace, and
+                // delete are enough for host names, player names, and passwords.
                 if (serverPasswordField && _networkServerPassword.Length > 0)
                 {
                     _networkServerPassword = _networkServerPassword.Substring(0, _networkServerPassword.Length - 1);
@@ -3356,6 +3554,7 @@ namespace C64Emulator
             {
                 if (_networkServerPassword.Length < 32)
                 {
+                    // Passwords are stored in full but rendered as asterisks in the menu.
                     _networkServerPassword += character;
                     SaveSettings();
                 }
@@ -3382,6 +3581,11 @@ namespace C64Emulator
             return true;
         }
 
+        /// <summary>
+        /// Stores a clamped server/client port and persists the menu setting.
+        /// </summary>
+        /// <param name="serverPortField">True for the server port, false for the client port.</param>
+        /// <param name="port">Requested TCP port.</param>
         private void SetNetworkMenuPort(bool serverPortField, int port)
         {
             if (serverPortField)
@@ -3396,6 +3600,10 @@ namespace C64Emulator
             SaveSettings();
         }
 
+        /// <summary>
+        /// Moves the selected client row in the host client list.
+        /// </summary>
+        /// <param name="delta">Movement direction.</param>
         private void MoveSelectedNetworkClient(int delta)
         {
             List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
@@ -3417,6 +3625,9 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Cycles joystick rights for the currently selected remote client.
+        /// </summary>
         private void CycleSelectedNetworkClientPermission()
         {
             C64NetServer server = _networkServer;
@@ -3432,6 +3643,9 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Kicks the currently selected remote client from the current host session.
+        /// </summary>
         private void KickSelectedNetworkClient()
         {
             C64NetServer server = _networkServer;
@@ -3447,11 +3661,17 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Gets the current client snapshots from the server or cached remote list.
+        /// </summary>
+        /// <returns>Stable snapshot list for rendering and selection.</returns>
         private List<C64NetClientSnapshot> GetNetworkClientSnapshots()
         {
             C64NetServer server = _networkServer;
             if (server != null && server.IsRunning)
             {
+                // Host mode reads directly from the server so the menu is current even if
+                // no client-list broadcast has been processed by this window.
                 List<C64NetClientSnapshot> serverClients = server.GetClientSnapshots();
                 lock (_networkClientsSync)
                 {
@@ -3464,12 +3684,17 @@ namespace C64Emulator
 
             lock (_networkClientsSync)
             {
+                // Remote clients use the latest ClientList message received from the host.
                 var clients = new List<C64NetClientSnapshot>(_networkClients);
                 ClampNetworkSelectedClientIndex();
                 return clients;
             }
         }
 
+        /// <summary>
+        /// Gets the currently selected client snapshot, if any.
+        /// </summary>
+        /// <returns>Selected snapshot or null when the list is empty.</returns>
         private C64NetClientSnapshot GetSelectedNetworkClient()
         {
             List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
@@ -3482,6 +3707,9 @@ namespace C64Emulator
             return clients[index];
         }
 
+        /// <summary>
+        /// Keeps the selected client index valid after list changes.
+        /// </summary>
         private void ClampNetworkSelectedClientIndex()
         {
             int count = _networkClients == null ? 0 : _networkClients.Count;
@@ -3502,6 +3730,11 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Clamps a TCP port to the valid user-editable range.
+        /// </summary>
+        /// <param name="port">Requested port.</param>
+        /// <returns>Value between 0 and 65535. Zero means the UI field is empty.</returns>
         private static int ClampNetworkPort(int port)
         {
             if (port < 0)
@@ -3517,6 +3750,12 @@ namespace C64Emulator
             return port;
         }
 
+        /// <summary>
+        /// Maps number-row keys to decimal digits.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="digit">Decoded digit.</param>
+        /// <returns>True when the key is a number-row digit.</returns>
         private static bool TryGetDigit(Key key, out int digit)
         {
             switch (key)
@@ -3557,11 +3796,20 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Maps allowed overlay text-entry keys to characters.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="modifiers">Keyboard modifiers.</param>
+        /// <param name="character">Decoded character.</param>
+        /// <returns>True when the key can contribute text to a network field.</returns>
         private static bool TryMapNetworkTextKey(Key key, KeyModifiers modifiers, out char character)
         {
             bool shifted = (modifiers & KeyModifiers.Shift) == KeyModifiers.Shift;
             if (key >= Key.A && key <= Key.Z)
             {
+                // The overlay text input does not use OS text composition; it maps the
+                // small key set needed by the network menu directly.
                 character = (char)((shifted ? 'A' : 'a') + ((int)key - (int)Key.A));
                 return true;
             }
@@ -3599,16 +3847,31 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Tests whether a character is valid for the host/address field.
+        /// </summary>
+        /// <param name="character">Character to test.</param>
+        /// <returns>True for simple DNS/IP host characters.</returns>
         private static bool IsNetworkHostCharacter(char character)
         {
             return char.IsLetterOrDigit(character) || character == '.' || character == '-';
         }
 
+        /// <summary>
+        /// Tests whether a character is valid for the player name field.
+        /// </summary>
+        /// <param name="character">Character to test.</param>
+        /// <returns>True when the character is accepted in player names.</returns>
         private static bool IsNetworkPlayerNameCharacter(char character)
         {
             return char.IsLetterOrDigit(character) || character == ' ' || character == '-' || character == '.' || character == '_';
         }
 
+        /// <summary>
+        /// Normalizes a player name for storage and handshake use.
+        /// </summary>
+        /// <param name="name">Raw menu/player name.</param>
+        /// <returns>Trimmed name, defaulting to player and capped at 24 characters.</returns>
         private static string NormalizeNetworkPlayerName(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -3643,6 +3906,8 @@ namespace C64Emulator
                 case Key.Minus:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
+                        // Remote clients may change only local presentation settings. SID,
+                        // media, reset, and joystick source are owned by the server.
                         ShowNetworkStatus("SETTING SERVER CONTROLLED");
                         return true;
                     }
@@ -3653,6 +3918,8 @@ namespace C64Emulator
                 case Key.Plus:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
+                        // Keep the feedback in the network toast so it is visible in both
+                        // local and remote presentation paths.
                         ShowNetworkStatus("SETTING SERVER CONTROLLED");
                         return true;
                     }
@@ -3662,6 +3929,8 @@ namespace C64Emulator
                 case Key.Enter:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
+                        // Enter on a server-controlled item is blocked for the same reason
+                        // as left/right adjustment.
                         ShowNetworkStatus("SETTING SERVER CONTROLLED");
                         return true;
                     }
@@ -4001,9 +4270,6 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Draws audio overlay.
-        /// </summary>
-        /// <summary>
         /// Draws the network overlay.
         /// </summary>
         private void DrawNetworkOverlay()
@@ -4028,9 +4294,12 @@ namespace C64Emulator
             int menuY = overlayY + 45;
             for (int index = 0; index < NetworkOverlayItemCount; index++)
             {
+                // Rows are always drawn in fixed positions so disabled server/client
+                // sections stay visible and explain the current mode.
                 DrawNetworkMenuRow(menuX, GetNetworkMenuRowY(menuY, index), index);
             }
 
+            // Server controls live above the separator; client controls live below it.
             int separatorY = menuY + (NetworkOverlayServerItemCount * 10) + 3;
             DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
 
@@ -4042,6 +4311,8 @@ namespace C64Emulator
             }
             else
             {
+                // Keep the visible list short enough to fit inside the C64 overlay while
+                // still allowing the selected client to move through all connections.
                 int firstClient = Math.Max(0, Math.Min(_networkSelectedClientIndex, Math.Max(0, clients.Count - 4)));
                 for (int row = 0; row < 4 && firstClient + row < clients.Count; row++)
                 {
@@ -4063,6 +4334,9 @@ namespace C64Emulator
             DrawOverlayText(menuX, overlayY + overlayHeight - 15, "STATUS " + FormatOverlayValue(_networkStatusText, 45), 1, 108, 214, 182);
         }
 
+        /// <summary>
+        /// Draws a short-lived network status toast.
+        /// </summary>
         private void DrawNetworkStatusToast()
         {
             long untilTicks = Interlocked.Read(ref _networkStatusToastUntilTicks);
@@ -4082,6 +4356,9 @@ namespace C64Emulator
             DrawOverlayText(x + 12, y + 10, text, 1, 240, 248, 255);
         }
 
+        /// <summary>
+        /// Draws the persistent remote-client popup that mirrors the host menu state.
+        /// </summary>
         private void DrawNetworkHostOverlayPopup()
         {
             if (_networkMode != NetworkSessionMode.Client || string.IsNullOrWhiteSpace(_networkHostOverlayStatusText))
@@ -4100,10 +4377,18 @@ namespace C64Emulator
             DrawOverlayText(x + 12, y + 10, text, 1, 255, 243, 168);
         }
 
+        /// <summary>
+        /// Draws one row of the F7 network menu.
+        /// </summary>
+        /// <param name="x">Menu label x coordinate.</param>
+        /// <param name="y">Menu row y coordinate.</param>
+        /// <param name="index">Network menu row index.</param>
         private void DrawNetworkMenuRow(int x, int y, int index)
         {
             bool selected = _networkOverlaySelection == index;
             bool enabled = IsNetworkMenuRowEnabled(index);
+            // Disabled rows stay readable but subdued, which makes host/client mode
+            // restrictions visible without hiding configuration context.
             byte labelRed = enabled ? (selected ? (byte)255 : (byte)192) : (byte)100;
             byte labelGreen = enabled ? (selected ? (byte)243 : (byte)210) : (byte)108;
             byte labelBlue = enabled ? (selected ? (byte)168 : (byte)225) : (byte)118;
@@ -4114,27 +4399,47 @@ namespace C64Emulator
             DrawOverlayText(x + 150, y, FormatOverlayValue(GetNetworkMenuValue(index), 28), 1, valueRed, valueGreen, valueBlue);
         }
 
+        /// <summary>
+        /// Computes the vertical position for a network menu row.
+        /// </summary>
+        /// <param name="menuY">Top y coordinate of the first row.</param>
+        /// <param name="index">Network menu row index.</param>
+        /// <returns>Pixel y coordinate for the row.</returns>
         private static int GetNetworkMenuRowY(int menuY, int index)
         {
             int extraGap = index >= NetworkOverlayServerItemCount ? 12 : 0;
             return menuY + (index * 10) + extraGap;
         }
 
+        /// <summary>
+        /// Checks whether a network menu row can be edited in the current mode.
+        /// </summary>
+        /// <param name="index">Network menu row index.</param>
+        /// <returns>True when the row is active.</returns>
         private bool IsNetworkMenuRowEnabled(int index)
         {
             if (_networkMode == NetworkSessionMode.Client)
             {
+                // Remote clients may leave and change their local filter, but server-owned
+                // emulator/session settings are locked.
                 return index == 11 || index == 12;
             }
 
             if (_networkMode == NetworkSessionMode.Host)
             {
+                // While hosting, server controls and the local filter remain available;
+                // joining another host from the same instance is disabled.
                 return index <= 5 || index == 12;
             }
 
             return true;
         }
 
+        /// <summary>
+        /// Gets the fixed label for a network menu row.
+        /// </summary>
+        /// <param name="index">Network menu row index.</param>
+        /// <returns>Overlay label text.</returns>
         private string GetNetworkMenuLabel(int index)
         {
             switch (index)
@@ -4170,6 +4475,11 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Gets the current display value for a network menu row.
+        /// </summary>
+        /// <param name="index">Network menu row index.</param>
+        /// <returns>Overlay value text.</returns>
         private string GetNetworkMenuValue(int index)
         {
             C64NetClientSnapshot client;
@@ -4209,6 +4519,11 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Checks whether an F10 settings row remains locally adjustable in remote mode.
+        /// </summary>
+        /// <param name="menuIndex">Settings menu row index.</param>
+        /// <returns>True when the current mode allows local adjustment.</returns>
         private bool CanAdjustAudioOverlayItem(int menuIndex)
         {
             if (_networkMode != NetworkSessionMode.Client)
@@ -4216,9 +4531,16 @@ namespace C64Emulator
                 return true;
             }
 
+            // Remote clients can control only local display/presentation choices. The
+            // server owns emulation-affecting settings such as SID, media, reset, and turbo.
             return menuIndex == 5 || menuIndex == 6 || menuIndex == 8;
         }
 
+        /// <summary>
+        /// Formats a password for overlay display without exposing its characters.
+        /// </summary>
+        /// <param name="password">Raw password value.</param>
+        /// <returns>NONE for empty passwords, otherwise asterisks.</returns>
         private static string FormatNetworkPassword(string password)
         {
             if (string.IsNullOrEmpty(password))
@@ -4229,6 +4551,11 @@ namespace C64Emulator
             return new string('*', Math.Min(27, password.Length));
         }
 
+        /// <summary>
+        /// Formats a client as address plus player name for the host client list.
+        /// </summary>
+        /// <param name="client">Client snapshot to format.</param>
+        /// <returns>Overlay-friendly client display text.</returns>
         private static string FormatNetworkClientDisplay(C64NetClientSnapshot client)
         {
             if (client == null)
@@ -4243,6 +4570,11 @@ namespace C64Emulator
             return address + " - " + name;
         }
 
+        /// <summary>
+        /// Formats the current network mode for the overlay header.
+        /// </summary>
+        /// <param name="mode">Current network session mode.</param>
+        /// <returns>LOCAL, HOST, or CLIENT.</returns>
         private static string FormatNetworkMode(NetworkSessionMode mode)
         {
             switch (mode)
@@ -4256,6 +4588,11 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Formats joystick permission for menus and title bars.
+        /// </summary>
+        /// <param name="permission">Permission value.</param>
+        /// <returns>Overlay-friendly permission text.</returns>
         private static string FormatNetworkPermission(C64NetJoystickPermission permission)
         {
             switch (permission)
@@ -4346,6 +4683,8 @@ namespace C64Emulator
                 case 3:
                     if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
                     {
+                        // In a remote session the host grants joystick rights, so the
+                        // settings menu shows the permission as read-only context.
                         DrawOverlayItem(x, y, "JOYSTICK", 0.0f, FormatNetworkPermission(_networkClient.Permission), "SERVER", "HOST", _audioOverlaySelection == menuIndex, false);
                     }
                     else

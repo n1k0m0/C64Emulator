@@ -279,9 +279,16 @@ namespace C64Emulator.Core
         /// <summary>
         /// Sets the host gamepad joystick state using C64 active-low joystick bits.
         /// </summary>
+        /// <param name="activeLowJoystickState">
+        /// Bits 0-4 represent up, down, left, right, and fire; a cleared bit means pressed.
+        /// </param>
         public void SetGamepadJoystickState(byte activeLowJoystickState)
         {
+            // Bits 5-7 are not joystick lines. Keep them high so a caller cannot
+            // accidentally pull keyboard-matrix bits low through the joystick path.
             activeLowJoystickState = (byte)(activeLowJoystickState | 0xE0);
+            // Recompute the per-port gamepad contribution from the current frontend
+            // joystick-port setting instead of leaving stale bits on the old port.
             _gamepadJoystickPort1State = 0x1F;
             _gamepadJoystickPort2State = 0x1F;
 
@@ -299,8 +306,14 @@ namespace C64Emulator.Core
         /// <summary>
         /// Sets a network-controlled joystick state for one or both C64 joystick ports.
         /// </summary>
+        /// <param name="joystickPort">C64 port that should receive the remote input.</param>
+        /// <param name="activeLowJoystickState">
+        /// Bits 0-4 represent up, down, left, right, and fire; a cleared bit means pressed.
+        /// </param>
         public void SetNetworkJoystickState(JoystickPort joystickPort, byte activeLowJoystickState)
         {
+            // Network input is a separate layer from keyboard and local gamepad input.
+            // ReadPortA/ReadPortB combine layers with active-low AND semantics.
             activeLowJoystickState = (byte)(activeLowJoystickState | 0xE0);
             if (joystickPort == JoystickPort.Port1 || joystickPort == JoystickPort.Both)
             {
@@ -318,6 +331,8 @@ namespace C64Emulator.Core
         /// </summary>
         public void ClearNetworkJoystickState()
         {
+            // 0x1F is neutral for the five C64 joystick lines. The upper bits are forced
+            // high again when the state is merged into the CIA port read.
             _networkJoystickPort1State = 0x1F;
             _networkJoystickPort2State = 0x1F;
         }

@@ -74,6 +74,13 @@ namespace C64Emulator.Core
         private float _volumeDacCurrent;
         private float _volumeDacDcBlock;
 
+        /// <summary>
+        /// Raised whenever the SID output buffer is flushed.
+        /// </summary>
+        /// <remarks>
+        /// The network host uses this event to mirror the exact PCM bytes that are also
+        /// sent to the local audio device, keeping remote audio aligned with host output.
+        /// </remarks>
         public event Action<byte[], int> AudioBytesGenerated;
 
         /// <summary>
@@ -98,6 +105,13 @@ namespace C64Emulator.Core
             Reset();
         }
 
+        /// <summary>
+        /// Gets or sets whether this SID instance writes to the local audio device.
+        /// </summary>
+        /// <remarks>
+        /// A remote client keeps its local emulator stopped and plays audio from
+        /// C64NetClient instead, so the window disables local SID playback while joined.
+        /// </remarks>
         public bool LocalAudioEnabled { get; set; } = true;
 
         public float MasterVolume
@@ -464,10 +478,13 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Handles the append sample operation.
+        /// Appends one 16-bit PCM sample to the SID output buffer.
         /// </summary>
+        /// <param name="sample">Mono signed PCM sample.</param>
         private void AppendSample(short sample)
         {
+            // Audio is stored little-endian because NAudio and the network transport both
+            // consume the same byte layout.
             _audioBytes[_audioByteCount++] = (byte)(sample & 0xFF);
             _audioBytes[_audioByteCount++] = (byte)((sample >> 8) & 0xFF);
 
@@ -478,7 +495,7 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Handles the flush audio operation.
+        /// Flushes buffered PCM to network subscribers and optionally to local audio.
         /// </summary>
         private void FlushAudio()
         {
@@ -490,6 +507,8 @@ namespace C64Emulator.Core
             Action<byte[], int> handler = AudioBytesGenerated;
             if (handler != null)
             {
+                // Network clients need a stable buffer after this method resets
+                // _audioByteCount and reuses _audioBytes for future samples.
                 byte[] networkCopy = new byte[_audioByteCount];
                 Buffer.BlockCopy(_audioBytes, 0, networkCopy, 0, _audioByteCount);
                 handler(networkCopy, networkCopy.Length);
@@ -497,6 +516,8 @@ namespace C64Emulator.Core
 
             if (LocalAudioEnabled && _audioOutput != null)
             {
+                // Host/local mode plays the same PCM bytes locally. Remote client mode
+                // leaves this disabled and listens to the host stream instead.
                 _audioOutput.Write(_audioBytes, _audioByteCount);
             }
 

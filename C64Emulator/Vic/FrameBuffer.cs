@@ -37,10 +37,19 @@ namespace C64Emulator.Core
         /// <summary>
         /// Gets the most recently completed full-frame pixel array.
         /// </summary>
+        /// <remarks>
+        /// The live <see cref="Pixels"/> array can be changed by the VIC while a frame is
+        /// being drawn. Network streaming and presentation use this completed copy so they
+        /// see stable whole frames instead of partially rendered scanlines.
+        /// </remarks>
         public uint[] CompletedPixels { get; private set; }
         /// <summary>
         /// Gets an incrementing id for the most recently completed full frame.
         /// </summary>
+        /// <remarks>
+        /// The host network path compares this id against the last broadcast id and sends
+        /// each completed C64 frame only once, even when the window renders more often.
+        /// </remarks>
         public long CompletedFrameId { get; private set; }
 
         /// <summary>
@@ -76,8 +85,9 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Handles the clear operation.
+        /// Clears the live framebuffer and publishes the cleared image as a completed frame.
         /// </summary>
+        /// <param name="argb">ARGB32 color used for every pixel.</param>
         public void Clear(uint argb)
         {
             for (var i = 0; i < Pixels.Length; i++)
@@ -85,6 +95,8 @@ namespace C64Emulator.Core
                 Pixels[i] = argb;
             }
 
+            // A clear is a full-frame state change, so publish it immediately for display
+            // and remote clients.
             System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
             CompletedFrameId++;
         }
@@ -94,6 +106,8 @@ namespace C64Emulator.Core
         /// </summary>
         public void CaptureCompletedFrame()
         {
+            // Called by VIC at the frame boundary. Consumers can now copy CompletedPixels
+            // without racing an in-progress frame.
             System.Array.Copy(Pixels, CompletedPixels, Pixels.Length);
             CompletedFrameId++;
         }
@@ -120,6 +134,8 @@ namespace C64Emulator.Core
             {
                 System.Array.Copy(pixels, Pixels, Pixels.Length);
                 System.Array.Copy(pixels, CompletedPixels, CompletedPixels.Length);
+                // Loading a savestate changes the displayed image immediately, so advance
+                // the completed-frame id for render/network consumers.
                 CompletedFrameId++;
             }
         }
