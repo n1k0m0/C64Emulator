@@ -47,6 +47,20 @@ namespace C64Emulator.Network
         /// Last joystick state sent to the server, used to suppress unchanged packets.
         /// </summary>
         private byte _lastSentJoystickState = 0xFF;
+        /// <summary>
+        /// Last full packed frame accepted by the client, used as the base for deltas.
+        /// </summary>
+        private byte[] _videoReferencePalettePixels;
+        /// <summary>
+        /// Frame id belonging to <see cref="_videoReferencePalettePixels"/>.
+        /// </summary>
+        private long _videoReferenceFrameId;
+        /// <summary>
+        /// Reusable ARGB32 decode target to avoid allocating one large video array per network frame.
+        /// </summary>
+        private uint[] _videoDecodePixels;
+        private long _bytesSent;
+        private long _bytesReceived;
         private volatile bool _connected;
 
         /// <summary>
@@ -96,6 +110,22 @@ namespace C64Emulator.Network
         public string StatusText { get; private set; } = "DISCONNECTED";
 
         /// <summary>
+        /// Gets the total number of bytes written to the server in the current session.
+        /// </summary>
+        public long BytesSent
+        {
+            get { return Interlocked.Read(ref _bytesSent); }
+        }
+
+        /// <summary>
+        /// Gets the total number of bytes read from the server in the current session.
+        /// </summary>
+        public long BytesReceived
+        {
+            get { return Interlocked.Read(ref _bytesReceived); }
+        }
+
+        /// <summary>
         /// Gets whether the client considers the remote session active.
         /// </summary>
         public bool IsConnected
@@ -118,6 +148,8 @@ namespace C64Emulator.Network
             // Always start from a clean transport state. Reusing a half-closed stream can
             // otherwise leak old audio output or receive loops into the next connection.
             Disconnect();
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
             status = string.Empty;
             try
             {
@@ -134,14 +166,15 @@ namespace C64Emulator.Network
 
                 _stream = _tcpClient.GetStream();
                 // ClientHello is the only message the server accepts before welcome/reject.
-                C64NetProtocol.WriteMessage(_stream, new C64NetMessage
+                AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                 {
                     Type = C64NetMessageType.ClientHello,
                     Timestamp = DateTime.UtcNow.Ticks,
                     Payload = C64NetProtocol.CreateClientHelloPayload(name, password, role)
-                });
+                }));
 
                 C64NetMessage response = C64NetProtocol.ReadMessage(_stream);
+                AddBytesReceived(response != null ? response.WireLength : 0);
                 if (response == null)
                 {
                     // Socket closed before the host sent a protocol response.
@@ -233,12 +266,12 @@ namespace C64Emulator.Network
                 {
                     // Best-effort graceful leave. Socket close below is still the real
                     // guarantee if the peer is gone or the write fails.
-                    C64NetProtocol.WriteMessage(_stream, new C64NetMessage
+                    AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                     {
                         Type = C64NetMessageType.Disconnect,
                         Timestamp = DateTime.UtcNow.Ticks,
                         Payload = C64NetProtocol.CreateTextPayload("LEAVE")
-                    });
+                    }));
                 }
             }
             catch
@@ -286,6 +319,11 @@ namespace C64Emulator.Network
             _connected = false;
             ClientId = 0;
             Permission = C64NetJoystickPermission.Observer;
+            _videoReferencePalettePixels = null;
+            _videoReferenceFrameId = 0;
+            _videoDecodePixels = null;
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
             StatusText = "DISCONNECTED";
             // Clear stale host-menu popup text as soon as the session is gone.
             RaiseHostOverlayStatus(string.Empty);
@@ -338,6 +376,7 @@ namespace C64Emulator.Network
                         break;
                     }
 
+                    AddBytesReceived(message.WireLength);
                     HandleMessage(message);
                 }
             }
@@ -365,9 +404,10 @@ namespace C64Emulator.Network
             switch (message.Type)
             {
                 case C64NetMessageType.VideoFrame:
-                    C64NetVideoFrame frame = C64NetProtocol.ReadVideoFramePayload(message.Payload);
+                    C64NetVideoFrame frame = C64NetProtocol.ReadVideoFramePayload(message.Payload, ref _videoReferencePalettePixels, ref _videoReferenceFrameId, _videoDecodePixels);
                     if (frame != null)
                     {
+                        _videoDecodePixels = frame.Pixels;
                         // The window owns frame storage because it must synchronize with
                         // the render thread and apply the user's local video filter.
                         Action<C64NetVideoFrame> handler = FrameReceived;
@@ -450,7 +490,7 @@ namespace C64Emulator.Network
                 {
                     // Input events and ping responses can originate from different
                     // threads. Serialize writes so protocol frames never interleave.
-                    C64NetProtocol.WriteMessage(_stream, message);
+                    AddBytesSent(C64NetProtocol.WriteMessage(_stream, message));
                 }
             }
             catch (Exception ex)
@@ -484,6 +524,30 @@ namespace C64Emulator.Network
             if (handler != null)
             {
                 handler(status);
+            }
+        }
+
+        /// <summary>
+        /// Adds bytes written by this client transport.
+        /// </summary>
+        /// <param name="byteCount">Number of bytes written to the TCP stream.</param>
+        private void AddBytesSent(int byteCount)
+        {
+            if (byteCount > 0)
+            {
+                Interlocked.Add(ref _bytesSent, byteCount);
+            }
+        }
+
+        /// <summary>
+        /// Adds bytes read by this client transport.
+        /// </summary>
+        /// <param name="byteCount">Number of bytes read from the TCP stream.</param>
+        private void AddBytesReceived(int byteCount)
+        {
+            if (byteCount > 0)
+            {
+                Interlocked.Add(ref _bytesReceived, byteCount);
             }
         }
 

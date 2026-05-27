@@ -62,6 +62,8 @@ namespace C64Emulator.Network
         private string _hostOverlayStatus = string.Empty;
         private int _nextClientId = 1;
         private long _frameId;
+        private long _bytesSent;
+        private long _bytesReceived;
 
         /// <summary>
         /// Raised when the server has a short user-facing status message for the overlay.
@@ -99,6 +101,22 @@ namespace C64Emulator.Network
         public int Port { get; private set; }
 
         /// <summary>
+        /// Gets the total number of bytes written to clients in the current server session.
+        /// </summary>
+        public long BytesSent
+        {
+            get { return Interlocked.Read(ref _bytesSent); }
+        }
+
+        /// <summary>
+        /// Gets the total number of bytes read from clients in the current server session.
+        /// </summary>
+        public long BytesReceived
+        {
+            get { return Interlocked.Read(ref _bytesReceived); }
+        }
+
+        /// <summary>
         /// Starts listening for clients.
         /// </summary>
         /// <param name="port">TCP port to listen on.</param>
@@ -110,6 +128,8 @@ namespace C64Emulator.Network
             Stop();
             _password = password ?? string.Empty;
             _hostOverlayStatus = string.Empty;
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
             lock (_syncRoot)
             {
                 _bannedRemoteAddresses.Clear();
@@ -213,13 +233,18 @@ namespace C64Emulator.Network
                 return;
             }
 
-            // Build the encoded video message once and hand the same immutable message
-            // reference to every client queue. This avoids N copies of the same frame.
-            byte[] payload = C64NetProtocol.CreateVideoFramePayload(pixels, width, height, Interlocked.Increment(ref _frameId));
-            var message = CreateMessage(C64NetMessageType.VideoFrame, payload);
+            byte[] packedPalettePixels = C64NetProtocol.CreatePackedVideoFrame(pixels, width, height);
+            if (packedPalettePixels.Length == 0)
+            {
+                return;
+            }
+
+            // Pack the host frame once, then let each client choose full/delta encoding
+            // against its own last transmitted reference frame at send time.
+            var frame = new PendingVideoFrame(packedPalettePixels, width, height, Interlocked.Increment(ref _frameId));
             for (int index = 0; index < clients.Count; index++)
             {
-                clients[index].EnqueueVideo(message);
+                clients[index].EnqueueVideo(frame);
             }
         }
 
@@ -444,6 +469,7 @@ namespace C64Emulator.Network
             {
                 NetworkStream stream = tcpClient.GetStream();
                 C64NetMessage hello = C64NetProtocol.ReadMessage(stream);
+                AddBytesReceived(hello != null ? hello.WireLength : 0);
                 if (hello == null || hello.Type != C64NetMessageType.ClientHello)
                 {
                     // The protocol is strict at the handshake boundary. Unknown first
@@ -502,9 +528,9 @@ namespace C64Emulator.Network
                 // Even "Player" joins as observer first. The host grants the actual
                 // joystick port explicitly from the client list.
                 client = new ClientConnection(this, tcpClient, clientId, name, role, permission);
-                C64NetProtocol.WriteMessage(stream, CreateMessage(
+                AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
                     C64NetMessageType.ServerWelcome,
-                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, "CONNECTED")));
+                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, "CONNECTED"))));
 
                 // Add the client only after welcome was sent, so the UI never shows a
                 // half-handshaken socket.
@@ -762,9 +788,9 @@ namespace C64Emulator.Network
         /// </summary>
         /// <param name="stream">Stream to the not-yet-accepted client.</param>
         /// <param name="reason">Human-readable rejection reason.</param>
-        private static void SendReject(NetworkStream stream, string reason)
+        private void SendReject(NetworkStream stream, string reason)
         {
-            C64NetProtocol.WriteMessage(stream, CreateMessage(C64NetMessageType.ServerReject, C64NetProtocol.CreateTextPayload(reason)));
+            AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(C64NetMessageType.ServerReject, C64NetProtocol.CreateTextPayload(reason))));
         }
 
         /// <summary>
@@ -832,6 +858,71 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Adds bytes written by any server-side socket.
+        /// </summary>
+        /// <param name="byteCount">Number of bytes written to the TCP stream.</param>
+        private void AddBytesSent(int byteCount)
+        {
+            if (byteCount > 0)
+            {
+                Interlocked.Add(ref _bytesSent, byteCount);
+            }
+        }
+
+        /// <summary>
+        /// Adds bytes read by any server-side socket.
+        /// </summary>
+        /// <param name="byteCount">Number of bytes read from the TCP stream.</param>
+        private void AddBytesReceived(int byteCount)
+        {
+            if (byteCount > 0)
+            {
+                Interlocked.Add(ref _bytesReceived, byteCount);
+            }
+        }
+
+        /// <summary>
+        /// Immutable host frame prepared once before it is queued for clients.
+        /// </summary>
+        private sealed class PendingVideoFrame
+        {
+            /// <summary>
+            /// Initializes a packed frame queued for one or more clients.
+            /// </summary>
+            /// <param name="packedPalettePixels">Packed 4-bit C64 palette pixels.</param>
+            /// <param name="width">Frame width.</param>
+            /// <param name="height">Frame height.</param>
+            /// <param name="frameId">Host completed frame id.</param>
+            public PendingVideoFrame(byte[] packedPalettePixels, int width, int height, long frameId)
+            {
+                PackedPalettePixels = packedPalettePixels;
+                Width = width;
+                Height = height;
+                FrameId = frameId;
+            }
+
+            /// <summary>
+            /// Gets the packed 4-bit C64 palette frame.
+            /// </summary>
+            public byte[] PackedPalettePixels { get; private set; }
+
+            /// <summary>
+            /// Gets the frame width.
+            /// </summary>
+            public int Width { get; private set; }
+
+            /// <summary>
+            /// Gets the frame height.
+            /// </summary>
+            public int Height { get; private set; }
+
+            /// <summary>
+            /// Gets the host completed frame id.
+            /// </summary>
+            public long FrameId { get; private set; }
+        }
+
+        /// <summary>
         /// Per-client transport state with independent receive and prioritized send queues.
         /// </summary>
         private sealed class ClientConnection
@@ -840,6 +931,10 @@ namespace C64Emulator.Network
             /// Maximum queued audio chunks per client before the oldest audio is dropped.
             /// </summary>
             private const int MaxAudioQueueLength = 8;
+            /// <summary>
+            /// Maximum number of delta frames before forcing a full keyframe.
+            /// </summary>
+            private const int MaxDeltaFramesBeforeKeyFrame = 120;
             private readonly C64NetServer _server;
             private readonly TcpClient _tcpClient;
             private readonly object _sendLock = new object();
@@ -855,11 +950,14 @@ namespace C64Emulator.Network
             /// <summary>
             /// Latest pending video frame. Replacing this drops stale frames for slow clients.
             /// </summary>
-            private C64NetMessage _latestVideo;
+            private PendingVideoFrame _latestVideo;
             private Task _receiveTask;
             private Task _sendTask;
             private volatile bool _closed;
             private int _latencyMilliseconds;
+            private byte[] _lastSentVideoPalettePixels;
+            private long _lastSentVideoFrameId;
+            private int _deltaFramesSinceKeyFrame;
 
             /// <summary>
             /// Initializes a connection after the server has accepted the handshake.
@@ -986,10 +1084,10 @@ namespace C64Emulator.Network
             /// <summary>
             /// Stores the latest pending video message.
             /// </summary>
-            /// <param name="message">Video frame to send.</param>
-            public void EnqueueVideo(C64NetMessage message)
+            /// <param name="frame">Packed video frame to send.</param>
+            public void EnqueueVideo(PendingVideoFrame frame)
             {
-                if (_closed || message == null)
+                if (_closed || frame == null)
                 {
                     return;
                 }
@@ -998,7 +1096,7 @@ namespace C64Emulator.Network
                 {
                     // Only keep the newest frame. This is the main protection that keeps
                     // one slow client from building an ever-growing video backlog.
-                    _latestVideo = message;
+                    _latestVideo = frame;
                 }
 
                 _sendSignal.Set();
@@ -1078,6 +1176,7 @@ namespace C64Emulator.Network
                             break;
                         }
 
+                        _server.AddBytesReceived(message.WireLength);
                         _server.HandleClientMessage(this, message);
                     }
                 }
@@ -1113,7 +1212,7 @@ namespace C64Emulator.Network
                             continue;
                         }
 
-                        C64NetProtocol.WriteMessage(stream, message);
+                        _server.AddBytesSent(C64NetProtocol.WriteMessage(stream, message));
                     }
                 }
                 catch (Exception ex)
@@ -1141,13 +1240,13 @@ namespace C64Emulator.Network
                         return _controlQueue.Dequeue();
                     }
 
-                    C64NetMessage video = _latestVideo;
+                    PendingVideoFrame video = _latestVideo;
                     if (video != null)
                     {
                         // Video outranks audio because the visual state should always be
                         // the freshest possible remote frame.
                         _latestVideo = null;
-                        return video;
+                        return CreateVideoMessage(video);
                     }
 
                     if (_audioQueue.Count > 0)
@@ -1157,6 +1256,38 @@ namespace C64Emulator.Network
 
                     return null;
                 }
+            }
+
+            /// <summary>
+            /// Encodes a queued frame as either a full keyframe or a delta from this client reference.
+            /// </summary>
+            /// <param name="video">Packed frame selected by the send queue.</param>
+            /// <returns>Protocol message ready to write, or null when encoding fails.</returns>
+            private C64NetMessage CreateVideoMessage(PendingVideoFrame video)
+            {
+                bool forceKeyFrame = _lastSentVideoPalettePixels == null || _deltaFramesSinceKeyFrame >= MaxDeltaFramesBeforeKeyFrame;
+                byte[] previous = forceKeyFrame ? null : _lastSentVideoPalettePixels;
+                long previousFrameId = forceKeyFrame ? 0 : _lastSentVideoFrameId;
+                bool usedDelta;
+                byte[] payload = C64NetProtocol.CreateBestVideoFramePayload(
+                    video.PackedPalettePixels,
+                    previous,
+                    video.Width,
+                    video.Height,
+                    video.FrameId,
+                    previousFrameId,
+                    out usedDelta);
+                if (payload == null || payload.Length == 0)
+                {
+                    return null;
+                }
+
+                // Update the reference after payload creation. If the following socket
+                // write fails, this connection is removed anyway.
+                _lastSentVideoPalettePixels = video.PackedPalettePixels;
+                _lastSentVideoFrameId = video.FrameId;
+                _deltaFramesSinceKeyFrame = usedDelta ? _deltaFramesSinceKeyFrame + 1 : 0;
+                return CreateMessage(C64NetMessageType.VideoFrame, payload);
             }
         }
     }

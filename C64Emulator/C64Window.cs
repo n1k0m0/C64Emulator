@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -91,6 +92,7 @@ namespace C64Emulator
         // client rows. The constants keep selection/wrapping independent of labels.
         private const int NetworkOverlayItemCount = 13;
         private const int NetworkOverlayServerItemCount = 6;
+        private const int NetworkOverlayVisibleClientRows = 3;
         // Remote clients resend unchanged joystick state periodically so the host can
         // recover from a dropped packet or a stale state after a quick reconnect.
         private const double RemoteInputRefreshSeconds = 0.05;
@@ -177,12 +179,16 @@ namespace C64Emulator
         private readonly object _networkClientsSync = new object();
         private readonly object _networkBroadcastSync = new object();
         private uint[] _networkFramePixels;
+        private uint[] _networkPendingFramePixels;
         // Reused host-side buffer: each completed frame is copied once and then encoded
         // once by the server before being shared with all clients.
         private uint[] _networkBroadcastFrameSnapshot;
         private int _networkFrameWidth;
         private int _networkFrameHeight;
         private long _networkFrameId;
+        private int _networkPendingFrameWidth;
+        private int _networkPendingFrameHeight;
+        private long _networkPendingFrameId;
         private long _lastDisplayedNetworkFrameId;
         // Frame id bookkeeping prevents sending the same completed PAL frame repeatedly
         // when the renderer runs faster than the emulated C64 frame rate.
@@ -195,6 +201,12 @@ namespace C64Emulator
         private int _networkSendFps;
         private long _networkSendFpsWindowStartTicks;
         private long _networkSendFpsNextTicks;
+        private double _networkSendKilobytesPerSecond;
+        private double _networkReceiveKilobytesPerSecond;
+        private long _networkTrafficWindowStartTicks;
+        private long _networkTrafficNextTicks;
+        private long _networkTrafficLastBytesSent;
+        private long _networkTrafficLastBytesReceived;
         private List<C64NetClientSnapshot> _networkClients = new List<C64NetClientSnapshot>();
         private double _smoothedMhz;
         private double _driveFooterVisibility;
@@ -651,6 +663,7 @@ namespace C64Emulator
 
             DrawNetworkStatusToast();
             UpdateNetworkSendFps();
+            UpdateNetworkTrafficRates();
 
             if (_networkMode == NetworkSessionMode.Host)
             {
@@ -1753,6 +1766,7 @@ namespace C64Emulator
 
             SendRemoteClientJoystickInput(false, time);
             UpdateNetworkReceiveFps();
+            UpdateNetworkTrafficRates();
 
             uint[] pixels;
             int width;
@@ -1760,7 +1774,19 @@ namespace C64Emulator
             long frameId;
             lock (_networkFrameSync)
             {
-                // The receive loop replaces the latest frame atomically under this lock.
+                // Promote at most one received frame per render. The receive thread writes
+                // only the pending buffer; the render thread owns the displayed buffer.
+                if (_networkPendingFramePixels != null && _networkPendingFrameId != _networkFrameId)
+                {
+                    uint[] oldDisplayedPixels = _networkFramePixels;
+                    _networkFramePixels = _networkPendingFramePixels;
+                    _networkPendingFramePixels = oldDisplayedPixels;
+                    _networkFrameWidth = _networkPendingFrameWidth;
+                    _networkFrameHeight = _networkPendingFrameHeight;
+                    _networkFrameId = _networkPendingFrameId;
+                    _networkPendingFrameId = _networkFrameId;
+                }
+
                 pixels = _networkFramePixels;
                 width = _networkFrameWidth;
                 height = _networkFrameHeight;
@@ -1868,6 +1894,99 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Updates the visible network throughput counters from transport byte totals.
+        /// </summary>
+        private void UpdateNetworkTrafficRates()
+        {
+            long nowTicks = DateTime.UtcNow.Ticks;
+            long bytesSent = GetNetworkTransportBytesSent();
+            long bytesReceived = GetNetworkTransportBytesReceived();
+            if (_networkTrafficNextTicks <= 0 ||
+                bytesSent < _networkTrafficLastBytesSent ||
+                bytesReceived < _networkTrafficLastBytesReceived)
+            {
+                ResetNetworkTrafficCounters(bytesSent, bytesReceived, nowTicks);
+                return;
+            }
+
+            if (nowTicks < _networkTrafficNextTicks)
+            {
+                return;
+            }
+
+            long elapsedTicks = Math.Max(TimeSpan.TicksPerMillisecond, nowTicks - _networkTrafficWindowStartTicks);
+            double elapsedSeconds = elapsedTicks / (double)TimeSpan.TicksPerSecond;
+            _networkSendKilobytesPerSecond = Math.Max(0.0, (bytesSent - _networkTrafficLastBytesSent) / 1024.0 / elapsedSeconds);
+            _networkReceiveKilobytesPerSecond = Math.Max(0.0, (bytesReceived - _networkTrafficLastBytesReceived) / 1024.0 / elapsedSeconds);
+            _networkTrafficLastBytesSent = bytesSent;
+            _networkTrafficLastBytesReceived = bytesReceived;
+            _networkTrafficWindowStartTicks = nowTicks;
+            _networkTrafficNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+        }
+
+        /// <summary>
+        /// Resets throughput windows to the current transport byte totals.
+        /// </summary>
+        /// <param name="bytesSent">Current total bytes sent.</param>
+        /// <param name="bytesReceived">Current total bytes received.</param>
+        /// <param name="nowTicks">Current UTC ticks.</param>
+        private void ResetNetworkTrafficCounters(long bytesSent, long bytesReceived, long nowTicks)
+        {
+            _networkSendKilobytesPerSecond = 0.0;
+            _networkReceiveKilobytesPerSecond = 0.0;
+            _networkTrafficLastBytesSent = Math.Max(0, bytesSent);
+            _networkTrafficLastBytesReceived = Math.Max(0, bytesReceived);
+            _networkTrafficWindowStartTicks = nowTicks;
+            _networkTrafficNextTicks = nowTicks + TimeSpan.TicksPerSecond;
+        }
+
+        /// <summary>
+        /// Resets throughput windows without reading a transport.
+        /// </summary>
+        private void ResetNetworkTrafficCounters()
+        {
+            ResetNetworkTrafficCounters(GetNetworkTransportBytesSent(), GetNetworkTransportBytesReceived(), DateTime.UtcNow.Ticks);
+        }
+
+        /// <summary>
+        /// Reads the active host/client transport's total bytes sent.
+        /// </summary>
+        /// <returns>Total bytes sent by the current network role.</returns>
+        private long GetNetworkTransportBytesSent()
+        {
+            if (_networkMode == NetworkSessionMode.Host && _networkServer != null)
+            {
+                return _networkServer.BytesSent;
+            }
+
+            if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
+            {
+                return _networkClient.BytesSent;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Reads the active host/client transport's total bytes received.
+        /// </summary>
+        /// <returns>Total bytes received by the current network role.</returns>
+        private long GetNetworkTransportBytesReceived()
+        {
+            if (_networkMode == NetworkSessionMode.Host && _networkServer != null)
+            {
+                return _networkServer.BytesReceived;
+            }
+
+            if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
+            {
+                return _networkClient.BytesReceived;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
         /// Starts the host-side network server.
         /// </summary>
         private void StartNetworkServer()
@@ -1898,6 +2017,7 @@ namespace C64Emulator
                 _networkSendFps = 0;
                 _networkSendFpsWindowStartTicks = DateTime.UtcNow.Ticks;
                 _networkSendFpsNextTicks = _networkSendFpsWindowStartTicks + TimeSpan.TicksPerSecond;
+                ResetNetworkTrafficCounters();
                 ShowNetworkStatus("SERVER LISTENING");
                 _system.LocalAudioEnabled = true;
                 SaveSettings();
@@ -1943,6 +2063,7 @@ namespace C64Emulator
             _networkSendFps = 0;
             _networkSendFpsWindowStartTicks = 0;
             _networkSendFpsNextTicks = 0;
+            ResetNetworkTrafficCounters(0, 0, DateTime.UtcNow.Ticks);
         }
 
         /// <summary>
@@ -1986,6 +2107,7 @@ namespace C64Emulator
             _networkReceiveFps = 0;
             _networkReceiveFpsWindowStartTicks = DateTime.UtcNow.Ticks;
             _networkReceiveFpsNextTicks = _networkReceiveFpsWindowStartTicks + TimeSpan.TicksPerSecond;
+            ResetNetworkTrafficCounters();
             ShowNetworkStatus(status);
             SaveSettings();
         }
@@ -2005,9 +2127,13 @@ namespace C64Emulator
                 // Drop remote frame references so the next local/remote session cannot
                 // accidentally draw a stale host image.
                 _networkFramePixels = null;
+                _networkPendingFramePixels = null;
                 _networkFrameWidth = 0;
                 _networkFrameHeight = 0;
                 _networkFrameId = 0;
+                _networkPendingFrameWidth = 0;
+                _networkPendingFrameHeight = 0;
+                _networkPendingFrameId = 0;
             }
 
             lock (_networkClientsSync)
@@ -2020,6 +2146,7 @@ namespace C64Emulator
             _networkReceiveFps = 0;
             _networkReceiveFpsWindowStartTicks = 0;
             _networkReceiveFpsNextTicks = 0;
+            ResetNetworkTrafficCounters(0, 0, DateTime.UtcNow.Ticks);
 
             if (_system != null)
             {
@@ -2051,12 +2178,18 @@ namespace C64Emulator
 
             lock (_networkFrameSync)
             {
-                // Keep only the latest decoded frame. Rendering always presents the newest
-                // available image and skips any older frames that arrived too quickly.
-                _networkFramePixels = frame.Pixels;
-                _networkFrameWidth = frame.Width;
-                _networkFrameHeight = frame.Height;
-                _networkFrameId = frame.FrameId;
+                // Copy into pending storage. The render thread swaps this into display
+                // storage, so the receive thread never overwrites pixels being drawn.
+                int pixelCount = frame.Width * frame.Height;
+                if (_networkPendingFramePixels == null || _networkPendingFramePixels.Length != pixelCount)
+                {
+                    _networkPendingFramePixels = new uint[pixelCount];
+                }
+
+                Array.Copy(frame.Pixels, _networkPendingFramePixels, pixelCount);
+                _networkPendingFrameWidth = frame.Width;
+                _networkPendingFrameHeight = frame.Height;
+                _networkPendingFrameId = frame.FrameId;
             }
 
             Interlocked.Increment(ref _networkFramesReceivedCounter);
@@ -4274,9 +4407,10 @@ namespace C64Emulator
         /// </summary>
         private void DrawNetworkOverlay()
         {
+            UpdateNetworkTrafficRates();
             List<C64NetClientSnapshot> clients = GetNetworkClientSnapshots();
             int overlayWidth = 386;
-            int overlayHeight = Math.Min(PixelsHeight - 8, 268);
+            int overlayHeight = Math.Min(PixelsHeight - 8, 276);
             int overlayX = (PixelsWidth - overlayWidth) / 2;
             int overlayY = (PixelsHeight - overlayHeight) / 2;
 
@@ -4303,7 +4437,7 @@ namespace C64Emulator
             int separatorY = menuY + (NetworkOverlayServerItemCount * 10) + 3;
             DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
 
-            int clientsY = overlayY + overlayHeight - 73;
+            int clientsY = overlayY + overlayHeight - 85;
             DrawOverlayText(menuX, clientsY, "CLIENTS " + clients.Count, 1, 108, 214, 182);
             if (clients.Count == 0)
             {
@@ -4313,8 +4447,8 @@ namespace C64Emulator
             {
                 // Keep the visible list short enough to fit inside the C64 overlay while
                 // still allowing the selected client to move through all connections.
-                int firstClient = Math.Max(0, Math.Min(_networkSelectedClientIndex, Math.Max(0, clients.Count - 4)));
-                for (int row = 0; row < 4 && firstClient + row < clients.Count; row++)
+                int firstClient = Math.Max(0, Math.Min(_networkSelectedClientIndex, Math.Max(0, clients.Count - NetworkOverlayVisibleClientRows)));
+                for (int row = 0; row < NetworkOverlayVisibleClientRows && firstClient + row < clients.Count; row++)
                 {
                     C64NetClientSnapshot client = clients[firstClient + row];
                     bool selected = firstClient + row == _networkSelectedClientIndex;
@@ -4331,6 +4465,7 @@ namespace C64Emulator
                 }
             }
 
+            DrawOverlayText(menuX, overlayY + overlayHeight - 27, FormatNetworkTrafficText(), 1, 192, 210, 225);
             DrawOverlayText(menuX, overlayY + overlayHeight - 15, "STATUS " + FormatOverlayValue(_networkStatusText, 45), 1, 108, 214, 182);
         }
 
@@ -4586,6 +4721,39 @@ namespace C64Emulator
                 default:
                     return "LOCAL";
             }
+        }
+
+        /// <summary>
+        /// Formats the active network throughput footer for the F7 overlay.
+        /// </summary>
+        /// <returns>Short send/receive throughput string.</returns>
+        private string FormatNetworkTrafficText()
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "NET SEND {0} KB/S  REC {1} KB/S",
+                FormatNetworkRate(_networkSendKilobytesPerSecond),
+                FormatNetworkRate(_networkReceiveKilobytesPerSecond));
+        }
+
+        /// <summary>
+        /// Formats a kilobytes-per-second value for the pixel overlay.
+        /// </summary>
+        /// <param name="kilobytesPerSecond">Throughput in 1024-byte kilobytes per second.</param>
+        /// <returns>Compact one-decimal or integer rate string.</returns>
+        private static string FormatNetworkRate(double kilobytesPerSecond)
+        {
+            if (kilobytesPerSecond < 0.05)
+            {
+                return "0.0";
+            }
+
+            if (kilobytesPerSecond < 100.0)
+            {
+                return kilobytesPerSecond.ToString("0.0", CultureInfo.InvariantCulture);
+            }
+
+            return kilobytesPerSecond.ToString("0", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

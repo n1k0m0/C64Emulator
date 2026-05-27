@@ -26,12 +26,199 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Key = OpenTK.Input.Key;
 using KeyModifiers = OpenTK.Input.KeyModifiers;
 using MouseState = OpenTK.Input.MouseState;
 
 namespace SharpPixels
 {
+    /// <summary>
+    /// Applies Windows scheduling hints for realtime rendering windows.
+    /// </summary>
+    internal static class WindowsRenderScheduling
+    {
+        private const int ProcessPowerThrottling = 4;
+        private const int ThreadPowerThrottling = 3;
+        private const uint ProcessPowerThrottlingCurrentVersion = 1;
+        private const uint ThreadPowerThrottlingCurrentVersion = 1;
+        private const uint PowerThrottlingExecutionSpeed = 0x1;
+        private const uint ProcessPowerThrottlingIgnoreTimerResolution = 0x4;
+
+        private static readonly object SyncRoot = new object();
+        private static bool _processApplied;
+
+        /// <summary>
+        /// Applies all available process and render-thread scheduling hints for the
+        /// calling thread.
+        /// </summary>
+        public static void Apply()
+        {
+            ApplyProcessHints();
+            ApplyCurrentThreadHints();
+        }
+
+        /// <summary>
+        /// Tells Windows not to reduce this process' execution speed or ignore timer
+        /// resolution requests while it is in the background. Some systems otherwise
+        /// lower unfocused OpenGL windows to a much smaller frame cadence, which is
+        /// visible for remote C64 clients.
+        /// </summary>
+        private static void ApplyProcessHints()
+        {
+            if (_processApplied)
+            {
+                return;
+            }
+
+            lock (SyncRoot)
+            {
+                if (_processApplied)
+                {
+                    return;
+                }
+
+                DisableProcessThrottling();
+                _processApplied = true;
+            }
+        }
+
+        /// <summary>
+        /// Raises the current render thread above the default scheduler class and
+        /// opts it out of EcoQoS execution-speed throttling.
+        /// </summary>
+        private static void ApplyCurrentThreadHints()
+        {
+            try
+            {
+                Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
+            }
+            catch (ThreadStateException)
+            {
+                // If the runtime refuses the priority change, the Win32 QoS hint below
+                // can still help on supported Windows versions.
+            }
+
+            DisableCurrentThreadThrottling();
+        }
+
+        /// <summary>
+        /// Disables process-level throttling flags when the host Windows version
+        /// supports them.
+        /// </summary>
+        private static void DisableProcessThrottling()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return;
+            }
+
+            if (TrySetProcessPowerThrottling(
+                PowerThrottlingExecutionSpeed | ProcessPowerThrottlingIgnoreTimerResolution,
+                0))
+            {
+                return;
+            }
+
+            TrySetProcessPowerThrottling(PowerThrottlingExecutionSpeed, 0);
+        }
+
+        /// <summary>
+        /// Applies the given process-level power-throttling mask.
+        /// </summary>
+        /// <param name="controlMask">Power-throttling mechanisms controlled by the caller.</param>
+        /// <param name="stateMask">Power-throttling mechanisms that should be enabled.</param>
+        /// <returns>True if Windows accepted the setting.</returns>
+        private static bool TrySetProcessPowerThrottling(uint controlMask, uint stateMask)
+        {
+            var throttlingState = new PowerThrottlingState
+            {
+                Version = ProcessPowerThrottlingCurrentVersion,
+                ControlMask = controlMask,
+                StateMask = stateMask
+            };
+
+            try
+            {
+                return SetProcessInformation(
+                    Process.GetCurrentProcess().Handle,
+                    ProcessPowerThrottling,
+                    ref throttlingState,
+                    Marshal.SizeOf<PowerThrottlingState>());
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // Windows versions without SetProcessInformation keep their default scheduling.
+                return false;
+            }
+            catch (DllNotFoundException)
+            {
+                // Non-standard runtimes without kernel32.dll keep their default scheduling.
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Disables thread-level EcoQoS execution-speed throttling when available.
+        /// </summary>
+        private static void DisableCurrentThreadThrottling()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return;
+            }
+
+            var throttlingState = new PowerThrottlingState
+            {
+                Version = ThreadPowerThrottlingCurrentVersion,
+                ControlMask = PowerThrottlingExecutionSpeed,
+                StateMask = 0
+            };
+
+            try
+            {
+                SetThreadInformation(
+                    GetCurrentThread(),
+                    ThreadPowerThrottling,
+                    ref throttlingState,
+                    Marshal.SizeOf<PowerThrottlingState>());
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // Windows versions without SetThreadInformation keep their default scheduling.
+            }
+            catch (DllNotFoundException)
+            {
+                // Non-standard runtimes without kernel32.dll keep their default scheduling.
+            }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetProcessInformation(
+            IntPtr process,
+            int processInformationClass,
+            ref PowerThrottlingState processInformation,
+            int processInformationSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetCurrentThread();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetThreadInformation(
+            IntPtr thread,
+            int threadInformationClass,
+            ref PowerThrottlingState threadInformation,
+            int threadInformationSize);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PowerThrottlingState
+        {
+            public uint Version;
+            public uint ControlMask;
+            public uint StateMask;
+        }
+    }
+
     /// <summary>
     /// We use a BitmapMemory to "memorize" the bitmap pointer to the bitmap's pixel data
     /// Also, we lock the bitmap once, thus, this does not cost performance during each cycle if we have hundreds of bitmaps
@@ -98,9 +285,9 @@ namespace SharpPixels
         /// </summary>
         private readonly Stopwatch _drawingStopwatch = new Stopwatch();      
         /// <summary>
-        /// StartTime of fps counter; is resettet each 1 second
+        /// Start time of the current FPS measuring window in stopwatch milliseconds.
         /// </summary>
-        private DateTime _nextFPSTime = DateTime.Now;
+        private long _fpsWindowStartMilliseconds;
         /// <summary>
         /// Counter for fps
         /// </summary>
@@ -176,15 +363,8 @@ namespace SharpPixels
         /// </summary>
         public SharpPixelsWindow(int width, int height, string title)
             : base(
-                GameWindowSettings.Default,
-                new NativeWindowSettings
-                {
-                    ClientSize = new Vector2i(width, height),
-                    Title = title,
-                    API = ContextAPI.OpenGL,
-                    APIVersion = new Version(3, 3),
-                    Profile = ContextProfile.Core
-                })
+                CreateGameWindowSettings(),
+                CreateNativeWindowSettings(width, height, title))
         {
             PixelsWidth = width;
             PixelsHeight = height;
@@ -196,6 +376,41 @@ namespace SharpPixels
             ClearScreen();
             UpdateTextureCoordinates();
         }       
+
+        /// <summary>
+        /// Creates the OpenTK game-loop settings used by all SharpPixels windows.
+        /// </summary>
+        /// <returns>Game-loop settings configured for continuous realtime rendering.</returns>
+        private static GameWindowSettings CreateGameWindowSettings()
+        {
+            return new GameWindowSettings
+            {
+                UpdateFrequency = 0.0,
+                Win32SuspendTimerOnDrag = false
+            };
+        }
+
+        /// <summary>
+        /// Creates the native OpenTK window settings used by all SharpPixels windows.
+        /// </summary>
+        /// <param name="width">Initial client width.</param>
+        /// <param name="height">Initial client height.</param>
+        /// <param name="title">Initial window title.</param>
+        /// <returns>Native window settings configured for OpenGL rendering.</returns>
+        private static NativeWindowSettings CreateNativeWindowSettings(int width, int height, string title)
+        {
+            return new NativeWindowSettings
+            {
+                ClientSize = new Vector2i(width, height),
+                Title = title,
+                API = ContextAPI.OpenGL,
+                APIVersion = new Version(3, 3),
+                Profile = ContextProfile.Core,
+                IsEventDriven = false,
+                Vsync = VSyncMode.Off,
+                AutoIconify = false
+            };
+        }
 
         /// <summary>
         /// Current frames per second count
@@ -212,11 +427,106 @@ namespace SharpPixels
         public uint KeyPressInterval { get; set; } = 50;
 
         /// <summary>
+        /// Runs the SharpPixels window loop without OpenTK's Windows core-affinity
+        /// pinning, which can hurt unfocused windows after they lose the foreground
+        /// scheduler boost.
+        /// </summary>
+        public override unsafe void Run()
+        {
+            bool timerPeriodStarted = false;
+            bool loaded = false;
+            const uint TimePeriodMilliseconds = 1;
+
+            try
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    WindowsRenderScheduling.Apply();
+                    timeBeginPeriod(TimePeriodMilliseconds);
+                    timerPeriodStarted = true;
+                    ExpectedSchedulerPeriod = (int)TimePeriodMilliseconds;
+                }
+
+                Context?.MakeCurrent();
+                OnLoad();
+                loaded = true;
+                OnResize(new ResizeEventArgs(ClientSize));
+
+                var updateStopwatch = Stopwatch.StartNew();
+                while (!GLFW.WindowShouldClose(WindowPtr))
+                {
+                    double updatePeriod = UpdateFrequency == 0.0 ? 0.0 : 1.0 / UpdateFrequency;
+                    double elapsedSeconds = updateStopwatch.Elapsed.TotalSeconds;
+                    if (elapsedSeconds > updatePeriod)
+                    {
+                        updateStopwatch.Restart();
+                        NewInputFrame();
+                        ProcessWindowEvents(false);
+                        UpdateTime = elapsedSeconds;
+                        OnUpdateFrame(new FrameEventArgs(elapsedSeconds));
+                        OnRenderFrame(new FrameEventArgs(elapsedSeconds));
+                    }
+
+                    double secondsUntilNextUpdate = updatePeriod - updateStopwatch.Elapsed.TotalSeconds;
+                    SleepUntilNextUpdate(secondsUntilNextUpdate);
+                }
+            }
+            finally
+            {
+                if (loaded)
+                {
+                    OnUnload();
+                }
+
+                if (timerPeriodStarted)
+                {
+                    timeEndPeriod(TimePeriodMilliseconds);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sleeps or yields until the next fixed-rate update is due.
+        /// </summary>
+        /// <param name="secondsUntilNextUpdate">Seconds remaining until the next update.</param>
+        private void SleepUntilNextUpdate(double secondsUntilNextUpdate)
+        {
+            if (secondsUntilNextUpdate <= 0.0)
+            {
+                return;
+            }
+
+            int sleepMilliseconds = (int)Math.Floor(secondsUntilNextUpdate * 1000.0) - ExpectedSchedulerPeriod;
+            if (sleepMilliseconds > 0)
+            {
+                Thread.Sleep(sleepMilliseconds);
+            }
+            else
+            {
+                Thread.Yield();
+            }
+        }
+
+        [DllImport("winmm.dll")]
+        private static extern uint timeBeginPeriod(uint periodMilliseconds);
+
+        [DllImport("winmm.dll")]
+        private static extern uint timeEndPeriod(uint periodMilliseconds);
+
+        /// <summary>
         /// Handles the on load operation.
         /// </summary>
         protected override void OnLoad()
-        {             
+        {
+            WindowsRenderScheduling.Apply();
+
             GL.ClearColor(0f, 0f, 0f, 1.0f);
+            // Let OpenTK run freely and keep driver VSync out of the timing path. Remote
+            // clients may receive 50 images per second but can present the latest one faster.
+            UpdateFrequency = 0.0;
+            IsEventDriven = false;
+            VSync = VSyncMode.Off;
+            AutoIconify = false;
             
             CursorState = CursorState.Hidden;
 
@@ -226,6 +536,7 @@ namespace SharpPixels
             KeyDown += SharpPixels_KeyDown;
             KeyUp += SharpPixels_KeyUp;
             FileDrop += SharpPixels_FileDrop;
+            FocusedChanged += SharpPixels_FocusedChanged;
 
             for (int i = 0; i < 256; i++)
             {
@@ -256,6 +567,7 @@ namespace SharpPixels
                 GL.Uniform1(_textureUniformLocation, 0);
             }
             _drawingStopwatch.Start();
+            ResetFpsCounter();
 
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
@@ -289,6 +601,7 @@ namespace SharpPixels
         /// </summary>
         protected override void OnUnload()
         {
+            FocusedChanged -= SharpPixels_FocusedChanged;
             GL.BindVertexArray(0);
             GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
             if (_vertexBufferObject != 0)
@@ -328,6 +641,27 @@ namespace SharpPixels
         }
 
         /// <summary>
+        /// Handles focus changes by reasserting render timing choices and restarting
+        /// the FPS sample window.
+        /// </summary>
+        /// <param name="e">Focus state event data.</param>
+        private void SharpPixels_FocusedChanged(FocusedChangedEventArgs e)
+        {
+            IsEventDriven = false;
+            VSync = VSyncMode.Off;
+            ResetFpsCounter();
+        }
+
+        /// <summary>
+        /// Restarts the FPS measurement window at the current stopwatch timestamp.
+        /// </summary>
+        private void ResetFpsCounter()
+        {
+            _fpsCounter = 0;
+            _fpsWindowStartMilliseconds = _drawingStopwatch.ElapsedMilliseconds;
+        }
+
+        /// <summary>
         /// Renders the current pixel buffer and queued text overlays.
         /// </summary>
         /// <param name="frameEventArgs">Frame timing arguments supplied by OpenTK.</param>
@@ -356,13 +690,18 @@ namespace SharpPixels
                 }
                 nextKeyPressTime = nextKeyPressTime.AddMilliseconds(KeyPressInterval);
             }
-            //output default title of the app with fps
-            if (dateTimeNow >= _nextFPSTime)
+            _fpsCounter++;
+
+            // Output default title of the app with fps. Use the real elapsed time
+            // instead of assuming this check fires exactly once per second; otherwise a
+            // previous stall can make the displayed FPS look artificially low.
+            long elapsedMilliseconds = _drawingStopwatch.ElapsedMilliseconds - _fpsWindowStartMilliseconds;
+            if (elapsedMilliseconds >= 1000)
             {
-                FPS = _fpsCounter;
+                FPS = (int)Math.Round((_fpsCounter * 1000.0) / elapsedMilliseconds);
                 Title = string.Format("FPS: {0}", FPS);
                 _fpsCounter = 0;
-                _nextFPSTime = _nextFPSTime.AddSeconds(1);
+                _fpsWindowStartMilliseconds = _drawingStopwatch.ElapsedMilliseconds;
                 
                 //delete cached bitmap data 
                 _expiredBitmapScratch.Clear();
@@ -379,9 +718,6 @@ namespace SharpPixels
                     UnlockBitmap(bitmap);
                 }
             }
-            
-            _fpsCounter++;         
-
             SwapBuffers();
             base.OnRenderFrame(frameEventArgs);
         }

@@ -16,13 +16,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Sockets;
 using System.Text;
 
 namespace C64Emulator.Network
 {
     /// <summary>
-    /// Lists every message kind understood by C64Net protocol version 1.
+    /// Lists every message kind understood by the current C64Net protocol version.
     /// </summary>
     public enum C64NetMessageType : ushort
     {
@@ -126,7 +127,7 @@ namespace C64Emulator.Network
         /// </summary>
         public C64NetMessageType Type { get; set; }
         /// <summary>
-        /// Gets or sets reserved protocol flags. Version 1 currently leaves them unused.
+        /// Gets or sets reserved protocol flags. The current protocol leaves them unused.
         /// </summary>
         public ushort Flags { get; set; }
         /// <summary>
@@ -141,6 +142,10 @@ namespace C64Emulator.Network
         /// Gets or sets the message body. An empty payload is represented by a zero-length array.
         /// </summary>
         public byte[] Payload { get; set; }
+        /// <summary>
+        /// Gets or sets the full byte count on the TCP stream, including the fixed header.
+        /// </summary>
+        public int WireLength { get; set; }
     }
 
     /// <summary>
@@ -210,7 +215,7 @@ namespace C64Emulator.Network
     }
 
     /// <summary>
-    /// Implements C64Net v1 framing and payload helpers.
+    /// Implements C64Net framing and payload helpers.
     /// </summary>
     /// <remarks>
     /// C64Net is intentionally small: TCP gives ordering and reliable delivery,
@@ -223,7 +228,7 @@ namespace C64Emulator.Network
         /// <summary>
         /// Current wire protocol version accepted by host and client.
         /// </summary>
-        public const int Version = 1;
+        public const int Version = 3;
         /// <summary>
         /// Default TCP port shown in the F7 network menu.
         /// </summary>
@@ -248,6 +253,30 @@ namespace C64Emulator.Network
         /// Compact 4-bit-per-pixel C64 palette video payload format id.
         /// </summary>
         private const int VideoFormatC64Palette4 = 1;
+        /// <summary>
+        /// Deflate-compressed full C64 palette payload format id.
+        /// </summary>
+        private const int VideoFormatC64Palette4Deflate = 2;
+        /// <summary>
+        /// Sparse delta against the previously accepted C64 palette frame.
+        /// </summary>
+        private const int VideoFormatC64Palette4Delta = 3;
+        /// <summary>
+        /// Deflate-compressed sparse delta against the previously accepted palette frame.
+        /// </summary>
+        private const int VideoFormatC64Palette4DeltaDeflate = 4;
+        /// <summary>
+        /// Required payload-size win before choosing compressed data.
+        /// </summary>
+        private const int MinimumCompressionSavings = 32;
+        /// <summary>
+        /// Raw little-endian 16-bit mono PCM audio payload format id.
+        /// </summary>
+        private const int AudioFormatPcm16 = 0;
+        /// <summary>
+        /// Self-contained 4-bit IMA ADPCM audio payload format id.
+        /// </summary>
+        private const int AudioFormatImaAdpcm4 = 1;
 
         private static readonly byte[] EmptyPayload = new byte[0];
         /// <summary>
@@ -274,6 +303,23 @@ namespace C64Emulator.Network
             0xFF959595u
         };
         private static readonly Dictionary<uint, byte> C64PaletteLookup = CreateC64PaletteLookup();
+        private static readonly int[] ImaAdpcmStepTable =
+        {
+            7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
+            19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+            50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+            130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
+            337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+            876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+            2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
+            5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
+            15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
+        };
+        private static readonly int[] ImaAdpcmIndexTable =
+        {
+            -1, -1, -1, -1, 2, 4, 6, 8,
+            -1, -1, -1, -1, 2, 4, 6, 8
+        };
 
         /// <summary>
         /// Writes one complete framed message to the TCP stream.
@@ -283,11 +329,12 @@ namespace C64Emulator.Network
         /// <exception cref="InvalidDataException">
         /// Thrown when the payload exceeds <see cref="MaxPayloadLength"/>.
         /// </exception>
-        public static void WriteMessage(NetworkStream stream, C64NetMessage message)
+        /// <returns>Number of bytes written to the stream, including the fixed header.</returns>
+        public static int WriteMessage(NetworkStream stream, C64NetMessage message)
         {
             if (stream == null || message == null)
             {
-                return;
+                return 0;
             }
 
             byte[] payload = message.Payload ?? EmptyPayload;
@@ -310,6 +357,9 @@ namespace C64Emulator.Network
                 // Payloads are already fully serialized by the message-specific helpers.
                 stream.Write(payload, 0, payload.Length);
             }
+
+            message.WireLength = HeaderLength + payload.Length;
+            return message.WireLength;
         }
 
         /// <summary>
@@ -353,7 +403,8 @@ namespace C64Emulator.Network
                 Flags = ReadUInt16(header, 6),
                 Sequence = ReadUInt32(header, 8),
                 Timestamp = ReadInt64(header, 12),
-                Payload = payload
+                Payload = payload,
+                WireLength = HeaderLength + payloadLength
             };
         }
 
@@ -508,7 +559,38 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
-        /// Builds a compact C64 palette video frame payload.
+        /// Packs ARGB32 emulator pixels into the 4-bit C64 palette format used on the wire.
+        /// </summary>
+        /// <param name="pixels">Source ARGB32 pixels from the host completed framebuffer.</param>
+        /// <param name="width">Source frame width.</param>
+        /// <param name="height">Source frame height.</param>
+        /// <returns>One byte per two pixels, or an empty array for invalid input.</returns>
+        public static byte[] CreatePackedVideoFrame(uint[] pixels, int width, int height)
+        {
+            if (pixels == null || !TryGetPixelCount(width, height, out int pixelCount) || pixels.Length < pixelCount)
+            {
+                return EmptyPayload;
+            }
+
+            // The C64 visible frame uses only 16 palette colors. Packing two 4-bit
+            // palette indices per byte cuts video payload size to one eighth of ARGB32.
+            int encodedLength = GetPalette4Length(pixelCount);
+            byte[] packed = new byte[encodedLength];
+            int offset = 0;
+            for (int index = 0; index < pixelCount; index += 2)
+            {
+                byte left = FindC64PaletteIndex(pixels[index]);
+                byte right = index + 1 < pixelCount ? FindC64PaletteIndex(pixels[index + 1]) : (byte)0;
+                // Low nibble is the first pixel, high nibble is the second. This keeps
+                // decoding branch-free for the common even-pixel case.
+                packed[offset++] = (byte)(left | (right << 4));
+            }
+
+            return packed;
+        }
+
+        /// <summary>
+        /// Builds the best available full-frame C64 palette video payload.
         /// </summary>
         /// <param name="pixels">Source ARGB32 pixels from the host completed framebuffer.</param>
         /// <param name="width">Source frame width.</param>
@@ -517,32 +599,48 @@ namespace C64Emulator.Network
         /// <returns>Serialized video payload, or an empty payload for invalid input.</returns>
         public static byte[] CreateVideoFramePayload(uint[] pixels, int width, int height, long frameId)
         {
-            int pixelCount = width * height;
-            if (pixels == null || width <= 0 || height <= 0 || pixels.Length < pixelCount)
+            byte[] packed = CreatePackedVideoFrame(pixels, width, height);
+            if (packed.Length == 0)
             {
                 return EmptyPayload;
             }
 
-            // The C64 visible frame uses only 16 palette colors. Packing two 4-bit
-            // palette indices per byte cuts video payload size to one eighth of ARGB32.
-            int encodedLength = (pixelCount + 1) / 2;
-            byte[] payload = new byte[24 + encodedLength];
-            WriteInt32(payload, 0, width);
-            WriteInt32(payload, 4, height);
-            WriteInt64(payload, 8, frameId);
-            WriteInt32(payload, 16, VideoFormatC64Palette4);
-            WriteInt32(payload, 20, encodedLength);
-            int offset = 24;
-            for (int index = 0; index < pixelCount; index += 2)
+            return CreateFullVideoFramePayload(packed, width, height, frameId);
+        }
+
+        /// <summary>
+        /// Builds either a full compressed frame or a delta frame, whichever is smaller.
+        /// </summary>
+        /// <param name="packedPalettePixels">Current frame packed as 4-bit C64 palette bytes.</param>
+        /// <param name="previousPackedPalettePixels">Previous frame accepted by this client.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Current host frame id.</param>
+        /// <param name="previousFrameId">Frame id belonging to <paramref name="previousPackedPalettePixels"/>.</param>
+        /// <param name="usedDelta">True when the returned payload depends on the previous frame.</param>
+        /// <returns>Serialized video payload, or an empty payload for invalid input.</returns>
+        public static byte[] CreateBestVideoFramePayload(byte[] packedPalettePixels, byte[] previousPackedPalettePixels, int width, int height, long frameId, long previousFrameId, out bool usedDelta)
+        {
+            usedDelta = false;
+            if (!IsValidPackedPaletteFrame(packedPalettePixels, width, height))
             {
-                byte left = FindC64PaletteIndex(pixels[index]);
-                byte right = index + 1 < pixelCount ? FindC64PaletteIndex(pixels[index + 1]) : (byte)0;
-                // Low nibble is the first pixel, high nibble is the second. This keeps
-                // decoding branch-free for the common even-pixel case.
-                payload[offset++] = (byte)(left | (right << 4));
+                return EmptyPayload;
             }
 
-            return payload;
+            byte[] fullPayload = CreateFullVideoFramePayload(packedPalettePixels, width, height, frameId);
+            if (!IsValidPackedPaletteFrame(previousPackedPalettePixels, width, height) || previousFrameId <= 0)
+            {
+                return fullPayload;
+            }
+
+            byte[] deltaPayload = CreateDeltaVideoFramePayload(packedPalettePixels, previousPackedPalettePixels, width, height, frameId, previousFrameId);
+            if (deltaPayload.Length > 0 && deltaPayload.Length + MinimumCompressionSavings < fullPayload.Length)
+            {
+                usedDelta = true;
+                return deltaPayload;
+            }
+
+            return fullPayload;
         }
 
         /// <summary>
@@ -551,6 +649,33 @@ namespace C64Emulator.Network
         /// <param name="payload">Serialized video payload.</param>
         /// <returns>Decoded frame, or null when the payload is malformed.</returns>
         public static C64NetVideoFrame ReadVideoFramePayload(byte[] payload)
+        {
+            byte[] referencePalettePixels = null;
+            long referenceFrameId = 0;
+            return ReadVideoFramePayload(payload, ref referencePalettePixels, ref referenceFrameId);
+        }
+
+        /// <summary>
+        /// Parses a video frame payload into ARGB pixels and updates the delta reference.
+        /// </summary>
+        /// <param name="payload">Serialized video payload.</param>
+        /// <param name="referencePalettePixels">Previous accepted packed frame for delta decoding.</param>
+        /// <param name="referenceFrameId">Frame id of <paramref name="referencePalettePixels"/>.</param>
+        /// <returns>Decoded frame, or null when the payload is malformed or the delta base is missing.</returns>
+        public static C64NetVideoFrame ReadVideoFramePayload(byte[] payload, ref byte[] referencePalettePixels, ref long referenceFrameId)
+        {
+            return ReadVideoFramePayload(payload, ref referencePalettePixels, ref referenceFrameId, null);
+        }
+
+        /// <summary>
+        /// Parses a video frame payload into ARGB pixels and updates the delta reference.
+        /// </summary>
+        /// <param name="payload">Serialized video payload.</param>
+        /// <param name="referencePalettePixels">Previous accepted packed frame for delta decoding.</param>
+        /// <param name="referenceFrameId">Frame id of <paramref name="referencePalettePixels"/>.</param>
+        /// <param name="pixelTarget">Optional reusable ARGB32 output buffer.</param>
+        /// <returns>Decoded frame, or null when the payload is malformed or the delta base is missing.</returns>
+        public static C64NetVideoFrame ReadVideoFramePayload(byte[] payload, ref byte[] referencePalettePixels, ref long referenceFrameId, uint[] pixelTarget)
         {
             if (payload == null || payload.Length < 20)
             {
@@ -561,32 +686,47 @@ namespace C64Emulator.Network
             int height = ReadInt32(payload, 4);
             long frameId = ReadInt64(payload, 8);
             int formatOrByteCount = ReadInt32(payload, 16);
-            int pixelCount = width * height;
-            if (width <= 0 || height <= 0 || pixelCount <= 0)
+            if (!TryGetPixelCount(width, height, out int pixelCount))
             {
                 return null;
             }
 
-            uint[] pixels = new uint[pixelCount];
+            byte[] packedPalettePixels = null;
+            uint[] pixels = null;
             if (payload.Length >= 24 && formatOrByteCount == VideoFormatC64Palette4)
             {
-                // Preferred v1 format: two C64 palette indices per byte.
+                // Base full-frame format: two C64 palette indices per byte.
                 int encodedLength = ReadInt32(payload, 20);
-                if (encodedLength != (pixelCount + 1) / 2 || payload.Length < 24 + encodedLength)
+                if (encodedLength != GetPalette4Length(pixelCount) || payload.Length < 24 + encodedLength)
                 {
                     return null;
                 }
 
-                int offset = 24;
-                for (int index = 0; index < pixelCount; index += 2)
+                packedPalettePixels = new byte[encodedLength];
+                Buffer.BlockCopy(payload, 24, packedPalettePixels, 0, encodedLength);
+            }
+            else if (payload.Length >= 28 && formatOrByteCount == VideoFormatC64Palette4Deflate)
+            {
+                int encodedLength = ReadInt32(payload, 20);
+                int compressedLength = ReadInt32(payload, 24);
+                if (encodedLength != GetPalette4Length(pixelCount) || compressedLength <= 0 || payload.Length < 28 + compressedLength)
                 {
-                    byte packed = payload[offset++];
-                    pixels[index] = C64Palette[packed & 0x0F];
-                    if (index + 1 < pixelCount)
-                    {
-                        pixels[index + 1] = C64Palette[(packed >> 4) & 0x0F];
-                    }
+                    return null;
                 }
+
+                packedPalettePixels = Inflate(payload, 28, compressedLength, encodedLength);
+                if (packedPalettePixels == null)
+                {
+                    return null;
+                }
+            }
+            else if (payload.Length >= 36 && formatOrByteCount == VideoFormatC64Palette4Delta)
+            {
+                packedPalettePixels = ReadDeltaVideoFramePayload(payload, 36, ReadInt32(payload, 20), ReadInt64(payload, 24), ReadInt32(payload, 32), false, pixelCount, referencePalettePixels, referenceFrameId);
+            }
+            else if (payload.Length >= 40 && formatOrByteCount == VideoFormatC64Palette4DeltaDeflate)
+            {
+                packedPalettePixels = ReadDeltaVideoFramePayload(payload, 40, ReadInt32(payload, 20), ReadInt64(payload, 24), ReadInt32(payload, 32), true, pixelCount, referencePalettePixels, referenceFrameId);
             }
             else
             {
@@ -598,6 +738,7 @@ namespace C64Emulator.Network
                     return null;
                 }
 
+                pixels = GetReusablePixelBuffer(pixelTarget, pixelCount);
                 int offset = 20;
                 for (int index = 0; index < pixelCount; index++)
                 {
@@ -608,8 +749,26 @@ namespace C64Emulator.Network
                         (payload[offset + 3] << 24));
                     offset += 4;
                 }
+
+                packedPalettePixels = CreatePackedVideoFrame(pixels, width, height);
             }
 
+            if (packedPalettePixels == null || !IsValidPackedPaletteFrame(packedPalettePixels, width, height))
+            {
+                return null;
+            }
+
+            if (pixels == null)
+            {
+                pixels = DecodePackedPaletteFrame(packedPalettePixels, pixelCount, pixelTarget);
+                if (pixels == null)
+                {
+                    return null;
+                }
+            }
+
+            referencePalettePixels = packedPalettePixels;
+            referenceFrameId = frameId;
             return new C64NetVideoFrame
             {
                 Width = width,
@@ -617,6 +776,406 @@ namespace C64Emulator.Network
                 FrameId = frameId,
                 Pixels = pixels
             };
+        }
+
+        /// <summary>
+        /// Builds a full-frame payload and applies Deflate when it wins.
+        /// </summary>
+        /// <param name="packedPalettePixels">Packed 4-bit C64 palette frame.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Host completed frame id.</param>
+        /// <returns>Serialized full-frame payload.</returns>
+        private static byte[] CreateFullVideoFramePayload(byte[] packedPalettePixels, int width, int height, long frameId)
+        {
+            byte[] rawPayload = CreateRawPalette4Payload(packedPalettePixels, width, height, frameId);
+            byte[] compressed = Deflate(packedPalettePixels, 0, packedPalettePixels.Length);
+            if (compressed == null)
+            {
+                return rawPayload;
+            }
+
+            byte[] compressedPayload = new byte[28 + compressed.Length];
+            WriteCommonVideoHeader(compressedPayload, width, height, frameId, VideoFormatC64Palette4Deflate);
+            WriteInt32(compressedPayload, 20, packedPalettePixels.Length);
+            WriteInt32(compressedPayload, 24, compressed.Length);
+            Buffer.BlockCopy(compressed, 0, compressedPayload, 28, compressed.Length);
+            return compressedPayload.Length + MinimumCompressionSavings < rawPayload.Length
+                ? compressedPayload
+                : rawPayload;
+        }
+
+        /// <summary>
+        /// Builds a raw uncompressed full-frame palette payload.
+        /// </summary>
+        /// <param name="packedPalettePixels">Packed 4-bit C64 palette frame.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Host completed frame id.</param>
+        /// <returns>Serialized raw palette payload.</returns>
+        private static byte[] CreateRawPalette4Payload(byte[] packedPalettePixels, int width, int height, long frameId)
+        {
+            byte[] payload = new byte[24 + packedPalettePixels.Length];
+            WriteCommonVideoHeader(payload, width, height, frameId, VideoFormatC64Palette4);
+            WriteInt32(payload, 20, packedPalettePixels.Length);
+            Buffer.BlockCopy(packedPalettePixels, 0, payload, 24, packedPalettePixels.Length);
+            return payload;
+        }
+
+        /// <summary>
+        /// Builds a sparse delta payload and applies Deflate to the delta stream when useful.
+        /// </summary>
+        /// <param name="packedPalettePixels">Current packed frame.</param>
+        /// <param name="previousPackedPalettePixels">Previous packed frame for this client.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Current host frame id.</param>
+        /// <param name="previousFrameId">Base frame id used by the delta.</param>
+        /// <returns>Serialized delta payload, or an empty payload when no delta can be built.</returns>
+        private static byte[] CreateDeltaVideoFramePayload(byte[] packedPalettePixels, byte[] previousPackedPalettePixels, int width, int height, long frameId, long previousFrameId)
+        {
+            if (packedPalettePixels == null || previousPackedPalettePixels == null || packedPalettePixels.Length != previousPackedPalettePixels.Length)
+            {
+                return EmptyPayload;
+            }
+
+            byte[] deltaData = CreateDeltaRunData(packedPalettePixels, previousPackedPalettePixels);
+            byte[] rawPayload = new byte[36 + deltaData.Length];
+            WriteCommonVideoHeader(rawPayload, width, height, frameId, VideoFormatC64Palette4Delta);
+            WriteInt32(rawPayload, 20, packedPalettePixels.Length);
+            WriteInt64(rawPayload, 24, previousFrameId);
+            WriteInt32(rawPayload, 32, deltaData.Length);
+            Buffer.BlockCopy(deltaData, 0, rawPayload, 36, deltaData.Length);
+
+            byte[] compressed = Deflate(deltaData, 0, deltaData.Length);
+            if (compressed == null)
+            {
+                return rawPayload;
+            }
+
+            byte[] compressedPayload = new byte[40 + compressed.Length];
+            WriteCommonVideoHeader(compressedPayload, width, height, frameId, VideoFormatC64Palette4DeltaDeflate);
+            WriteInt32(compressedPayload, 20, packedPalettePixels.Length);
+            WriteInt64(compressedPayload, 24, previousFrameId);
+            WriteInt32(compressedPayload, 32, deltaData.Length);
+            WriteInt32(compressedPayload, 36, compressed.Length);
+            Buffer.BlockCopy(compressed, 0, compressedPayload, 40, compressed.Length);
+            return compressedPayload.Length + MinimumCompressionSavings < rawPayload.Length
+                ? compressedPayload
+                : rawPayload;
+        }
+
+        /// <summary>
+        /// Encodes changed byte runs between two packed palette frames.
+        /// </summary>
+        /// <param name="current">Current packed frame.</param>
+        /// <param name="previous">Base packed frame.</param>
+        /// <returns>Run stream containing offset, length, and replacement bytes.</returns>
+        private static byte[] CreateDeltaRunData(byte[] current, byte[] previous)
+        {
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+            {
+                int index = 0;
+                while (index < current.Length)
+                {
+                    if (current[index] == previous[index])
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    int start = index;
+                    index++;
+                    while (index < current.Length && current[index] != previous[index])
+                    {
+                        index++;
+                    }
+
+                    int length = index - start;
+                    writer.Write(start);
+                    writer.Write(length);
+                    writer.Write(current, start, length);
+                }
+
+                return stream.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Decodes a raw or compressed delta payload into a new packed palette frame.
+        /// </summary>
+        /// <param name="payload">Full video payload.</param>
+        /// <param name="dataOffset">Offset of delta data or compressed delta data.</param>
+        /// <param name="packedLength">Expected packed frame length.</param>
+        /// <param name="baseFrameId">Frame id required by the delta payload.</param>
+        /// <param name="deltaLength">Uncompressed delta stream length.</param>
+        /// <param name="compressed">True when the delta stream is Deflate-compressed.</param>
+        /// <param name="pixelCount">Decoded frame pixel count.</param>
+        /// <param name="referencePalettePixels">Current decoder reference frame.</param>
+        /// <param name="referenceFrameId">Current decoder reference frame id.</param>
+        /// <returns>Decoded packed palette frame, or null when the delta cannot be applied.</returns>
+        private static byte[] ReadDeltaVideoFramePayload(byte[] payload, int dataOffset, int packedLength, long baseFrameId, int deltaLength, bool compressed, int pixelCount, byte[] referencePalettePixels, long referenceFrameId)
+        {
+            if (packedLength != GetPalette4Length(pixelCount) ||
+                deltaLength < 0 ||
+                referencePalettePixels == null ||
+                referencePalettePixels.Length != packedLength ||
+                referenceFrameId != baseFrameId)
+            {
+                return null;
+            }
+
+            byte[] deltaData;
+            if (compressed)
+            {
+                int compressedLength = ReadInt32(payload, 36);
+                if (compressedLength <= 0 || payload.Length < dataOffset + compressedLength)
+                {
+                    return null;
+                }
+
+                deltaData = Inflate(payload, dataOffset, compressedLength, deltaLength);
+            }
+            else
+            {
+                if (payload.Length < dataOffset + deltaLength)
+                {
+                    return null;
+                }
+
+                deltaData = new byte[deltaLength];
+                Buffer.BlockCopy(payload, dataOffset, deltaData, 0, deltaLength);
+            }
+
+            if (deltaData == null)
+            {
+                return null;
+            }
+
+            byte[] packedPalettePixels = new byte[packedLength];
+            Buffer.BlockCopy(referencePalettePixels, 0, packedPalettePixels, 0, packedLength);
+            return ApplyDeltaRunData(packedPalettePixels, deltaData) ? packedPalettePixels : null;
+        }
+
+        /// <summary>
+        /// Applies offset/length replacement runs to a packed palette frame.
+        /// </summary>
+        /// <param name="target">Frame copy that should receive the changes.</param>
+        /// <param name="deltaData">Run stream containing offset, length, and replacement bytes.</param>
+        /// <returns>True when the entire delta stream was valid.</returns>
+        private static bool ApplyDeltaRunData(byte[] target, byte[] deltaData)
+        {
+            int offset = 0;
+            while (offset < deltaData.Length)
+            {
+                if (deltaData.Length - offset < 8)
+                {
+                    return false;
+                }
+
+                int targetOffset = ReadInt32(deltaData, offset);
+                int length = ReadInt32(deltaData, offset + 4);
+                offset += 8;
+                if (targetOffset < 0 || length < 0 || targetOffset > target.Length - length || deltaData.Length - offset < length)
+                {
+                    return false;
+                }
+
+                Buffer.BlockCopy(deltaData, offset, target, targetOffset, length);
+                offset += length;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Decodes packed 4-bit C64 palette bytes into ARGB32 pixels.
+        /// </summary>
+        /// <param name="packedPalettePixels">Packed 4-bit palette frame.</param>
+        /// <param name="pixelCount">Number of pixels to decode.</param>
+        /// <returns>Decoded ARGB32 pixels, or null when the packed data is too short.</returns>
+        private static uint[] DecodePackedPaletteFrame(byte[] packedPalettePixels, int pixelCount)
+        {
+            return DecodePackedPaletteFrame(packedPalettePixels, pixelCount, null);
+        }
+
+        /// <summary>
+        /// Decodes packed 4-bit C64 palette bytes into ARGB32 pixels.
+        /// </summary>
+        /// <param name="packedPalettePixels">Packed 4-bit palette frame.</param>
+        /// <param name="pixelCount">Number of pixels to decode.</param>
+        /// <param name="pixelTarget">Optional reusable ARGB32 output buffer.</param>
+        /// <returns>Decoded ARGB32 pixels, or null when the packed data is too short.</returns>
+        private static uint[] DecodePackedPaletteFrame(byte[] packedPalettePixels, int pixelCount, uint[] pixelTarget)
+        {
+            if (packedPalettePixels == null || packedPalettePixels.Length < GetPalette4Length(pixelCount))
+            {
+                return null;
+            }
+
+            uint[] pixels = GetReusablePixelBuffer(pixelTarget, pixelCount);
+            int offset = 0;
+            for (int index = 0; index < pixelCount; index += 2)
+            {
+                byte packed = packedPalettePixels[offset++];
+                pixels[index] = C64Palette[packed & 0x0F];
+                if (index + 1 < pixelCount)
+                {
+                    pixels[index + 1] = C64Palette[(packed >> 4) & 0x0F];
+                }
+            }
+
+            return pixels;
+        }
+
+        /// <summary>
+        /// Returns a caller-supplied pixel buffer when it is large enough, otherwise allocates one.
+        /// </summary>
+        /// <param name="pixelTarget">Optional reusable ARGB32 output buffer.</param>
+        /// <param name="pixelCount">Required pixel count.</param>
+        /// <returns>Buffer suitable for decoding one frame.</returns>
+        private static uint[] GetReusablePixelBuffer(uint[] pixelTarget, int pixelCount)
+        {
+            return pixelTarget != null && pixelTarget.Length >= pixelCount
+                ? pixelTarget
+                : new uint[pixelCount];
+        }
+
+        /// <summary>
+        /// Writes the common video payload header fields.
+        /// </summary>
+        /// <param name="payload">Destination payload buffer.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Host completed frame id.</param>
+        /// <param name="format">Video payload format id.</param>
+        private static void WriteCommonVideoHeader(byte[] payload, int width, int height, long frameId, int format)
+        {
+            WriteInt32(payload, 0, width);
+            WriteInt32(payload, 4, height);
+            WriteInt64(payload, 8, frameId);
+            WriteInt32(payload, 16, format);
+        }
+
+        /// <summary>
+        /// Checks whether dimensions produce a sane positive pixel count.
+        /// </summary>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="pixelCount">Validated pixel count.</param>
+        /// <returns>True when the dimensions are valid.</returns>
+        private static bool TryGetPixelCount(int width, int height, out int pixelCount)
+        {
+            pixelCount = 0;
+            if (width <= 0 || height <= 0 || width > int.MaxValue / height)
+            {
+                return false;
+            }
+
+            pixelCount = width * height;
+            return pixelCount > 0;
+        }
+
+        /// <summary>
+        /// Gets the number of bytes required for a 4-bit packed frame.
+        /// </summary>
+        /// <param name="pixelCount">Number of pixels.</param>
+        /// <returns>Number of bytes required by two-pixels-per-byte packing.</returns>
+        private static int GetPalette4Length(int pixelCount)
+        {
+            return (pixelCount + 1) / 2;
+        }
+
+        /// <summary>
+        /// Validates a packed 4-bit C64 palette frame against expected dimensions.
+        /// </summary>
+        /// <param name="packedPalettePixels">Packed frame to validate.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <returns>True when the packed frame length matches the dimensions.</returns>
+        private static bool IsValidPackedPaletteFrame(byte[] packedPalettePixels, int width, int height)
+        {
+            return TryGetPixelCount(width, height, out int pixelCount) &&
+                packedPalettePixels != null &&
+                packedPalettePixels.Length == GetPalette4Length(pixelCount);
+        }
+
+        /// <summary>
+        /// Compresses a byte range with fast Deflate.
+        /// </summary>
+        /// <param name="buffer">Source buffer.</param>
+        /// <param name="offset">Source offset.</param>
+        /// <param name="count">Number of source bytes.</param>
+        /// <returns>Compressed data, or null when compression fails.</returns>
+        private static byte[] Deflate(byte[] buffer, int offset, int count)
+        {
+            if (buffer == null || offset < 0 || count < 0 || offset > buffer.Length - count)
+            {
+                return null;
+            }
+
+            try
+            {
+                using (var output = new MemoryStream())
+                {
+                    using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, true))
+                    {
+                        if (count > 0)
+                        {
+                            deflate.Write(buffer, offset, count);
+                        }
+                    }
+
+                    return output.ToArray();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Decompresses a Deflate byte range to an exact expected length.
+        /// </summary>
+        /// <param name="buffer">Source buffer.</param>
+        /// <param name="offset">Source offset.</param>
+        /// <param name="count">Compressed byte count.</param>
+        /// <param name="expectedLength">Expected decompressed byte count.</param>
+        /// <returns>Decompressed bytes, or null when the stream is invalid.</returns>
+        private static byte[] Inflate(byte[] buffer, int offset, int count, int expectedLength)
+        {
+            if (buffer == null || offset < 0 || count <= 0 || expectedLength < 0 || offset > buffer.Length - count)
+            {
+                return null;
+            }
+
+            try
+            {
+                byte[] output = new byte[expectedLength];
+                using (var input = new MemoryStream(buffer, offset, count))
+                using (var deflate = new DeflateStream(input, CompressionMode.Decompress))
+                {
+                    int totalRead = 0;
+                    while (totalRead < expectedLength)
+                    {
+                        int read = deflate.Read(output, totalRead, expectedLength - totalRead);
+                        if (read <= 0)
+                        {
+                            break;
+                        }
+
+                        totalRead += read;
+                    }
+
+                    return totalRead == expectedLength ? output : null;
+                }
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -673,7 +1232,7 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
-        /// Builds a PCM audio chunk payload.
+        /// Builds a compact audio chunk payload, preferring self-contained 4-bit ADPCM.
         /// </summary>
         /// <param name="buffer">Little-endian 16-bit mono PCM bytes.</param>
         /// <param name="count">Number of bytes from <paramref name="buffer"/> to serialize.</param>
@@ -687,17 +1246,34 @@ namespace C64Emulator.Network
             }
 
             count = Math.Min(count, buffer.Length);
-            byte[] payload = new byte[8 + count];
+            count -= count % 2;
+            if (count <= 0)
+            {
+                return EmptyPayload;
+            }
+
+            byte[] rawPayload = CreateRawAudioChunkPayload(buffer, count, sampleRate);
+            byte[] adpcmBytes = EncodeImaAdpcmBlock(buffer, count);
+            if (adpcmBytes == null || adpcmBytes.Length == 0)
+            {
+                return rawPayload;
+            }
+
+            byte[] adpcmPayload = new byte[16 + adpcmBytes.Length];
             // Store the sample rate with every chunk so clients can validate that
             // their audio output still matches the host stream.
-            WriteInt32(payload, 0, sampleRate);
-            WriteInt32(payload, 4, count);
-            Buffer.BlockCopy(buffer, 0, payload, 8, count);
-            return payload;
+            WriteInt32(adpcmPayload, 0, sampleRate);
+            WriteInt32(adpcmPayload, 4, AudioFormatImaAdpcm4);
+            WriteInt32(adpcmPayload, 8, count);
+            WriteInt32(adpcmPayload, 12, adpcmBytes.Length);
+            Buffer.BlockCopy(adpcmBytes, 0, adpcmPayload, 16, adpcmBytes.Length);
+            return adpcmPayload.Length + MinimumCompressionSavings < rawPayload.Length
+                ? adpcmPayload
+                : rawPayload;
         }
 
         /// <summary>
-        /// Parses a PCM audio chunk payload.
+        /// Parses a raw PCM or self-contained ADPCM audio chunk payload.
         /// </summary>
         /// <param name="payload">Serialized audio payload.</param>
         /// <param name="sampleRate">Decoded PCM sample rate.</param>
@@ -715,7 +1291,44 @@ namespace C64Emulator.Network
             }
 
             sampleRate = ReadInt32(payload, 0);
-            count = ReadInt32(payload, 4);
+            int formatOrCount = ReadInt32(payload, 4);
+            if (payload.Length >= 16 && (formatOrCount == AudioFormatPcm16 || formatOrCount == AudioFormatImaAdpcm4))
+            {
+                int decodedCount = ReadInt32(payload, 8);
+                int encodedCount = ReadInt32(payload, 12);
+                if (sampleRate <= 0 || decodedCount <= 0 || encodedCount <= 0 || payload.Length < 16 + encodedCount)
+                {
+                    count = 0;
+                    return false;
+                }
+
+                if (formatOrCount == AudioFormatPcm16)
+                {
+                    if (decodedCount != encodedCount)
+                    {
+                        count = 0;
+                        return false;
+                    }
+
+                    buffer = new byte[decodedCount];
+                    Buffer.BlockCopy(payload, 16, buffer, 0, decodedCount);
+                    count = decodedCount;
+                    return true;
+                }
+
+                buffer = DecodeImaAdpcmBlock(payload, 16, encodedCount, decodedCount);
+                if (buffer == null)
+                {
+                    buffer = EmptyPayload;
+                    count = 0;
+                    return false;
+                }
+
+                count = buffer.Length;
+                return true;
+            }
+
+            count = formatOrCount;
             if (sampleRate <= 0 || count <= 0 || payload.Length < 8 + count)
             {
                 // Invalid chunks are ignored instead of tearing down the whole session;
@@ -727,6 +1340,212 @@ namespace C64Emulator.Network
             buffer = new byte[count];
             Buffer.BlockCopy(payload, 8, buffer, 0, count);
             return true;
+        }
+
+        /// <summary>
+        /// Builds the legacy raw PCM audio payload used as the lossless fallback.
+        /// </summary>
+        /// <param name="buffer">Little-endian 16-bit mono PCM bytes.</param>
+        /// <param name="count">Even number of valid PCM bytes.</param>
+        /// <param name="sampleRate">PCM sample rate for this chunk.</param>
+        /// <returns>Serialized raw PCM audio payload.</returns>
+        private static byte[] CreateRawAudioChunkPayload(byte[] buffer, int count, int sampleRate)
+        {
+            byte[] payload = new byte[8 + count];
+            WriteInt32(payload, 0, sampleRate);
+            WriteInt32(payload, 4, count);
+            Buffer.BlockCopy(buffer, 0, payload, 8, count);
+            return payload;
+        }
+
+        /// <summary>
+        /// Encodes one independent 16-bit PCM block as 4-bit IMA ADPCM.
+        /// </summary>
+        /// <param name="buffer">Little-endian source PCM.</param>
+        /// <param name="count">Even number of source bytes.</param>
+        /// <returns>ADPCM block with predictor and step-index seed, or null for invalid input.</returns>
+        private static byte[] EncodeImaAdpcmBlock(byte[] buffer, int count)
+        {
+            if (buffer == null || count <= 0 || (count & 1) != 0 || buffer.Length < count)
+            {
+                return null;
+            }
+
+            int sampleCount = count / 2;
+            int predictor = ReadInt16(buffer, 0);
+            int stepIndex = EstimateImaAdpcmInitialIndex(buffer, count);
+            int nibbleCount = Math.Max(0, sampleCount - 1);
+            byte[] encoded = new byte[4 + ((nibbleCount + 1) / 2)];
+            WriteInt16(encoded, 0, (short)predictor);
+            encoded[2] = (byte)stepIndex;
+            encoded[3] = 0;
+
+            for (int sampleIndex = 1; sampleIndex < sampleCount; sampleIndex++)
+            {
+                int nibbleIndex = sampleIndex - 1;
+                int sample = ReadInt16(buffer, sampleIndex * 2);
+                int nibble = EncodeImaAdpcmNibble(sample, ref predictor, ref stepIndex);
+                int packedOffset = 4 + (nibbleIndex / 2);
+                if ((nibbleIndex & 1) == 0)
+                {
+                    encoded[packedOffset] = (byte)(nibble & 0x0F);
+                }
+                else
+                {
+                    encoded[packedOffset] |= (byte)((nibble & 0x0F) << 4);
+                }
+            }
+
+            return encoded;
+        }
+
+        /// <summary>
+        /// Decodes one independent 4-bit IMA ADPCM block back to little-endian PCM.
+        /// </summary>
+        /// <param name="buffer">Payload buffer containing the encoded block.</param>
+        /// <param name="offset">Encoded block offset.</param>
+        /// <param name="count">Encoded block byte count.</param>
+        /// <param name="decodedCount">Expected decoded PCM byte count.</param>
+        /// <returns>Decoded PCM bytes, or null when the block is malformed.</returns>
+        private static byte[] DecodeImaAdpcmBlock(byte[] buffer, int offset, int count, int decodedCount)
+        {
+            if (buffer == null || offset < 0 || count < 4 || decodedCount <= 0 || (decodedCount & 1) != 0 || offset > buffer.Length - count)
+            {
+                return null;
+            }
+
+            int sampleCount = decodedCount / 2;
+            int expectedEncodedCount = 4 + (Math.Max(0, sampleCount - 1) + 1) / 2;
+            if (count != expectedEncodedCount)
+            {
+                return null;
+            }
+
+            int predictor = ReadInt16(buffer, offset);
+            int stepIndex = buffer[offset + 2];
+            if (stepIndex < 0 || stepIndex >= ImaAdpcmStepTable.Length)
+            {
+                return null;
+            }
+
+            byte[] decoded = new byte[decodedCount];
+            WriteInt16(decoded, 0, (short)predictor);
+            for (int sampleIndex = 1; sampleIndex < sampleCount; sampleIndex++)
+            {
+                int nibbleIndex = sampleIndex - 1;
+                int packed = buffer[offset + 4 + (nibbleIndex / 2)];
+                int nibble = (nibbleIndex & 1) == 0
+                    ? packed & 0x0F
+                    : (packed >> 4) & 0x0F;
+                DecodeImaAdpcmNibble(nibble, ref predictor, ref stepIndex);
+                WriteInt16(decoded, sampleIndex * 2, (short)predictor);
+            }
+
+            return decoded;
+        }
+
+        /// <summary>
+        /// Chooses an initial IMA step index for a self-contained audio block.
+        /// </summary>
+        /// <param name="buffer">Little-endian source PCM.</param>
+        /// <param name="count">Even number of source bytes.</param>
+        /// <returns>Step table index matching the first sample transition.</returns>
+        private static int EstimateImaAdpcmInitialIndex(byte[] buffer, int count)
+        {
+            if (count < 4)
+            {
+                return 0;
+            }
+
+            int first = ReadInt16(buffer, 0);
+            int second = ReadInt16(buffer, 2);
+            int difference = Math.Abs(second - first);
+            int index = 0;
+            while (index + 1 < ImaAdpcmStepTable.Length && ImaAdpcmStepTable[index + 1] <= Math.Max(7, difference))
+            {
+                index++;
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        /// Encodes one PCM sample into an IMA ADPCM nibble and advances encoder state.
+        /// </summary>
+        /// <param name="sample">Target PCM sample.</param>
+        /// <param name="predictor">Current predictor, updated to the decoded approximation.</param>
+        /// <param name="stepIndex">Current step-table index, updated after the nibble.</param>
+        /// <returns>4-bit ADPCM code.</returns>
+        private static int EncodeImaAdpcmNibble(int sample, ref int predictor, ref int stepIndex)
+        {
+            int step = ImaAdpcmStepTable[stepIndex];
+            int difference = sample - predictor;
+            int nibble = 0;
+            if (difference < 0)
+            {
+                nibble = 8;
+                difference = -difference;
+            }
+
+            int remaining = difference;
+            if (remaining >= step)
+            {
+                nibble |= 4;
+                remaining -= step;
+            }
+
+            if (remaining >= step / 2)
+            {
+                nibble |= 2;
+                remaining -= step / 2;
+            }
+
+            if (remaining >= step / 4)
+            {
+                nibble |= 1;
+            }
+
+            DecodeImaAdpcmNibble(nibble, ref predictor, ref stepIndex);
+            return nibble;
+        }
+
+        /// <summary>
+        /// Applies one IMA ADPCM nibble to the decoder state.
+        /// </summary>
+        /// <param name="nibble">4-bit ADPCM code.</param>
+        /// <param name="predictor">Current predictor, updated in place.</param>
+        /// <param name="stepIndex">Current step-table index, updated in place.</param>
+        private static void DecodeImaAdpcmNibble(int nibble, ref int predictor, ref int stepIndex)
+        {
+            int step = ImaAdpcmStepTable[stepIndex];
+            int difference = step >> 3;
+            if ((nibble & 4) != 0)
+            {
+                difference += step;
+            }
+
+            if ((nibble & 2) != 0)
+            {
+                difference += step >> 1;
+            }
+
+            if ((nibble & 1) != 0)
+            {
+                difference += step >> 2;
+            }
+
+            predictor = (nibble & 8) != 0
+                ? ClampToInt16(predictor - difference)
+                : ClampToInt16(predictor + difference);
+            stepIndex += ImaAdpcmIndexTable[nibble & 0x0F];
+            if (stepIndex < 0)
+            {
+                stepIndex = 0;
+            }
+            else if (stepIndex >= ImaAdpcmStepTable.Length)
+            {
+                stepIndex = ImaAdpcmStepTable.Length - 1;
+            }
         }
 
         /// <summary>
@@ -896,6 +1715,28 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Writes a signed 16-bit integer using little-endian byte order.
+        /// </summary>
+        /// <param name="buffer">Destination buffer.</param>
+        /// <param name="offset">Destination offset.</param>
+        /// <param name="value">Value to write.</param>
+        private static void WriteInt16(byte[] buffer, int offset, short value)
+        {
+            WriteUInt16(buffer, offset, unchecked((ushort)value));
+        }
+
+        /// <summary>
+        /// Reads a signed 16-bit integer using little-endian byte order.
+        /// </summary>
+        /// <param name="buffer">Source buffer.</param>
+        /// <param name="offset">Source offset.</param>
+        /// <returns>Decoded value.</returns>
+        private static short ReadInt16(byte[] buffer, int offset)
+        {
+            return unchecked((short)ReadUInt16(buffer, offset));
+        }
+
+        /// <summary>
         /// Writes a signed 32-bit integer using little-endian byte order.
         /// </summary>
         /// <param name="buffer">Destination buffer.</param>
@@ -976,6 +1817,26 @@ namespace C64Emulator.Network
             }
 
             return unchecked((long)value);
+        }
+
+        /// <summary>
+        /// Clamps an integer to the signed 16-bit PCM sample range.
+        /// </summary>
+        /// <param name="value">Value to clamp.</param>
+        /// <returns>Clamped PCM sample value.</returns>
+        private static int ClampToInt16(int value)
+        {
+            if (value < short.MinValue)
+            {
+                return short.MinValue;
+            }
+
+            if (value > short.MaxValue)
+            {
+                return short.MaxValue;
+            }
+
+            return value;
         }
     }
 }
