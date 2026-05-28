@@ -42,7 +42,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
-- Network multiplayer/remote-play sessions over TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
+- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
@@ -65,7 +65,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 ## F7 Network Multiplayer Menu
 
-`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host.
+`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection.
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
@@ -75,7 +75,7 @@ Server-side entries:
 
 | Entry | Values / Action | Details |
 | --- | --- | --- |
-| `SERVER PORT` | TCP port | Port used for incoming C64Net sessions. The default is `6464`. |
+| `SERVER PORT` | TLS/TCP port | Port used for incoming C64Net sessions. The default is `6464`. |
 | `SERVER PASSWORD` | `NONE` or hidden text | Optional session password. Password characters are shown as `*` in the menu. |
 | `SERVER` | `START SERVER` / `STOP SERVER` | Starts or stops the host session. |
 | `SELECT CLIENT` | Connected client | Selects a connected client by id, address, and player name. |
@@ -88,7 +88,7 @@ Client-side entries:
 | --- | --- | --- |
 | `PLAYER NAME` | Text | Name announced to the host. The default is `player`. |
 | `CLIENT HOST` | Host name or IP | Address of the host to connect to. |
-| `CLIENT PORT` | TCP port | Port of the host session. |
+| `CLIENT PORT` | TLS/TCP port | Port of the host session. |
 | `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
 | `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick rights after connection. |
 | `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
@@ -176,7 +176,7 @@ C64Emulator/
   Media/         PRG loading, D64 parsing, and mounted media state
   Iec/           IEC bus and high-level drive protocol bridge
   Drive1541/     1541 drive hardware, VIA, bus, and disk mechanism
-  Network/       C64Net TCP protocol, host server, and remote client transport
+  Network/       C64Net TLS/TCP protocol, host server, and remote client transport
   Properties/
 SharpPixels/
   SharpPixels.csproj

@@ -35,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="c64-character.bin">
+    <EmbeddedResource Include="c64-character.bin" Condition="Exists('c64-character.bin')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </EmbeddedResource>
     <None Update="1541-c000-rom.bin">

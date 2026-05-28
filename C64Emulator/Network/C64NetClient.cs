@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -39,7 +40,7 @@ namespace C64Emulator.Network
         /// </summary>
         private readonly object _sendLock = new object();
         private TcpClient _tcpClient;
-        private NetworkStream _stream;
+        private Stream _stream;
         private CancellationTokenSource _shutdown;
         private Task _receiveTask;
         private SidAudioOutput _audioOutput;
@@ -164,7 +165,14 @@ namespace C64Emulator.Network
                     return false;
                 }
 
-                _stream = _tcpClient.GetStream();
+                string tlsStatus;
+                _stream = C64NetTls.AuthenticateClient(_tcpClient, host, port, out tlsStatus);
+                if (!string.IsNullOrWhiteSpace(tlsStatus))
+                {
+                    StatusText = tlsStatus;
+                    RaiseStatus(tlsStatus);
+                }
+
                 // ClientHello is the only message the server accepts before welcome/reject.
                 AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                 {
@@ -237,6 +245,13 @@ namespace C64Emulator.Network
                 RaiseStatus(status);
                 return true;
             }
+            catch (C64NetTlsException ex)
+            {
+                Debug.WriteLine(ex);
+                status = ex.Message;
+                Disconnect();
+                return false;
+            }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
@@ -272,6 +287,17 @@ namespace C64Emulator.Network
                         Timestamp = DateTime.UtcNow.Ticks,
                         Payload = C64NetProtocol.CreateTextPayload("LEAVE")
                     }));
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (_stream != null)
+                {
+                    _stream.Dispose();
                 }
             }
             catch

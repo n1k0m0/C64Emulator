@@ -2018,7 +2018,7 @@ namespace C64Emulator
                 _networkSendFpsWindowStartTicks = DateTime.UtcNow.Ticks;
                 _networkSendFpsNextTicks = _networkSendFpsWindowStartTicks + TimeSpan.TicksPerSecond;
                 ResetNetworkTrafficCounters();
-                ShowNetworkStatus("SERVER LISTENING");
+                ShowNetworkStatus("TLS SERVER LISTENING");
                 _system.LocalAudioEnabled = true;
                 SaveSettings();
             }
@@ -4731,7 +4731,7 @@ namespace C64Emulator
         {
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "NET SEND {0} KB/S  REC {1} KB/S",
+                "TLS SEND {0} KB/S  REC {1} KB/S",
                 FormatNetworkRate(_networkSendKilobytesPerSecond),
                 FormatNetworkRate(_networkReceiveKilobytesPerSecond));
         }

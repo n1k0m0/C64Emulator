@@ -16,8 +16,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -141,7 +143,7 @@ namespace C64Emulator.Network
             Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
             // Accepting is isolated from the render/emulation thread.
             _acceptTask = Task.Run(() => AcceptLoop(_shutdown.Token));
-            RaiseStatus("SERVER LISTENING " + Port);
+            RaiseStatus("TLS SERVER LISTENING " + Port);
         }
 
         /// <summary>
@@ -467,7 +469,7 @@ namespace C64Emulator.Network
             ClientConnection client = null;
             try
             {
-                NetworkStream stream = tcpClient.GetStream();
+                Stream stream = C64NetTls.AuthenticateServer(tcpClient);
                 C64NetMessage hello = C64NetProtocol.ReadMessage(stream);
                 AddBytesReceived(hello != null ? hello.WireLength : 0);
                 if (hello == null || hello.Type != C64NetMessageType.ClientHello)
@@ -527,16 +529,28 @@ namespace C64Emulator.Network
                     : C64NetJoystickPermission.Observer;
                 // Even "Player" joins as observer first. The host grants the actual
                 // joystick port explicitly from the client list.
-                client = new ClientConnection(this, tcpClient, clientId, name, role, permission);
+                client = new ClientConnection(this, tcpClient, stream, clientId, name, role, permission);
                 AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
                     C64NetMessageType.ServerWelcome,
-                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, "CONNECTED"))));
+                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, "TLS CONNECTED"))));
 
                 // Add the client only after welcome was sent, so the UI never shows a
                 // half-handshaken socket.
                 AddClient(client);
                 client.Start(cancellationToken);
                 RaiseStatus("CLIENT " + clientId + " JOINED");
+            }
+            catch (AuthenticationException ex)
+            {
+                Debug.WriteLine(ex);
+                RaiseStatus("TLS FAILED " + FormatRemoteEndpoint(tcpClient));
+                try
+                {
+                    tcpClient.Close();
+                }
+                catch
+                {
+                }
             }
             catch (Exception ex)
             {
@@ -788,7 +802,7 @@ namespace C64Emulator.Network
         /// </summary>
         /// <param name="stream">Stream to the not-yet-accepted client.</param>
         /// <param name="reason">Human-readable rejection reason.</param>
-        private void SendReject(NetworkStream stream, string reason)
+        private void SendReject(Stream stream, string reason)
         {
             AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(C64NetMessageType.ServerReject, C64NetProtocol.CreateTextPayload(reason))));
         }
@@ -937,6 +951,7 @@ namespace C64Emulator.Network
             private const int MaxDeltaFramesBeforeKeyFrame = 120;
             private readonly C64NetServer _server;
             private readonly TcpClient _tcpClient;
+            private readonly Stream _stream;
             private readonly object _sendLock = new object();
             /// <summary>
             /// Reliable control messages that must be delivered in order before media.
@@ -964,14 +979,16 @@ namespace C64Emulator.Network
             /// </summary>
             /// <param name="server">Owning server instance.</param>
             /// <param name="tcpClient">Accepted TCP socket.</param>
+            /// <param name="stream">Authenticated TLS stream for this client.</param>
             /// <param name="clientId">Host-assigned client id.</param>
             /// <param name="name">Player name from the handshake.</param>
             /// <param name="role">Accepted role.</param>
             /// <param name="permission">Initial joystick permission.</param>
-            public ClientConnection(C64NetServer server, TcpClient tcpClient, int clientId, string name, C64NetClientRole role, C64NetJoystickPermission permission)
+            public ClientConnection(C64NetServer server, TcpClient tcpClient, Stream stream, int clientId, string name, C64NetClientRole role, C64NetJoystickPermission permission)
             {
                 _server = server;
                 _tcpClient = tcpClient;
+                _stream = stream;
                 ClientId = clientId;
                 Name = string.IsNullOrWhiteSpace(name) ? "player" : name.Trim();
                 RemoteAddress = FormatRemoteAddress(tcpClient);
@@ -1148,6 +1165,14 @@ namespace C64Emulator.Network
                 _sendSignal.Set();
                 try
                 {
+                    _stream.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
                     _tcpClient.Close();
                 }
                 catch
@@ -1165,7 +1190,7 @@ namespace C64Emulator.Network
             {
                 try
                 {
-                    NetworkStream stream = _tcpClient.GetStream();
+                    Stream stream = _stream;
                     while (!_closed && !cancellationToken.IsCancellationRequested)
                     {
                         C64NetMessage message = C64NetProtocol.ReadMessage(stream);
@@ -1200,7 +1225,7 @@ namespace C64Emulator.Network
             {
                 try
                 {
-                    NetworkStream stream = _tcpClient.GetStream();
+                    Stream stream = _stream;
                     while (!_closed && !cancellationToken.IsCancellationRequested)
                     {
                         C64NetMessage message = DequeueMessage();

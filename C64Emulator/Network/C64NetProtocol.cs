@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
-using System.Net.Sockets;
 using System.Text;
 
 namespace C64Emulator.Network
@@ -143,7 +142,7 @@ namespace C64Emulator.Network
         /// </summary>
         public byte[] Payload { get; set; }
         /// <summary>
-        /// Gets or sets the full byte count on the TCP stream, including the fixed header.
+        /// Gets or sets the full byte count on the C64Net stream, including the fixed header.
         /// </summary>
         public int WireLength { get; set; }
     }
@@ -218,17 +217,18 @@ namespace C64Emulator.Network
     /// Implements C64Net framing and payload helpers.
     /// </summary>
     /// <remarks>
-    /// C64Net is intentionally small: TCP gives ordering and reliable delivery,
-    /// while this class only adds a fixed-length frame header and typed binary
-    /// payloads. All integer fields are little-endian so payloads match the rest
-    /// of the emulator's binary state helpers and are easy to inspect on Windows.
+    /// C64Net is intentionally small: TLS-over-TCP gives encryption, ordering, and
+    /// reliable delivery, while this class only adds a fixed-length frame header and
+    /// typed binary payloads. All integer fields are little-endian so payloads match
+    /// the rest of the emulator's binary state helpers and are easy to inspect on
+    /// Windows.
     /// </remarks>
     public static class C64NetProtocol
     {
         /// <summary>
         /// Current wire protocol version accepted by host and client.
         /// </summary>
-        public const int Version = 3;
+        public const int Version = 4;
         /// <summary>
         /// Default TCP port shown in the F7 network menu.
         /// </summary>
@@ -322,7 +322,7 @@ namespace C64Emulator.Network
         };
 
         /// <summary>
-        /// Writes one complete framed message to the TCP stream.
+        /// Writes one complete framed message to the authenticated transport stream.
         /// </summary>
         /// <param name="stream">Open stream connected to the remote peer.</param>
         /// <param name="message">Message header values and payload to write.</param>
@@ -330,7 +330,7 @@ namespace C64Emulator.Network
         /// Thrown when the payload exceeds <see cref="MaxPayloadLength"/>.
         /// </exception>
         /// <returns>Number of bytes written to the stream, including the fixed header.</returns>
-        public static int WriteMessage(NetworkStream stream, C64NetMessage message)
+        public static int WriteMessage(Stream stream, C64NetMessage message)
         {
             if (stream == null || message == null)
             {
@@ -363,14 +363,14 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
-        /// Reads one complete framed message from the TCP stream.
+        /// Reads one complete framed message from the authenticated transport stream.
         /// </summary>
         /// <param name="stream">Open stream connected to the remote peer.</param>
         /// <returns>The decoded message, or null when the peer closes the stream.</returns>
         /// <exception cref="InvalidDataException">
         /// Thrown when the remote peer announces an invalid payload length.
         /// </exception>
-        public static C64NetMessage ReadMessage(NetworkStream stream)
+        public static C64NetMessage ReadMessage(Stream stream)
         {
             if (stream == null)
             {
@@ -1652,7 +1652,7 @@ namespace C64Emulator.Network
                     return false;
                 }
 
-                // NetworkStream.Read can return partial data even when the connection is
+                // Stream.Read can return partial data even when the connection is
                 // healthy, so keep going until this frame fragment is complete.
                 offset += read;
                 count -= read;
