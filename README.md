@@ -43,7 +43,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - Startup update check against the latest GitHub Release with optional setup download/launch.
-- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
+- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send joystick input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
@@ -70,7 +70,18 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
-The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`), border-crop zoom, and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, or XOR/RLE-delta payload. Slow clients keep only the latest pending video frame, so they do not stall faster clients. The title bar and network overlay show current TLS traffic, network FPS, and round-trip ping; the host also shows per-client latency in the client list.
+The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`), border-crop zoom, and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Clients may render more often than network frames arrive; the latest received frame is reused locally between network updates. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, compressed sparse-delta, XOR/RLE-delta, or compressed XOR/RLE-delta payload. Live SID audio is sent as self-contained 4-bit IMA ADPCM packets, with PCM kept as a protocol fallback. Slow clients keep only the latest pending video frame and bounded audio data, so they do not stall faster clients. The title bar and network overlay show current TLS traffic, network FPS, render FPS, and round-trip ping; the host also shows per-client latency in the client list.
+
+Transport details:
+
+| Area | Behavior |
+| --- | --- |
+| Security | Every C64Net session uses TLS over TCP. The host creates a local self-signed certificate; clients pin the certificate fingerprint for the selected host/port after the first successful connection. |
+| Video source | The host sends the unfiltered sharp C64 image. Client-side `SHARP`, `CRT`, `TV`, fullscreen, and `VIDEO ZOOM` settings remain local. |
+| Video compression | Frames are converted to the 16-color C64 palette and packed as 4-bit pixels. The protocol then picks the smallest full frame, sparse delta, Deflate-compressed sparse delta, XOR/RLE delta, or Deflate-compressed XOR/RLE delta. |
+| Audio compression | SID audio uses 4-bit IMA ADPCM network packets so audio bandwidth is far below raw 16-bit PCM. |
+| Flow control | The server reuses the prepared frame payload for all clients and each client queue keeps only the newest pending video frame. |
+| Latency | Ping/pong probes run during the session. Clients show their RTT; the server title/header shows the average RTT and the client list shows per-client RTT. |
 
 Server-side entries:
 
@@ -93,7 +104,7 @@ Client-side entries:
 | `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
 | `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick rights after connection. |
 | `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
-| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. |
+| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. The F10 `VIDEO ZOOM` setting is also local and remains available on clients. |
 
 Network menu controls:
 
@@ -179,6 +190,7 @@ C64Emulator/
   Iec/           IEC bus and high-level drive protocol bridge
   Drive1541/     1541 drive hardware, VIA, bus, and disk mechanism
   Network/       C64Net TLS/TCP protocol, host server, and remote client transport
+  Updates/       GitHub release startup update checker
   Properties/
 SharpPixels/
   SharpPixels.csproj
@@ -232,6 +244,12 @@ artifacts\installer\C64Emulator-<version>-win-x64-setup.exe
 The setup wizard installs the emulator into `Program Files`, creates Start Menu entries, and can optionally create a desktop shortcut. When a previous installation is found, Setup asks whether the old application files should be removed before installing the new version. User data is kept during this update cleanup.
 
 The uninstaller removes the installed application and `%APPDATA%\C64Emulator`, including downloaded ROMs, settings, and savestates. User-owned PRG and D64 media in `%USERPROFILE%\Documents\C64Emulator` are not removed by the uninstaller.
+
+## Startup Updates
+
+On normal GUI startup, the emulator checks the latest GitHub Release in the background after the window has opened. Headless diagnostic modes do not run this check. If a newer release exists and it contains a `*-win-x64-setup.exe` asset, the emulator asks whether the setup should be downloaded and started.
+
+The downloaded setup is written to `%TEMP%\C64Emulator\updates`. If GitHub is unreachable, no newer release exists, or the release does not contain a Windows setup asset, startup continues silently. Download or launch errors are only shown after the user has chosen to install the update.
 
 ## Diagnostics
 
@@ -290,7 +308,7 @@ Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A sa
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists server/client ports, the last client host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
 
 ## ROM Files
 
