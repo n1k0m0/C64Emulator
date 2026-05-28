@@ -42,6 +42,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
+- Startup update check against the latest GitHub Release with optional setup download/launch.
 - Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
