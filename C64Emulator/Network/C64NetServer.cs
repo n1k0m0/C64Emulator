@@ -119,6 +119,30 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Gets the average round-trip latency across clients with a valid ping sample.
+        /// </summary>
+        /// <returns>Average latency in milliseconds, or -1 when no sample exists.</returns>
+        public int GetAverageLatencyMilliseconds()
+        {
+            int total = 0;
+            int count = 0;
+            lock (_syncRoot)
+            {
+                for (int index = 0; index < _clients.Count; index++)
+                {
+                    int latency = _clients[index].LatencyMilliseconds;
+                    if (latency >= 0)
+                    {
+                        total += latency;
+                        count++;
+                    }
+                }
+            }
+
+            return count == 0 ? -1 : (int)Math.Round(total / (double)count);
+        }
+
+        /// <summary>
         /// Starts listening for clients.
         /// </summary>
         /// <param name="port">TCP port to listen on.</param>
@@ -594,11 +618,17 @@ namespace C64Emulator.Network
                     break;
                 case C64NetMessageType.Ping:
                     // Echo the payload and a timestamp-preserving pong for round-trip
-                    // measurements.
-                    client.EnqueueControl(CreateMessage(C64NetMessageType.Pong, message.Payload));
+                    // measurements on the client side.
+                    client.EnqueueControl(new C64NetMessage
+                    {
+                        Type = C64NetMessageType.Pong,
+                        Timestamp = message.Timestamp,
+                        Payload = message.Payload
+                    });
                     break;
                 case C64NetMessageType.Pong:
                     client.UpdatePong(message.Timestamp);
+                    BroadcastClientList();
                     break;
                 case C64NetMessageType.Disconnect:
                     // A client-initiated leave is normal, so simply remove it.
@@ -949,6 +979,14 @@ namespace C64Emulator.Network
             /// Maximum number of delta frames before forcing a full keyframe.
             /// </summary>
             private const int MaxDeltaFramesBeforeKeyFrame = 120;
+            /// <summary>
+            /// Time between latency probes while the previous probe has completed.
+            /// </summary>
+            private const long LatencyPingIntervalTicks = TimeSpan.TicksPerSecond;
+            /// <summary>
+            /// Time after which an unanswered latency probe may be retried.
+            /// </summary>
+            private const long LatencyPingTimeoutTicks = TimeSpan.TicksPerSecond * 3;
             private readonly C64NetServer _server;
             private readonly TcpClient _tcpClient;
             private readonly Stream _stream;
@@ -969,7 +1007,9 @@ namespace C64Emulator.Network
             private Task _receiveTask;
             private Task _sendTask;
             private volatile bool _closed;
-            private int _latencyMilliseconds;
+            private int _latencyMilliseconds = -1;
+            private bool _latencyPingPending;
+            private long _lastLatencyPingTicks;
             private byte[] _lastSentVideoPalettePixels;
             private long _lastSentVideoFrameId;
             private int _deltaFramesSinceKeyFrame;
@@ -1032,6 +1072,14 @@ namespace C64Emulator.Network
             /// Gets or sets the last active-low joystick state received from this client.
             /// </summary>
             public byte JoystickState { get; set; }
+
+            /// <summary>
+            /// Gets the latest measured round-trip latency in milliseconds.
+            /// </summary>
+            public int LatencyMilliseconds
+            {
+                get { return Volatile.Read(ref _latencyMilliseconds); }
+            }
 
             /// <summary>
             /// Gets whether the socket is still considered connected by this process.
@@ -1134,7 +1182,7 @@ namespace C64Emulator.Network
                     Role = Role,
                     Permission = Permission,
                     JoystickState = JoystickState,
-                    LatencyMilliseconds = _latencyMilliseconds,
+                    LatencyMilliseconds = LatencyMilliseconds,
                     Connected = IsConnected
                 };
             }
@@ -1146,7 +1194,11 @@ namespace C64Emulator.Network
             public void UpdatePong(long timestamp)
             {
                 long elapsedTicks = Math.Max(0, DateTime.UtcNow.Ticks - timestamp);
-                _latencyMilliseconds = (int)Math.Min(9999, elapsedTicks / TimeSpan.TicksPerMillisecond);
+                Volatile.Write(ref _latencyMilliseconds, (int)Math.Min(9999, elapsedTicks / TimeSpan.TicksPerMillisecond));
+                lock (_sendLock)
+                {
+                    _latencyPingPending = false;
+                }
             }
 
             /// <summary>
@@ -1265,6 +1317,12 @@ namespace C64Emulator.Network
                         return _controlQueue.Dequeue();
                     }
 
+                    C64NetMessage ping = CreateLatencyPingIfDue(DateTime.UtcNow.Ticks);
+                    if (ping != null)
+                    {
+                        return ping;
+                    }
+
                     PendingVideoFrame video = _latestVideo;
                     if (video != null)
                     {
@@ -1325,6 +1383,36 @@ namespace C64Emulator.Network
                 _lastSentVideoFrameId = video.FrameId;
                 _deltaFramesSinceKeyFrame = usedDelta ? _deltaFramesSinceKeyFrame + 1 : 0;
                 return CreateMessage(C64NetMessageType.VideoFrame, payload);
+            }
+
+            /// <summary>
+            /// Creates a latency probe when the probe interval or retry timeout elapsed.
+            /// </summary>
+            /// <param name="nowTicks">Current UTC ticks.</param>
+            /// <returns>Ping message to send, or null when no probe is due.</returns>
+            private C64NetMessage CreateLatencyPingIfDue(long nowTicks)
+            {
+                long elapsedTicks = nowTicks - _lastLatencyPingTicks;
+                if (_latencyPingPending)
+                {
+                    if (elapsedTicks < LatencyPingTimeoutTicks)
+                    {
+                        return null;
+                    }
+                }
+                else if (_lastLatencyPingTicks != 0 && elapsedTicks < LatencyPingIntervalTicks)
+                {
+                    return null;
+                }
+
+                _lastLatencyPingTicks = nowTicks;
+                _latencyPingPending = true;
+                return new C64NetMessage
+                {
+                    Type = C64NetMessageType.Ping,
+                    Timestamp = nowTicks,
+                    Payload = new byte[0]
+                };
             }
         }
     }

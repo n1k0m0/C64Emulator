@@ -677,8 +677,9 @@ namespace C64Emulator
                 // Host title intentionally shows network send FPS and render FPS, but not
                 // program counter/debug data, so users can see stream health at a glance.
                 Title = string.Format(
-                    "C64 Emulator SERVER - NET:{0} FPS RENDER:{1}",
+                    "C64 Emulator SERVER - NET:{0} FPS PING:{1} RENDER:{2}",
                     _networkSendFps,
+                    FormatNetworkLatency(GetNetworkDisplayLatencyMilliseconds()),
                     FPS);
             }
             else
@@ -1782,6 +1783,7 @@ namespace C64Emulator
             }
 
             SendRemoteClientJoystickInput(false, time);
+            _networkClient.PollLatency();
             UpdateNetworkReceiveFps();
             UpdateNetworkTrafficRates();
 
@@ -1850,9 +1852,10 @@ namespace C64Emulator
             DrawNetworkHostOverlayPopup();
 
             Title = string.Format(
-                "C64 Emulator REMOTE {0} - NET:{1} FPS RENDER:{2}",
+                "C64 Emulator REMOTE {0} - NET:{1} FPS PING:{2} RENDER:{3}",
                 FormatNetworkPermission(_networkClient != null ? _networkClient.Permission : C64NetJoystickPermission.Observer),
                 _networkReceiveFps,
+                FormatNetworkLatency(GetNetworkDisplayLatencyMilliseconds()),
                 FPS);
         }
 
@@ -4700,11 +4703,12 @@ namespace C64Emulator
                     byte green = selected ? (byte)243 : (byte)238;
                     byte blue = selected ? (byte)168 : (byte)244;
                     string text = string.Format(
-                        "{0}{1} {2} {3}",
+                        "{0}{1} {2} {3} {4}",
                         selected ? "> " : "  ",
                         client.ClientId,
-                        FormatOverlayValue(FormatNetworkClientDisplay(client), 23),
-                        FormatNetworkPermission(client.Permission));
+                        FormatOverlayValue(FormatNetworkClientDisplay(client), 19),
+                        FormatNetworkPermission(client.Permission),
+                        FormatNetworkLatencyCompact(client.LatencyMilliseconds));
                     DrawOverlayText(menuX, clientsY + 13 + (row * 12), FormatOverlayValue(text, 56), 1, red, green, blue);
                 }
             }
@@ -4976,9 +4980,29 @@ namespace C64Emulator
         {
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "TLS SEND {0} KB/S  REC {1} KB/S",
+                "TLS SEND {0} KB/S  REC {1} KB/S  PING {2}",
                 FormatNetworkRate(_networkSendKilobytesPerSecond),
-                FormatNetworkRate(_networkReceiveKilobytesPerSecond));
+                FormatNetworkRate(_networkReceiveKilobytesPerSecond),
+                FormatNetworkLatency(GetNetworkDisplayLatencyMilliseconds()));
+        }
+
+        /// <summary>
+        /// Gets the latency value that should be shown for the current network mode.
+        /// </summary>
+        /// <returns>Latency in milliseconds, or -1 when no sample is available.</returns>
+        private int GetNetworkDisplayLatencyMilliseconds()
+        {
+            if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
+            {
+                return _networkClient.LatencyMilliseconds;
+            }
+
+            if (_networkMode == NetworkSessionMode.Host && _networkServer != null && _networkServer.IsRunning)
+            {
+                return _networkServer.GetAverageLatencyMilliseconds();
+            }
+
+            return -1;
         }
 
         /// <summary>
@@ -5013,6 +5037,30 @@ namespace C64Emulator
             }
 
             return kilobytesPerSecond.ToString("0", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Formats a latency value for title bars and overlay footer text.
+        /// </summary>
+        /// <param name="latencyMilliseconds">Latency in milliseconds, or -1 when unknown.</param>
+        /// <returns>Overlay-friendly latency text.</returns>
+        private static string FormatNetworkLatency(int latencyMilliseconds)
+        {
+            return latencyMilliseconds < 0
+                ? "-- MS"
+                : Math.Min(9999, latencyMilliseconds).ToString(CultureInfo.InvariantCulture) + " MS";
+        }
+
+        /// <summary>
+        /// Formats a compact latency value for client-list rows.
+        /// </summary>
+        /// <param name="latencyMilliseconds">Latency in milliseconds, or -1 when unknown.</param>
+        /// <returns>Short latency text.</returns>
+        private static string FormatNetworkLatencyCompact(int latencyMilliseconds)
+        {
+            return latencyMilliseconds < 0
+                ? "--MS"
+                : Math.Min(9999, latencyMilliseconds).ToString(CultureInfo.InvariantCulture) + "MS";
         }
 
         /// <summary>

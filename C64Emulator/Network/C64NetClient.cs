@@ -36,6 +36,14 @@ namespace C64Emulator.Network
     public sealed class C64NetClient : IDisposable
     {
         /// <summary>
+        /// Time between client-initiated latency probes after a completed sample.
+        /// </summary>
+        private const long LatencyPingIntervalTicks = TimeSpan.TicksPerSecond;
+        /// <summary>
+        /// Time after which an unanswered latency probe may be retried.
+        /// </summary>
+        private const long LatencyPingTimeoutTicks = TimeSpan.TicksPerSecond * 3;
+        /// <summary>
         /// Serializes writes from UI/input callbacks against ping/pong responses.
         /// </summary>
         private readonly object _sendLock = new object();
@@ -63,6 +71,9 @@ namespace C64Emulator.Network
         private long _bytesSent;
         private long _bytesReceived;
         private volatile bool _connected;
+        private int _latencyMilliseconds = -1;
+        private int _latencyPingPending;
+        private long _lastLatencyPingTicks;
         private string _serverCertificateFingerprint = "UNKNOWN";
 
         /// <summary>
@@ -133,6 +144,14 @@ namespace C64Emulator.Network
         public long BytesReceived
         {
             get { return Interlocked.Read(ref _bytesReceived); }
+        }
+
+        /// <summary>
+        /// Gets the latest measured round-trip latency to the host.
+        /// </summary>
+        public int LatencyMilliseconds
+        {
+            get { return Volatile.Read(ref _latencyMilliseconds); }
         }
 
         /// <summary>
@@ -354,6 +373,9 @@ namespace C64Emulator.Network
             _stream = null;
             _tcpClient = null;
             _connected = false;
+            Volatile.Write(ref _latencyMilliseconds, -1);
+            Interlocked.Exchange(ref _latencyPingPending, 0);
+            Interlocked.Exchange(ref _lastLatencyPingTicks, 0);
             ClientId = 0;
             Permission = C64NetJoystickPermission.Observer;
             _serverCertificateFingerprint = "UNKNOWN";
@@ -389,6 +411,42 @@ namespace C64Emulator.Network
                 Type = C64NetMessageType.InputState,
                 Timestamp = DateTime.UtcNow.Ticks,
                 Payload = C64NetProtocol.CreateInputStatePayload(activeLowJoystickState)
+            });
+        }
+
+        /// <summary>
+        /// Sends a periodic client-to-server latency probe when one is due.
+        /// </summary>
+        public void PollLatency()
+        {
+            if (!_connected || _stream == null)
+            {
+                return;
+            }
+
+            long nowTicks = DateTime.UtcNow.Ticks;
+            long lastPingTicks = Interlocked.Read(ref _lastLatencyPingTicks);
+            long elapsedTicks = nowTicks - lastPingTicks;
+            bool pending = Interlocked.CompareExchange(ref _latencyPingPending, 0, 0) != 0;
+            if (pending)
+            {
+                if (elapsedTicks < LatencyPingTimeoutTicks)
+                {
+                    return;
+                }
+            }
+            else if (lastPingTicks != 0 && elapsedTicks < LatencyPingIntervalTicks)
+            {
+                return;
+            }
+
+            Interlocked.Exchange(ref _lastLatencyPingTicks, nowTicks);
+            Interlocked.Exchange(ref _latencyPingPending, 1);
+            SendMessage(new C64NetMessage
+            {
+                Type = C64NetMessageType.Ping,
+                Timestamp = nowTicks,
+                Payload = new byte[0]
             });
         }
 
@@ -501,6 +559,9 @@ namespace C64Emulator.Network
                         Payload = message.Payload
                     });
                     break;
+                case C64NetMessageType.Pong:
+                    UpdateLatency(message.Timestamp);
+                    break;
                 case C64NetMessageType.Disconnect:
                     StatusText = C64NetProtocol.ReadTextPayload(message.Payload);
                     RaiseStatus(StatusText);
@@ -537,6 +598,17 @@ namespace C64Emulator.Network
                 // Any write failure means the TCP stream is no longer usable.
                 Disconnect();
             }
+        }
+
+        /// <summary>
+        /// Updates the local latency estimate from a timestamp-preserving pong.
+        /// </summary>
+        /// <param name="timestamp">Original ping timestamp in UTC ticks.</param>
+        private void UpdateLatency(long timestamp)
+        {
+            long elapsedTicks = Math.Max(0, DateTime.UtcNow.Ticks - timestamp);
+            Volatile.Write(ref _latencyMilliseconds, (int)Math.Min(9999, elapsedTicks / TimeSpan.TicksPerMillisecond));
+            Interlocked.Exchange(ref _latencyPingPending, 0);
         }
 
         /// <summary>
