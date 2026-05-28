@@ -4465,6 +4465,7 @@ namespace C64Emulator
                 }
             }
 
+            DrawOverlayText(menuX, overlayY + overlayHeight - 39, FormatNetworkFingerprintText(), 1, 192, 210, 225);
             DrawOverlayText(menuX, overlayY + overlayHeight - 27, FormatNetworkTrafficText(), 1, 192, 210, 225);
             DrawOverlayText(menuX, overlayY + overlayHeight - 15, "STATUS " + FormatOverlayValue(_networkStatusText, 45), 1, 108, 214, 182);
         }
@@ -4734,6 +4735,20 @@ namespace C64Emulator
                 "TLS SEND {0} KB/S  REC {1} KB/S",
                 FormatNetworkRate(_networkSendKilobytesPerSecond),
                 FormatNetworkRate(_networkReceiveKilobytesPerSecond));
+        }
+
+        /// <summary>
+        /// Formats the visible TLS certificate fingerprint line for the F7 overlay.
+        /// </summary>
+        /// <returns>Short TLS fingerprint text for host or client context.</returns>
+        private string FormatNetworkFingerprintText()
+        {
+            if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
+            {
+                return "TLS SERVER FINGERPRINT " + _networkClient.ServerCertificateFingerprint;
+            }
+
+            return "TLS HOST FINGERPRINT " + C64NetTls.GetServerCertificateShortFingerprint();
         }
 
         /// <summary>

@@ -65,7 +65,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 ## F7 Network Multiplayer Menu
 
-`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection.
+`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection. The network overlay shows the host certificate fingerprint on the server and the trusted server fingerprint on connected clients.
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 

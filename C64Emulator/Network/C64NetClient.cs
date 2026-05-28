@@ -63,6 +63,7 @@ namespace C64Emulator.Network
         private long _bytesSent;
         private long _bytesReceived;
         private volatile bool _connected;
+        private string _serverCertificateFingerprint = "UNKNOWN";
 
         /// <summary>
         /// Raised when a complete host video frame has been decoded.
@@ -109,6 +110,14 @@ namespace C64Emulator.Network
         /// Gets the latest status text shown in the network overlay.
         /// </summary>
         public string StatusText { get; private set; } = "DISCONNECTED";
+
+        /// <summary>
+        /// Gets the short SHA-256 fingerprint prefix of the connected/pinned server certificate.
+        /// </summary>
+        public string ServerCertificateFingerprint
+        {
+            get { return _serverCertificateFingerprint; }
+        }
 
         /// <summary>
         /// Gets the total number of bytes written to the server in the current session.
@@ -172,6 +181,8 @@ namespace C64Emulator.Network
                     StatusText = tlsStatus;
                     RaiseStatus(tlsStatus);
                 }
+
+                _serverCertificateFingerprint = C64NetTls.GetTrustedServerShortFingerprint(host, port);
 
                 // ClientHello is the only message the server accepts before welcome/reject.
                 AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
@@ -345,6 +356,7 @@ namespace C64Emulator.Network
             _connected = false;
             ClientId = 0;
             Permission = C64NetJoystickPermission.Observer;
+            _serverCertificateFingerprint = "UNKNOWN";
             _videoReferencePalettePixels = null;
             _videoReferenceFrameId = 0;
             _videoDecodePixels = null;

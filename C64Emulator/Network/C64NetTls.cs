@@ -128,6 +128,36 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Returns the short display form of the local server certificate fingerprint.
+        /// </summary>
+        /// <returns>Grouped fingerprint prefix suitable for overlays.</returns>
+        public static string GetServerCertificateShortFingerprint()
+        {
+            return FormatShortFingerprint(GetServerCertificateFingerprint());
+        }
+
+        /// <summary>
+        /// Returns the stored short fingerprint for a previously trusted server.
+        /// </summary>
+        /// <param name="host">Host name or IP entered by the user.</param>
+        /// <param name="port">Remote TCP port.</param>
+        /// <returns>Grouped fingerprint prefix, or UNKNOWN when no pin exists yet.</returns>
+        public static string GetTrustedServerShortFingerprint(string host, int port)
+        {
+            string trustKey = BuildTrustKey(host, port);
+            lock (TrustSyncRoot)
+            {
+                NetworkTrustFile trustFile = LoadTrustFile();
+                if (trustFile.PinnedCertificates.TryGetValue(trustKey, out string fingerprint))
+                {
+                    return FormatShortFingerprint(fingerprint);
+                }
+            }
+
+            return "UNKNOWN";
+        }
+
+        /// <summary>
         /// Loads the persisted server certificate or creates a new self-signed one.
         /// </summary>
         /// <returns>Certificate with private key for TLS server authentication.</returns>
