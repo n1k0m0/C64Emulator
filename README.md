@@ -69,7 +69,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
-The server always sends the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`) and fullscreen mode. Network video is sent once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Slow clients keep only the latest pending video frame, so they do not stall faster clients.
+The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`) and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, or XOR/RLE-delta payload. Slow clients keep only the latest pending video frame, so they do not stall faster clients.
 
 Server-side entries:
 

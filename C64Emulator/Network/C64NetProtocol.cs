@@ -228,7 +228,7 @@ namespace C64Emulator.Network
         /// <summary>
         /// Current wire protocol version accepted by host and client.
         /// </summary>
-        public const int Version = 4;
+        public const int Version = 5;
         /// <summary>
         /// Default TCP port shown in the F7 network menu.
         /// </summary>
@@ -265,6 +265,14 @@ namespace C64Emulator.Network
         /// Deflate-compressed sparse delta against the previously accepted palette frame.
         /// </summary>
         private const int VideoFormatC64Palette4DeltaDeflate = 4;
+        /// <summary>
+        /// XOR run-length delta against the previously accepted palette frame.
+        /// </summary>
+        private const int VideoFormatC64Palette4XorRleDelta = 5;
+        /// <summary>
+        /// Deflate-compressed XOR run-length delta against the previous palette frame.
+        /// </summary>
+        private const int VideoFormatC64Palette4XorRleDeltaDeflate = 6;
         /// <summary>
         /// Required payload-size win before choosing compressed data.
         /// </summary>
@@ -590,6 +598,30 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Checks whether two packed 4-bit palette frames contain identical bytes.
+        /// </summary>
+        /// <param name="left">First packed frame.</param>
+        /// <param name="right">Second packed frame.</param>
+        /// <returns>True when both frames are non-null, equally sized, and byte-identical.</returns>
+        public static bool PackedVideoFramesEqual(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < left.Length; index++)
+            {
+                if (left[index] != right[index])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Builds the best available full-frame C64 palette video payload.
         /// </summary>
         /// <param name="pixels">Source ARGB32 pixels from the host completed framebuffer.</param>
@@ -633,14 +665,25 @@ namespace C64Emulator.Network
                 return fullPayload;
             }
 
+            byte[] bestPayload = fullPayload;
+            bool bestUsesDelta = false;
+
             byte[] deltaPayload = CreateDeltaVideoFramePayload(packedPalettePixels, previousPackedPalettePixels, width, height, frameId, previousFrameId);
-            if (deltaPayload.Length > 0 && deltaPayload.Length + MinimumCompressionSavings < fullPayload.Length)
+            if (deltaPayload.Length > 0 && deltaPayload.Length < bestPayload.Length)
             {
-                usedDelta = true;
-                return deltaPayload;
+                bestPayload = deltaPayload;
+                bestUsesDelta = true;
             }
 
-            return fullPayload;
+            byte[] xorRlePayload = CreateXorRleDeltaVideoFramePayload(packedPalettePixels, previousPackedPalettePixels, width, height, frameId, previousFrameId);
+            if (xorRlePayload.Length > 0 && xorRlePayload.Length < bestPayload.Length)
+            {
+                bestPayload = xorRlePayload;
+                bestUsesDelta = true;
+            }
+
+            usedDelta = bestUsesDelta;
+            return bestPayload;
         }
 
         /// <summary>
@@ -727,6 +770,14 @@ namespace C64Emulator.Network
             else if (payload.Length >= 40 && formatOrByteCount == VideoFormatC64Palette4DeltaDeflate)
             {
                 packedPalettePixels = ReadDeltaVideoFramePayload(payload, 40, ReadInt32(payload, 20), ReadInt64(payload, 24), ReadInt32(payload, 32), true, pixelCount, referencePalettePixels, referenceFrameId);
+            }
+            else if (payload.Length >= 36 && formatOrByteCount == VideoFormatC64Palette4XorRleDelta)
+            {
+                packedPalettePixels = ReadXorRleDeltaVideoFramePayload(payload, 36, ReadInt32(payload, 20), ReadInt64(payload, 24), ReadInt32(payload, 32), false, pixelCount, referencePalettePixels, referenceFrameId);
+            }
+            else if (payload.Length >= 40 && formatOrByteCount == VideoFormatC64Palette4XorRleDeltaDeflate)
+            {
+                packedPalettePixels = ReadXorRleDeltaVideoFramePayload(payload, 40, ReadInt32(payload, 20), ReadInt64(payload, 24), ReadInt32(payload, 32), true, pixelCount, referencePalettePixels, referenceFrameId);
             }
             else
             {
@@ -866,6 +917,49 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Builds an XOR/RLE delta payload and applies Deflate to the RLE stream when useful.
+        /// </summary>
+        /// <param name="packedPalettePixels">Current packed frame.</param>
+        /// <param name="previousPackedPalettePixels">Previous packed frame for this client.</param>
+        /// <param name="width">Frame width.</param>
+        /// <param name="height">Frame height.</param>
+        /// <param name="frameId">Current host frame id.</param>
+        /// <param name="previousFrameId">Base frame id used by the delta.</param>
+        /// <returns>Serialized XOR/RLE delta payload, or an empty payload when no delta can be built.</returns>
+        private static byte[] CreateXorRleDeltaVideoFramePayload(byte[] packedPalettePixels, byte[] previousPackedPalettePixels, int width, int height, long frameId, long previousFrameId)
+        {
+            if (packedPalettePixels == null || previousPackedPalettePixels == null || packedPalettePixels.Length != previousPackedPalettePixels.Length)
+            {
+                return EmptyPayload;
+            }
+
+            byte[] deltaData = CreateXorRleDeltaData(packedPalettePixels, previousPackedPalettePixels);
+            byte[] rawPayload = new byte[36 + deltaData.Length];
+            WriteCommonVideoHeader(rawPayload, width, height, frameId, VideoFormatC64Palette4XorRleDelta);
+            WriteInt32(rawPayload, 20, packedPalettePixels.Length);
+            WriteInt64(rawPayload, 24, previousFrameId);
+            WriteInt32(rawPayload, 32, deltaData.Length);
+            Buffer.BlockCopy(deltaData, 0, rawPayload, 36, deltaData.Length);
+
+            byte[] compressed = Deflate(deltaData, 0, deltaData.Length);
+            if (compressed == null)
+            {
+                return rawPayload;
+            }
+
+            byte[] compressedPayload = new byte[40 + compressed.Length];
+            WriteCommonVideoHeader(compressedPayload, width, height, frameId, VideoFormatC64Palette4XorRleDeltaDeflate);
+            WriteInt32(compressedPayload, 20, packedPalettePixels.Length);
+            WriteInt64(compressedPayload, 24, previousFrameId);
+            WriteInt32(compressedPayload, 32, deltaData.Length);
+            WriteInt32(compressedPayload, 36, compressed.Length);
+            Buffer.BlockCopy(compressed, 0, compressedPayload, 40, compressed.Length);
+            return compressedPayload.Length + MinimumCompressionSavings < rawPayload.Length
+                ? compressedPayload
+                : rawPayload;
+        }
+
+        /// <summary>
         /// Encodes changed byte runs between two packed palette frames.
         /// </summary>
         /// <param name="current">Current packed frame.</param>
@@ -896,6 +990,55 @@ namespace C64Emulator.Network
                     writer.Write(start);
                     writer.Write(length);
                     writer.Write(current, start, length);
+                }
+
+                return stream.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Encodes the byte-wise XOR difference as zero runs and literal XOR runs.
+        /// </summary>
+        /// <param name="current">Current packed frame.</param>
+        /// <param name="previous">Base packed frame.</param>
+        /// <returns>Compact RLE stream where zero runs skip unchanged bytes.</returns>
+        private static byte[] CreateXorRleDeltaData(byte[] current, byte[] previous)
+        {
+            using (var stream = new MemoryStream())
+            {
+                byte[] literalScratch = new byte[128];
+                int index = 0;
+                while (index < current.Length)
+                {
+                    byte xor = (byte)(current[index] ^ previous[index]);
+                    if (xor == 0)
+                    {
+                        int length = 1;
+                        while (index + length < current.Length && length < 128 && (current[index + length] ^ previous[index + length]) == 0)
+                        {
+                            length++;
+                        }
+
+                        stream.WriteByte((byte)(length - 1));
+                        index += length;
+                        continue;
+                    }
+
+                    int literalLength = 0;
+                    while (index < current.Length && literalLength < literalScratch.Length)
+                    {
+                        xor = (byte)(current[index] ^ previous[index]);
+                        if (xor == 0)
+                        {
+                            break;
+                        }
+
+                        literalScratch[literalLength++] = xor;
+                        index++;
+                    }
+
+                    stream.WriteByte((byte)(0x80 | (literalLength - 1)));
+                    stream.Write(literalScratch, 0, literalLength);
                 }
 
                 return stream.ToArray();
@@ -959,6 +1102,62 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Decodes a raw or compressed XOR/RLE delta payload into a new packed palette frame.
+        /// </summary>
+        /// <param name="payload">Full video payload.</param>
+        /// <param name="dataOffset">Offset of XOR/RLE data or compressed XOR/RLE data.</param>
+        /// <param name="packedLength">Expected packed frame length.</param>
+        /// <param name="baseFrameId">Frame id required by the delta payload.</param>
+        /// <param name="deltaLength">Uncompressed XOR/RLE stream length.</param>
+        /// <param name="compressed">True when the XOR/RLE stream is Deflate-compressed.</param>
+        /// <param name="pixelCount">Decoded frame pixel count.</param>
+        /// <param name="referencePalettePixels">Current decoder reference frame.</param>
+        /// <param name="referenceFrameId">Current decoder reference frame id.</param>
+        /// <returns>Decoded packed palette frame, or null when the delta cannot be applied.</returns>
+        private static byte[] ReadXorRleDeltaVideoFramePayload(byte[] payload, int dataOffset, int packedLength, long baseFrameId, int deltaLength, bool compressed, int pixelCount, byte[] referencePalettePixels, long referenceFrameId)
+        {
+            if (packedLength != GetPalette4Length(pixelCount) ||
+                deltaLength < 0 ||
+                referencePalettePixels == null ||
+                referencePalettePixels.Length != packedLength ||
+                referenceFrameId != baseFrameId)
+            {
+                return null;
+            }
+
+            byte[] deltaData;
+            if (compressed)
+            {
+                int compressedLength = ReadInt32(payload, 36);
+                if (compressedLength <= 0 || payload.Length < dataOffset + compressedLength)
+                {
+                    return null;
+                }
+
+                deltaData = Inflate(payload, dataOffset, compressedLength, deltaLength);
+            }
+            else
+            {
+                if (payload.Length < dataOffset + deltaLength)
+                {
+                    return null;
+                }
+
+                deltaData = new byte[deltaLength];
+                Buffer.BlockCopy(payload, dataOffset, deltaData, 0, deltaLength);
+            }
+
+            if (deltaData == null)
+            {
+                return null;
+            }
+
+            byte[] packedPalettePixels = new byte[packedLength];
+            Buffer.BlockCopy(referencePalettePixels, 0, packedPalettePixels, 0, packedLength);
+            return ApplyXorRleDeltaData(packedPalettePixels, deltaData) ? packedPalettePixels : null;
+        }
+
+        /// <summary>
         /// Applies offset/length replacement runs to a packed palette frame.
         /// </summary>
         /// <param name="target">Frame copy that should receive the changes.</param>
@@ -987,6 +1186,45 @@ namespace C64Emulator.Network
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Applies an XOR/RLE stream to a packed palette frame copy.
+        /// </summary>
+        /// <param name="target">Frame copy that should receive XOR changes.</param>
+        /// <param name="deltaData">RLE stream containing zero skips and literal XOR runs.</param>
+        /// <returns>True when the entire RLE stream exactly covers the target frame.</returns>
+        private static bool ApplyXorRleDeltaData(byte[] target, byte[] deltaData)
+        {
+            int sourceOffset = 0;
+            int targetOffset = 0;
+            while (sourceOffset < deltaData.Length)
+            {
+                int header = deltaData[sourceOffset++];
+                int length = (header & 0x7F) + 1;
+                if (targetOffset > target.Length - length)
+                {
+                    return false;
+                }
+
+                if ((header & 0x80) == 0)
+                {
+                    targetOffset += length;
+                    continue;
+                }
+
+                if (deltaData.Length - sourceOffset < length)
+                {
+                    return false;
+                }
+
+                for (int index = 0; index < length; index++)
+                {
+                    target[targetOffset++] ^= deltaData[sourceOffset++];
+                }
+            }
+
+            return targetOffset == target.Length;
         }
 
         /// <summary>

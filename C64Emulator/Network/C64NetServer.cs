@@ -1271,7 +1271,11 @@ namespace C64Emulator.Network
                         // Video outranks audio because the visual state should always be
                         // the freshest possible remote frame.
                         _latestVideo = null;
-                        return CreateVideoMessage(video);
+                        C64NetMessage videoMessage = CreateVideoMessage(video);
+                        if (videoMessage != null)
+                        {
+                            return videoMessage;
+                        }
                     }
 
                     if (_audioQueue.Count > 0)
@@ -1290,6 +1294,14 @@ namespace C64Emulator.Network
             /// <returns>Protocol message ready to write, or null when encoding fails.</returns>
             private C64NetMessage CreateVideoMessage(PendingVideoFrame video)
             {
+                if (C64NetProtocol.PackedVideoFramesEqual(video.PackedPalettePixels, _lastSentVideoPalettePixels))
+                {
+                    // No visual byte changed since the last frame this client received.
+                    // TCP/TLS is reliable, so the client can keep presenting its current
+                    // image and we can spend zero bandwidth for this completed C64 frame.
+                    return null;
+                }
+
                 bool forceKeyFrame = _lastSentVideoPalettePixels == null || _deltaFramesSinceKeyFrame >= MaxDeltaFramesBeforeKeyFrame;
                 byte[] previous = forceKeyFrame ? null : _lastSentVideoPalettePixels;
                 long previousFrameId = forceKeyFrame ? 0 : _lastSentVideoFrameId;
