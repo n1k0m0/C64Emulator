@@ -39,7 +39,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Drag-and-drop mounting for `.prg` and `.d64` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
-- Optional sharp-pixel, CRT, and TV-grille video presentation filters.
+- Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive live video/audio and can send joystick input or watch as observers.
@@ -69,7 +69,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
-The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`) and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, or XOR/RLE-delta payload. Slow clients keep only the latest pending video frame, so they do not stall faster clients.
+The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`), border-crop zoom, and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, or XOR/RLE-delta payload. Slow clients keep only the latest pending video frame, so they do not stall faster clients.
 
 Server-side entries:
 
@@ -135,6 +135,7 @@ Menu entries:
 | `MEDIA` | Browse / mounted media label | Opens the media browser with `Enter` or `Right`. `Left` ejects the currently mounted media. The browser can mount `.prg` and `.d64` files. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
+| `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
 | `TURBO` | `OFF` / `MAX` | Toggles uncapped emulation speed for fast loading, testing, or skipping waits. This is the same action as `F9`. |
 | `GAMEPAD` | `OFF`, `WAITING`, `ACTIVE` | Enables or disables host gamepad input. `WAITING` means gamepad support is on but no active pad input has been detected yet; `ACTIVE` means a pad is connected/seen. |
 | `LOAD HACK` | `OFF` / `ON` | Enables the direct KERNAL `LOAD` compatibility path. It improves convenience for simple loads, but is less hardware-faithful than pure IEC/drive behavior. |
@@ -288,7 +289,7 @@ Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A sa
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. Mounted media files are intentionally not persisted, so the emulator always starts without re-opening disk or program files from a previous session.
 
 ## ROM Files
 

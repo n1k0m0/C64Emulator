@@ -37,6 +37,8 @@ namespace C64Emulator.Core
 
         public string VideoFilterMode { get; set; } = "Sharp";
 
+        public bool VideoZoomEnabled { get; set; }
+
         public string ResetMode { get; set; } = "Warm";
 
         public bool TurboMode { get; set; }

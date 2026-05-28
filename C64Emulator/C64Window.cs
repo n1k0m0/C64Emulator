@@ -85,9 +85,13 @@ namespace C64Emulator
         private const double SleepSafetyMarginSeconds = 0.0005;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 15;
+        private const int AudioOverlayItemCount = 16;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
+        private const int StandardC64ContentLeft = 41;
+        private const int StandardC64ContentTop = 37;
+        private const int StandardC64ContentWidth = 320;
+        private const int StandardC64ContentHeight = 200;
         // The F7 overlay is a single flat menu split visually into server rows and
         // client rows. The constants keep selection/wrapping independent of labels.
         private const int NetworkOverlayItemCount = 13;
@@ -133,6 +137,7 @@ namespace C64Emulator
         private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
         private ResetMode _resetMode = ResetMode.Warm;
         private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
+        private bool _videoZoomEnabled;
         private byte _lastGamepadJoystickState = 0x1F;
         // Remote client input is kept separate by source and combined with active-low
         // AND semantics before it is sent to the host.
@@ -292,6 +297,7 @@ namespace C64Emulator
             _system.EnableInputInjection = settings.EnableInputInjection;
 
             _videoFilterMode = ParseEnum(settings.VideoFilterMode, VideoFilterMode.Sharp);
+            _videoZoomEnabled = settings.VideoZoomEnabled;
             _resetMode = ParseEnum(settings.ResetMode, ResetMode.Warm);
             _turboMode = settings.TurboMode;
             _windowFullscreen = settings.Fullscreen;
@@ -345,6 +351,7 @@ namespace C64Emulator
                 SidChipModel = _system.CurrentSidChipModel.ToString(),
                 JoystickPort = _system.CurrentJoystickPort.ToString(),
                 VideoFilterMode = _videoFilterMode.ToString(),
+                VideoZoomEnabled = _videoZoomEnabled,
                 ResetMode = _resetMode.ToString(),
                 TurboMode = _turboMode,
                 Fullscreen = _windowFullscreen,
@@ -1443,6 +1450,16 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Toggles the local crop/scale presentation zoom.
+        /// </summary>
+        private void ToggleVideoZoom()
+        {
+            _videoZoomEnabled = !_videoZoomEnabled;
+            _overlayStatusText = _videoZoomEnabled ? "VIDEO ZOOM ON" : "VIDEO ZOOM OFF";
+            SaveSettings();
+        }
+
+        /// <summary>
         /// Cycles the reset behavior used by the reset action.
         /// </summary>
         private void CycleResetMode()
@@ -1816,8 +1833,8 @@ namespace C64Emulator
             }
             else if (_audioOverlayVisible)
             {
-                // In remote mode the settings overlay is mostly read-only, but display
-                // and filter controls still apply to the local presentation.
+                // In remote mode the settings overlay is mostly read-only, but display,
+                // filter, and zoom controls still apply to the local presentation.
                 DrawAudioOverlay(
                     _system.SidMasterVolume,
                     _system.SidNoiseLevel,
@@ -2473,6 +2490,16 @@ namespace C64Emulator
             byte borderGreen = (byte)((borderArgb >> 8) & 0xFF);
             byte borderBlue = (byte)(borderArgb & 0xFF);
 
+            int zoomCropX;
+            int zoomCropY;
+            int zoomCropWidth;
+            int zoomCropHeight;
+            if (_videoZoomEnabled && TryGetVideoZoomCrop(width, height, out zoomCropX, out zoomCropY, out zoomCropWidth, out zoomCropHeight))
+            {
+                DrawZoomedFrame(pixels, width, height, zoomCropX, zoomCropY, zoomCropWidth, zoomCropHeight, borderRed, borderGreen, borderBlue);
+                return;
+            }
+
             int integerScaleX = PixelsWidth / width;
             int integerScaleY = PixelsHeight / height;
             int integerScale = Math.Min(integerScaleX, integerScaleY);
@@ -2510,6 +2537,114 @@ namespace C64Emulator
             else
             {
                 DrawArgbPixelsStretched(pixels, width, height);
+            }
+        }
+
+        /// <summary>
+        /// Draws the C64 screen area without the surrounding border.
+        /// </summary>
+        private void DrawZoomedFrame(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, byte borderRed, byte borderGreen, byte borderBlue)
+        {
+            int integerScaleX = PixelsWidth / width;
+            int integerScaleY = PixelsHeight / height;
+            int integerScale = Math.Min(integerScaleX, integerScaleY);
+            if (integerScale >= 1)
+            {
+                int scaledWidth = width * integerScale;
+                int scaledHeight = height * integerScale;
+                int offsetX = (PixelsWidth - scaledWidth) / 2;
+                int offsetY = (PixelsHeight - scaledHeight) / 2;
+                DrawFrameMargins(offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
+                DrawCroppedFrameToRectangle(pixels, width, height, cropX, cropY, cropWidth, cropHeight, offsetX, offsetY, scaledWidth, scaledHeight);
+                return;
+            }
+
+            DrawCroppedFrameToRectangle(pixels, width, height, cropX, cropY, cropWidth, cropHeight, 0, 0, PixelsWidth, PixelsHeight);
+        }
+
+        /// <summary>
+        /// Draws a cropped source area through the active local presentation filter.
+        /// </summary>
+        private void DrawCroppedFrameToRectangle(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, int targetX, int targetY, int targetWidth, int targetHeight)
+        {
+            if (_videoFilterMode == VideoFilterMode.Tv)
+            {
+                DrawArgbPixelsCroppedToRectangleTv(pixels, width, height, cropX, cropY, cropWidth, cropHeight, targetX, targetY, targetWidth, targetHeight);
+                return;
+            }
+
+            if (_videoFilterMode == VideoFilterMode.Crt)
+            {
+                DrawArgbPixelsCroppedToRectangleCrt(pixels, width, height, cropX, cropY, cropWidth, cropHeight, targetX, targetY, targetWidth, targetHeight);
+                return;
+            }
+
+            DrawArgbPixelsCroppedStretched(pixels, width, height, cropX, cropY, cropWidth, cropHeight, targetX, targetY, targetWidth, targetHeight);
+        }
+
+        /// <summary>
+        /// Returns the standard 40x25 C64 content crop when it fits inside the frame.
+        /// </summary>
+        private static bool TryGetVideoZoomCrop(int width, int height, out int cropX, out int cropY, out int cropWidth, out int cropHeight)
+        {
+            cropWidth = Math.Min(StandardC64ContentWidth, width);
+            cropHeight = Math.Min(StandardC64ContentHeight, height);
+            cropX = ClampInt(width == 403 ? StandardC64ContentLeft : (width - cropWidth) / 2, 0, Math.Max(0, width - cropWidth));
+            cropY = ClampInt(height == 284 ? StandardC64ContentTop : (height - cropHeight) / 2, 0, Math.Max(0, height - cropHeight));
+            return cropWidth > 0 && cropHeight > 0;
+        }
+
+        /// <summary>
+        /// Draws a cropped ARGB source rectangle with the CRT filter.
+        /// </summary>
+        private void DrawArgbPixelsCroppedToRectangleCrt(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, int targetX, int targetY, int targetWidth, int targetHeight)
+        {
+            if (pixels == null || pixels.Length < width * height || targetWidth <= 0 || targetHeight <= 0)
+            {
+                return;
+            }
+
+            for (int targetYOffset = 0; targetYOffset < targetHeight; targetYOffset++)
+            {
+                int scaledSourceY = (int)(((long)targetYOffset * cropHeight * 256) / targetHeight);
+                int sourceY = cropY + (scaledSourceY >> 8);
+                int yFraction = scaledSourceY & 0xFF;
+                int outputY = targetY + targetYOffset;
+                bool scanline = (targetYOffset & 1) != 0;
+                for (int targetXOffset = 0; targetXOffset < targetWidth; targetXOffset++)
+                {
+                    int scaledSourceX = (int)(((long)targetXOffset * cropWidth * 256) / targetWidth);
+                    int sourceX = cropX + (scaledSourceX >> 8);
+                    int xFraction = scaledSourceX & 0xFF;
+                    DrawCrtPixel(targetX + targetXOffset, outputY, SampleCrtSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height, cropX, cropY, cropWidth, cropHeight), scanline);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draws a cropped ARGB source rectangle with the TV filter.
+        /// </summary>
+        private void DrawArgbPixelsCroppedToRectangleTv(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, int targetX, int targetY, int targetWidth, int targetHeight)
+        {
+            if (pixels == null || pixels.Length < width * height || targetWidth <= 0 || targetHeight <= 0)
+            {
+                return;
+            }
+
+            for (int targetYOffset = 0; targetYOffset < targetHeight; targetYOffset++)
+            {
+                int scaledSourceY = (int)(((long)targetYOffset * cropHeight * 256) / targetHeight);
+                int sourceY = cropY + (scaledSourceY >> 8);
+                int yFraction = scaledSourceY & 0xFF;
+                int outputY = targetY + targetYOffset;
+                bool scanline = (targetYOffset & 1) != 0;
+                for (int targetXOffset = 0; targetXOffset < targetWidth; targetXOffset++)
+                {
+                    int scaledSourceX = (int)(((long)targetXOffset * cropWidth * 256) / targetWidth);
+                    int sourceX = cropX + (scaledSourceX >> 8);
+                    int xFraction = scaledSourceX & 0xFF;
+                    DrawTvPixel(targetX + targetXOffset, outputY, SampleTvSourcePixel(pixels, sourceY, sourceX, xFraction, yFraction, width, height, cropX, cropY, cropWidth, cropHeight), scanline);
+                }
             }
         }
 
@@ -2654,6 +2789,44 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Samples the CRT-filtered source while clamping all taps to a crop rectangle.
+        /// </summary>
+        private static uint SampleCrtSourcePixel(uint[] pixels, int sourceY, int sourceX, int xFraction, int yFraction, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight)
+        {
+            int minX = ClampInt(cropX, 0, width - 1);
+            int minY = ClampInt(cropY, 0, height - 1);
+            int maxX = ClampInt(cropX + cropWidth - 1, minX, width - 1);
+            int maxY = ClampInt(cropY + cropHeight - 1, minY, height - 1);
+            int clampedY = ClampInt(sourceY, minY, maxY);
+            int nextY = ClampInt(sourceY + 1, minY, maxY);
+            int clampedX = ClampInt(sourceX, minX, maxX);
+            int nextX = ClampInt(sourceX + 1, minX, maxX);
+
+            uint topLeft = BlendCrtSourcePixel(pixels, clampedY * width, clampedX, width, minX, maxX);
+            uint topRight = BlendCrtSourcePixel(pixels, clampedY * width, nextX, width, minX, maxX);
+            uint bottomLeft = BlendCrtSourcePixel(pixels, nextY * width, clampedX, width, minX, maxX);
+            uint bottomRight = BlendCrtSourcePixel(pixels, nextY * width, nextX, width, minX, maxX);
+            uint top = LerpRgb(topLeft, topRight, xFraction);
+            uint bottom = LerpRgb(bottomLeft, bottomRight, xFraction);
+            uint interpolated = LerpRgb(top, bottom, yFraction);
+            return LerpRgb(topLeft, interpolated, 48);
+        }
+
+        /// <summary>
+        /// Blends a source pixel with horizontal neighbours clamped to a crop rectangle.
+        /// </summary>
+        private static uint BlendCrtSourcePixel(uint[] pixels, int sourceRow, int sourceX, int width, int minX, int maxX)
+        {
+            uint center = pixels[sourceRow + sourceX];
+            uint left = pixels[sourceRow + ClampInt(sourceX - 1, minX, maxX)];
+            uint right = pixels[sourceRow + ClampInt(sourceX + 1, minX, maxX)];
+            int red = ((((int)(center >> 16) & 0xFF) * 6) + ((int)(left >> 16) & 0xFF) + ((int)(right >> 16) & 0xFF)) >> 3;
+            int green = ((((int)(center >> 8) & 0xFF) * 6) + ((int)(left >> 8) & 0xFF) + ((int)(right >> 8) & 0xFF)) >> 3;
+            int blue = (((int)(center & 0xFF) * 6) + (int)(left & 0xFF) + (int)(right & 0xFF)) >> 3;
+            return (uint)((red << 16) | (green << 8) | blue);
+        }
+
+        /// <summary>
         /// Blends a source pixel with horizontal and vertical neighbours for a softer TV tube look.
         /// </summary>
         private static uint BlendTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int width, int height)
@@ -2708,6 +2881,67 @@ namespace C64Emulator
             uint bottom = LerpRgb(bottomLeft, bottomRight, xFraction);
             uint interpolated = LerpRgb(top, bottom, yFraction);
             return LerpRgb(topLeft, interpolated, 64);
+        }
+
+        /// <summary>
+        /// Samples the TV-filtered source while clamping all taps to a crop rectangle.
+        /// </summary>
+        private static uint SampleTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int xFraction, int yFraction, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight)
+        {
+            int minX = ClampInt(cropX, 0, width - 1);
+            int minY = ClampInt(cropY, 0, height - 1);
+            int maxX = ClampInt(cropX + cropWidth - 1, minX, width - 1);
+            int maxY = ClampInt(cropY + cropHeight - 1, minY, height - 1);
+            int clampedY = ClampInt(sourceY, minY, maxY);
+            int nextY = ClampInt(sourceY + 1, minY, maxY);
+            int clampedX = ClampInt(sourceX, minX, maxX);
+            int nextX = ClampInt(sourceX + 1, minX, maxX);
+
+            uint topLeft = BlendTvSourcePixel(pixels, clampedY, clampedX, width, height, minX, minY, maxX, maxY);
+            uint topRight = BlendTvSourcePixel(pixels, clampedY, nextX, width, height, minX, minY, maxX, maxY);
+            uint bottomLeft = BlendTvSourcePixel(pixels, nextY, clampedX, width, height, minX, minY, maxX, maxY);
+            uint bottomRight = BlendTvSourcePixel(pixels, nextY, nextX, width, height, minX, minY, maxX, maxY);
+            uint top = LerpRgb(topLeft, topRight, xFraction);
+            uint bottom = LerpRgb(bottomLeft, bottomRight, xFraction);
+            uint interpolated = LerpRgb(top, bottom, yFraction);
+            return LerpRgb(topLeft, interpolated, 64);
+        }
+
+        /// <summary>
+        /// Blends a TV source pixel with neighbours clamped to a crop rectangle.
+        /// </summary>
+        private static uint BlendTvSourcePixel(uint[] pixels, int sourceY, int sourceX, int width, int height, int minX, int minY, int maxX, int maxY)
+        {
+            int sourceRow = sourceY * width;
+            int leftX = ClampInt(sourceX - 1, minX, maxX);
+            int rightX = ClampInt(sourceX + 1, minX, maxX);
+            int upperRow = ClampInt(sourceY - 1, minY, maxY) * width;
+            int lowerRow = ClampInt(sourceY + 1, minY, maxY) * width;
+
+            uint center = pixels[sourceRow + sourceX];
+            uint left = pixels[sourceRow + leftX];
+            uint right = pixels[sourceRow + rightX];
+            uint upper = pixels[upperRow + sourceX];
+            uint lower = pixels[lowerRow + sourceX];
+
+            const int totalWeight = 20;
+            int red = ((((int)(center >> 16) & 0xFF) * 10) +
+                       (((int)(left >> 16) & 0xFF) * 3) +
+                       (((int)(right >> 16) & 0xFF) * 3) +
+                       (((int)(upper >> 16) & 0xFF) * 2) +
+                       (((int)(lower >> 16) & 0xFF) * 2)) / totalWeight;
+            int green = ((((int)(center >> 8) & 0xFF) * 10) +
+                         (((int)(left >> 8) & 0xFF) * 3) +
+                         (((int)(right >> 8) & 0xFF) * 3) +
+                         (((int)(upper >> 8) & 0xFF) * 2) +
+                         (((int)(lower >> 8) & 0xFF) * 2)) / totalWeight;
+            int blue = (((int)(center & 0xFF) * 10) +
+                        ((int)(left & 0xFF) * 3) +
+                        ((int)(right & 0xFF) * 3) +
+                        ((int)(upper & 0xFF) * 2) +
+                        ((int)(lower & 0xFF) * 2)) / totalWeight;
+
+            return (uint)((red << 16) | (green << 8) | blue);
         }
 
         /// <summary>
@@ -4082,33 +4316,37 @@ namespace C64Emulator
                     }
                     else if (_audioOverlaySelection == 7)
                     {
-                        ToggleTurboMode();
+                        ToggleVideoZoom();
                     }
                     else if (_audioOverlaySelection == 8)
                     {
-                        ToggleGamepadInput();
+                        ToggleTurboMode();
                     }
                     else if (_audioOverlaySelection == 9)
                     {
-                        ToggleLoadHack();
+                        ToggleGamepadInput();
                     }
                     else if (_audioOverlaySelection == 10)
                     {
-                        ToggleSoftwareIecTransport();
+                        ToggleLoadHack();
                     }
                     else if (_audioOverlaySelection == 11)
                     {
-                        ToggleInputInjection();
+                        ToggleSoftwareIecTransport();
                     }
                     else if (_audioOverlaySelection == 12)
                     {
-                        CycleResetMode();
+                        ToggleInputInjection();
                     }
                     else if (_audioOverlaySelection == 13)
                     {
-                        ToggleDriveOverlay();
+                        CycleResetMode();
                     }
                     else if (_audioOverlaySelection == 14)
+                    {
+                        ToggleDriveOverlay();
+                    }
+                    else if (_audioOverlaySelection == 15)
                     {
                         OpenResetConfirmation();
                     }
@@ -4209,47 +4447,53 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 7)
             {
-                ToggleTurboMode();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                ToggleGamepadInput();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleLoadHack();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleSoftwareIecTransport();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleInputInjection();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                CycleResetMode();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                ToggleDriveOverlay();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 14)
+            {
+                ToggleDriveOverlay();
+                return;
+            }
+
+            if (_audioOverlaySelection == 15)
             {
                 if (direction >= 0)
                 {
@@ -4669,7 +4913,7 @@ namespace C64Emulator
 
             // Remote clients can control only local display/presentation choices. The
             // server owns emulation-affecting settings such as SID, media, reset, and turbo.
-            return menuIndex == 5 || menuIndex == 6 || menuIndex == 8;
+            return menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 9;
         }
 
         /// <summary>
@@ -4886,27 +5130,30 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 15:
                     DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }

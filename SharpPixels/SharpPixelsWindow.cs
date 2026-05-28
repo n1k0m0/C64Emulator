@@ -1298,6 +1298,69 @@ namespace SharpPixels
         }
 
         /// <summary>
+        /// Draws a cropped ARGB source rectangle stretched into an arbitrary target rectangle.
+        /// </summary>
+        /// <param name="sourcePixels">Source pixels in 0xAARRGGBB format.</param>
+        /// <param name="sourceWidth">Source width in pixels.</param>
+        /// <param name="sourceHeight">Source height in pixels.</param>
+        /// <param name="cropX">Source crop X coordinate.</param>
+        /// <param name="cropY">Source crop Y coordinate.</param>
+        /// <param name="cropWidth">Source crop width.</param>
+        /// <param name="cropHeight">Source crop height.</param>
+        /// <param name="destinationX">Destination X coordinate.</param>
+        /// <param name="destinationY">Destination Y coordinate.</param>
+        /// <param name="destinationWidth">Destination width.</param>
+        /// <param name="destinationHeight">Destination height.</param>
+        public void DrawArgbPixelsCroppedStretched(uint[] sourcePixels, int sourceWidth, int sourceHeight, int cropX, int cropY, int cropWidth, int cropHeight, int destinationX, int destinationY, int destinationWidth, int destinationHeight)
+        {
+            if (sourcePixels == null || sourceWidth <= 0 || sourceHeight <= 0 || cropWidth <= 0 || cropHeight <= 0 || destinationWidth <= 0 || destinationHeight <= 0)
+            {
+                return;
+            }
+
+            int requiredPixels = sourceWidth * sourceHeight;
+            if (sourcePixels.Length < requiredPixels)
+            {
+                return;
+            }
+
+            int sourceCropX = Math.Max(0, cropX);
+            int sourceCropY = Math.Max(0, cropY);
+            int sourceCropRight = Math.Min(sourceWidth, cropX + cropWidth);
+            int sourceCropBottom = Math.Min(sourceHeight, cropY + cropHeight);
+            if (sourceCropRight <= sourceCropX || sourceCropBottom <= sourceCropY)
+            {
+                return;
+            }
+
+            int sourceCropWidth = sourceCropRight - sourceCropX;
+            int sourceCropHeight = sourceCropBottom - sourceCropY;
+            int startX = Math.Max(0, destinationX);
+            int startY = Math.Max(0, destinationY);
+            int endX = Math.Min(PixelsWidth, destinationX + destinationWidth);
+            int endY = Math.Min(PixelsHeight, destinationY + destinationHeight);
+            if (endX <= startX || endY <= startY)
+            {
+                return;
+            }
+
+            uint* target = (uint*)_pixelBufferPointer.ToPointer();
+            for (int y = startY; y < endY; y++)
+            {
+                int destinationOffsetY = y - destinationY;
+                int sourceY = sourceCropY + Math.Min(sourceCropHeight - 1, ((destinationOffsetY * sourceCropHeight) + (destinationHeight / 2)) / destinationHeight);
+                int sourceRow = sourceY * sourceWidth;
+                int targetIndex = (y * PixelsWidth) + startX;
+                for (int x = startX; x < endX; x++)
+                {
+                    int destinationOffsetX = x - destinationX;
+                    int sourceX = sourceCropX + Math.Min(sourceCropWidth - 1, ((destinationOffsetX * sourceCropWidth) + (destinationWidth / 2)) / destinationWidth);
+                    target[targetIndex++] = PackArgbSource(sourcePixels[sourceRow + sourceX]);
+                }
+            }
+        }
+
+        /// <summary>
         /// Builds nearest-neighbor stretch lookup tables when source or target dimensions change.
         /// </summary>
         private void EnsureStretchMaps(int sourceWidth, int sourceHeight)
