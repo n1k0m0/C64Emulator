@@ -42,7 +42,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
-- Startup update check against the latest GitHub Release with optional setup download/launch.
+- Startup update check against the latest GitHub Release with a setup download progress window, optional SHA-256 verification, and safe setup launch after the emulator exits.
 - Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send joystick input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
@@ -247,9 +247,11 @@ The uninstaller removes the installed application and `%APPDATA%\C64Emulator`, i
 
 ## Startup Updates
 
-On normal GUI startup, the emulator checks the latest GitHub Release in the background after the window has opened. Headless diagnostic modes do not run this check. If a newer release exists and it contains a `*-win-x64-setup.exe` asset, the emulator asks whether the setup should be downloaded and started.
+On normal GUI startup, the emulator checks the latest GitHub Release in the background after the window has opened. Headless diagnostic modes do not run this check. If a newer release exists and it contains a `*-win-x64-setup.exe` asset, the emulator shows an English update prompt: `A new version is available on GitHub.`
 
-The downloaded setup is written to `%TEMP%\C64Emulator\updates`. If GitHub is unreachable, no newer release exists, or the release does not contain a Windows setup asset, startup continues silently. Download or launch errors are only shown after the user has chosen to install the update.
+When the user accepts the update, a progress window downloads the setup to `%TEMP%\C64Emulator\updates`. The window shows progress, downloaded size, cancel/retry handling, and an `Install` button after a successful download. If GitHub provides a SHA-256 asset digest, the setup is verified before it can be launched. The emulator then closes cleanly and a small helper starts Setup only after the running emulator process has exited, so installed files can be replaced safely.
+
+If GitHub is unreachable, no newer release exists, or the release does not contain a Windows setup asset, startup continues silently. Download or launch errors are only shown after the user has chosen to install the update.
 
 ## Diagnostics
 

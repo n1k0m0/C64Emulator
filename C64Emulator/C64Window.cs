@@ -116,6 +116,7 @@ namespace C64Emulator
         private double _cyclesPerStopwatchTick;
         private double _secondsPerCycle;
         private uint[] _frameSnapshot;
+        private int _closeRequested;
 
         private Task _emulationTask;
         private long _emulationBaseCycle;
@@ -535,10 +536,24 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Requests the OpenTK window to close on its own render thread.
+        /// </summary>
+        public void RequestClose()
+        {
+            Interlocked.Exchange(ref _closeRequested, 1);
+        }
+
+        /// <summary>
         /// Handles the on user update operation.
         /// </summary>
         public override void OnUserUpdate(double time)
         {
+            if (Interlocked.Exchange(ref _closeRequested, 0) != 0)
+            {
+                Close();
+                return;
+            }
+
             PollGamepadInput();
             if (_networkMode == NetworkSessionMode.Client)
             {

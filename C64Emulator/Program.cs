@@ -243,9 +243,9 @@ namespace C64Emulator
 
             try
             {
-                StartupUpdateChecker.CheckForUpdatesOnStartup();
                 using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))
                 {
+                    StartupUpdateChecker.CheckForUpdatesOnStartup(window.RequestClose);
                     window.Run();
                 }
             }
