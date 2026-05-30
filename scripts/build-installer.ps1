@@ -41,6 +41,18 @@ function Find-InnoSetupCompiler {
     return $null
 }
 
+function Assert-PublishedApplicationVersion([string]$ExePath, [string]$ExpectedVersion) {
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        throw "Published application was not found: $ExePath"
+    }
+
+    $expectedVersionInfo = Get-C64VersionInfo $ExpectedVersion
+    $fileInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
+    if ($fileInfo.FileVersion -ne $expectedVersionInfo -or $fileInfo.ProductVersion -ne $expectedVersionInfo) {
+        throw "Published application reports FileVersion=$($fileInfo.FileVersion) and ProductVersion=$($fileInfo.ProductVersion), expected $expectedVersionInfo. Update C64Emulator\Properties\AssemblyInfo.cs before building the installer."
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $versionFile = Join-Path $repoRoot "VERSION"
 if ([string]::IsNullOrWhiteSpace($Version) -and (Test-Path -LiteralPath $versionFile)) {
@@ -63,6 +75,8 @@ $scriptPath = Join-Path $repoRoot "installer\C64Emulator.iss"
 if (-not $SkipPublish) {
     & (Join-Path $repoRoot "scripts\publish-win-x64.ps1") -Configuration $Configuration -Version $Version
 }
+
+Assert-PublishedApplicationVersion (Join-Path $publishDir "C64Emulator.exe") $Version
 
 New-Item -ItemType Directory -Path $installerDir -Force | Out-Null
 
