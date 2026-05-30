@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using C64Emulator.Core;
@@ -78,25 +79,37 @@ namespace C64Emulator
             Client
         }
 
+        /// <summary>
+        /// Lists the top-level F10 menu entries.
+        /// </summary>
+        private enum MainMenuItem
+        {
+            Settings = 0,
+            Network = 1,
+            Media = 2,
+            Reset = 3
+        }
+
         private const int MaxCycleBatch = 2048;
         private const int NormalCycleBatch = 512;
         private const long WaitCycleQuantum = 256;
         private const double SleepThresholdSeconds = 0.002;
         private const double SleepSafetyMarginSeconds = 0.0005;
+        private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 16;
+        private const int AudioOverlayItemCount = 14;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int StandardC64ContentLeft = 41;
         private const int StandardC64ContentTop = 37;
         private const int StandardC64ContentWidth = 320;
         private const int StandardC64ContentHeight = 200;
-        // The F7 overlay is a single flat menu split visually into server rows and
+        // The network overlay is a single flat menu split visually into server rows and
         // client rows. The constants keep selection/wrapping independent of labels.
-        private const int NetworkOverlayItemCount = 13;
-        private const int NetworkOverlayServerItemCount = 6;
-        private const int NetworkOverlayVisibleClientRows = 3;
+        private const int NetworkOverlayItemCount = 14;
+        private const int NetworkOverlayServerItemCount = 7;
+        private const int NetworkOverlayVisibleClientRows = 2;
         // Remote clients resend unchanged joystick state periodically so the host can
         // recover from a dropped packet or a stale state after a quick reconnect.
         private const double RemoteInputRefreshSeconds = 0.05;
@@ -121,6 +134,7 @@ namespace C64Emulator
         private Task _emulationTask;
         private long _emulationBaseCycle;
         private long _lastRenderedCycle;
+        private volatile bool _mainMenuVisible;
         private volatile bool _audioOverlayVisible;
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
@@ -145,6 +159,7 @@ namespace C64Emulator
         private byte _remoteKeyboardJoystickState = 0xFF;
         private byte _remoteGamepadJoystickState = 0xFF;
         private byte _lastRemoteJoystickState = 0xFF;
+        private int _mainMenuSelection;
         private int _audioOverlaySelection;
         private int _audioOverlayScroll;
         private int _networkOverlaySelection;
@@ -168,6 +183,9 @@ namespace C64Emulator
         private long _networkStatusToastUntilTicks;
         private int _saveOverlaySelection;
         private int _saveOverlayScroll;
+        private bool _saveDeleteConfirmVisible;
+        private bool _saveDeleteConfirmYesSelected = true;
+        private string _pendingDeleteSavePath;
         private string _mediaBrowserCurrentDirectory;
         private string _saveOverlayCurrentDirectory;
         private List<MediaBrowserEntry> _mediaBrowserEntries = new List<MediaBrowserEntry>();
@@ -196,6 +214,7 @@ namespace C64Emulator
         private int _networkPendingFrameHeight;
         private long _networkPendingFrameId;
         private long _lastDisplayedNetworkFrameId;
+        private readonly HashSet<Key> _networkAppliedKeyboardKeys = new HashSet<Key>();
         // Frame id bookkeeping prevents sending the same completed PAL frame repeatedly
         // when the renderer runs faster than the emulated C64 frame rate.
         private long _lastBroadcastNetworkCompletedFrameId = -1;
@@ -363,7 +382,7 @@ namespace C64Emulator
                 DriveOverlayEnabled = _driveOverlayEnabled,
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
                 MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty,
-                // Store the F7 menu fields so host/client setup survives app restarts.
+                // Store the network menu fields so host/client setup survives app restarts.
                 // Passwords are intentionally plain settings today, matching the simple
                 // local emulator settings model.
                 NetworkServerPort = _networkServerPort,
@@ -468,7 +487,7 @@ namespace C64Emulator
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    if (_networkOverlayVisible || _saveOverlayVisible || _audioOverlayVisible)
+                    if (_mainMenuVisible || _networkOverlayVisible || _saveOverlayVisible || _audioOverlayVisible || _mediaBrowserVisible || _resetConfirmVisible)
                     {
                         // All emulator menus pause simulation. The network menu follows
                         // the same rule so the host can safely grant/kick clients without
@@ -661,13 +680,21 @@ namespace C64Emulator
                 drive10Mounted, drive10LedOn, drive10Active,
                 drive11Mounted, drive11LedOn, drive11Active);
 
-            if (_networkOverlayVisible)
+            if (_mainMenuVisible)
+            {
+                DrawMainMenuOverlay();
+            }
+            else if (_networkOverlayVisible)
             {
                 DrawNetworkOverlay();
             }
             else if (_saveOverlayVisible)
             {
                 DrawSaveOverlay();
+            }
+            else if (_mediaBrowserVisible)
+            {
+                DrawStandaloneMediaBrowserOverlay();
             }
             else if (_audioOverlayVisible)
             {
@@ -678,7 +705,7 @@ namespace C64Emulator
                 DrawTurboToast();
             }
 
-            if (_debugOverlayVisible && !_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
+            if (_debugOverlayVisible && !_mainMenuVisible && !_networkOverlayVisible && !_saveOverlayVisible && !_mediaBrowserVisible && !_audioOverlayVisible)
             {
                 DrawDebugOverlay(timing, currentPc, currentOpcode, memoryDebugInfo, cpuDebugInfo, ciaDebugInfo, sidDebugInfo, iecDebugInfo, drive8DebugInfo);
             }
@@ -765,10 +792,63 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyDown(SharpPixels.KeyEventArgs keyEventArgs)
         {
-            if (keyEventArgs.Key == Key.F7)
+            if (keyEventArgs.Key == Key.F12)
             {
-                // F7 always belongs to networking, even in a remote session.
-                ToggleNetworkOverlay();
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    ToggleRemoteSaveOverlay();
+                }
+                else
+                {
+                    ToggleSaveOverlay();
+                }
+
+                return;
+            }
+
+            if (_saveOverlayVisible)
+            {
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    HandleRemoteSaveOverlayKeyDown(keyEventArgs.Key);
+                }
+                else
+                {
+                    HandleSaveOverlayKeyDown(keyEventArgs.Key);
+                }
+
+                return;
+            }
+
+            if (keyEventArgs.Key == Key.F10)
+            {
+                ToggleMainMenu();
+                return;
+            }
+
+            if (keyEventArgs.Key == Key.F9)
+            {
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    ShowNetworkStatus("TURBO DISABLED REMOTE");
+                }
+                else
+                {
+                    ToggleTurboMode();
+                }
+
+                return;
+            }
+
+            if (keyEventArgs.Key == Key.F11)
+            {
+                ToggleDisplayMode();
+                return;
+            }
+
+            if (_mainMenuVisible)
+            {
+                HandleMainMenuKeyDown(keyEventArgs.Key);
                 return;
             }
 
@@ -782,44 +862,8 @@ namespace C64Emulator
             if (_networkMode == NetworkSessionMode.Client)
             {
                 // Remote mode routes keys to local-only remote controls or upstream
-                // joystick input. It must not feed the stopped local C64 instance.
+                // input. It must not feed the stopped local C64 instance.
                 HandleRemoteClientKeyDown(keyEventArgs);
-                return;
-            }
-
-            if (keyEventArgs.Key == Key.F12)
-            {
-                ToggleSaveOverlay();
-                return;
-            }
-
-            if (_saveOverlayVisible)
-            {
-                HandleSaveOverlayKeyDown(keyEventArgs.Key);
-                return;
-            }
-
-            if (keyEventArgs.Key == Key.F10)
-            {
-                ToggleAudioOverlay();
-                return;
-            }
-
-            if (keyEventArgs.Key == Key.F9)
-            {
-                ToggleTurboMode();
-                return;
-            }
-
-            if (keyEventArgs.Key == Key.F11)
-            {
-                ToggleDisplayMode();
-                return;
-            }
-
-            if (keyEventArgs.Key == Key.F8)
-            {
-                ToggleDriveOverlay();
                 return;
             }
 
@@ -853,9 +897,9 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserKeyUp(SharpPixels.KeyEventArgs keyEventArgs)
         {
-            if (keyEventArgs.Key == Key.F7 || _networkOverlayVisible)
+            if (_networkOverlayVisible || _mainMenuVisible)
             {
-                // Ignore releases for keys captured by the network menu so they do not
+                // Ignore releases for keys captured by emulator menus so they do not
                 // leak as C64 keyboard/joystick input after the menu closes.
                 return;
             }
@@ -864,8 +908,7 @@ namespace C64Emulator
             {
                 if (!_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
                 {
-                    // Only joystick keys are meaningful in remote mode; all other C64
-                    // keyboard input is intentionally server-side.
+                    SendRemoteClientKeyboardKey(keyEventArgs.Key, false);
                     HandleRemoteClientJoystickKey(keyEventArgs.Key, false);
                 }
 
@@ -877,7 +920,7 @@ namespace C64Emulator
                 return;
             }
 
-            if (keyEventArgs.Key == Key.F10 || keyEventArgs.Key == Key.F9 || keyEventArgs.Key == Key.F11 || keyEventArgs.Key == Key.F8)
+            if (keyEventArgs.Key == Key.F10 || keyEventArgs.Key == Key.F9 || keyEventArgs.Key == Key.F11)
             {
                 return;
             }
@@ -915,6 +958,216 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Toggles the read-only remote savestate overlay.
+        /// </summary>
+        private void ToggleRemoteSaveOverlay()
+        {
+            if (_saveOverlayVisible)
+            {
+                CloseSaveOverlay();
+                return;
+            }
+
+            OpenRemoteSaveOverlay();
+        }
+
+        /// <summary>
+        /// Opens the read-only savestate notice used while connected as a client.
+        /// </summary>
+        private void OpenRemoteSaveOverlay()
+        {
+            _mainMenuVisible = false;
+            _audioOverlayVisible = false;
+            _networkOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            _saveDeleteConfirmVisible = false;
+            _pendingDeleteSavePath = null;
+            _saveOverlayVisible = true;
+            _saveOverlayStatusText = "REMOTE SESSION";
+        }
+
+        /// <summary>
+        /// Handles key input in the read-only remote savestate notice.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>True because the overlay consumes every key.</returns>
+        private bool HandleRemoteSaveOverlayKeyDown(Key key)
+        {
+            if (key == Key.Escape)
+            {
+                CloseSaveOverlay();
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Toggles the top-level F10 emulator menu.
+        /// </summary>
+        private void ToggleMainMenu()
+        {
+            if (_mainMenuVisible || _audioOverlayVisible || _networkOverlayVisible || _mediaBrowserVisible || _resetConfirmVisible)
+            {
+                CloseMainMenuFamily();
+                return;
+            }
+
+            OpenMainMenu();
+        }
+
+        /// <summary>
+        /// Returns from a submenu to the F10 overview without resuming emulation.
+        /// </summary>
+        private void ReturnToMainMenuFromSubmenu()
+        {
+            _mainMenuVisible = true;
+            _networkOverlayVisible = false;
+            _audioOverlayVisible = false;
+            _saveOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            _saveDeleteConfirmVisible = false;
+            _pendingDeleteSavePath = null;
+        }
+
+        /// <summary>
+        /// Opens the top-level emulator menu.
+        /// </summary>
+        private void OpenMainMenu()
+        {
+            _mainMenuVisible = true;
+            _networkOverlayVisible = false;
+            _audioOverlayVisible = false;
+            _saveOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            _saveDeleteConfirmVisible = false;
+            _overlayStatusText = "MAIN MENU";
+        }
+
+        /// <summary>
+        /// Closes the F10 menu and any submenu reached from it.
+        /// </summary>
+        private void CloseMainMenuFamily()
+        {
+            _mainMenuVisible = false;
+            _networkOverlayVisible = false;
+            _audioOverlayVisible = false;
+            _mediaBrowserVisible = false;
+            _resetConfirmVisible = false;
+            if (_networkMode != NetworkSessionMode.Client)
+            {
+                ResetEmulationTiming();
+            }
+        }
+
+        /// <summary>
+        /// Handles key input in the top-level F10 menu.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>True when the menu consumed the key.</returns>
+        private bool HandleMainMenuKeyDown(Key key)
+        {
+            if (_resetConfirmVisible)
+            {
+                return HandleResetConfirmKeyDown(key);
+            }
+
+            switch (key)
+            {
+                case Key.Up:
+                    MoveMainMenuSelection(-1);
+                    return true;
+                case Key.Down:
+                    MoveMainMenuSelection(1);
+                    return true;
+                case Key.Left:
+                case Key.Minus:
+                case Key.Right:
+                case Key.Plus:
+                case Key.Enter:
+                    ActivateMainMenuItem();
+                    return true;
+                case Key.Escape:
+                    CloseMainMenuFamily();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Moves the selected top-level menu entry with wraparound.
+        /// </summary>
+        /// <param name="delta">Selection delta.</param>
+        private void MoveMainMenuSelection(int delta)
+        {
+            _mainMenuSelection += delta;
+            if (_mainMenuSelection < 0)
+            {
+                _mainMenuSelection = MainMenuItemCount - 1;
+            }
+
+            if (_mainMenuSelection >= MainMenuItemCount)
+            {
+                _mainMenuSelection = 0;
+            }
+        }
+
+        /// <summary>
+        /// Opens or toggles the selected top-level menu entry.
+        /// </summary>
+        private void ActivateMainMenuItem()
+        {
+            MainMenuItem selectedItem = (MainMenuItem)_mainMenuSelection;
+            if (!IsMainMenuItemEnabled(selectedItem))
+            {
+                ShowNetworkStatus("MENU ITEM DISABLED");
+                return;
+            }
+
+            switch (selectedItem)
+            {
+                case MainMenuItem.Settings:
+                    OpenAudioOverlay();
+                    return;
+                case MainMenuItem.Network:
+                    _mainMenuVisible = false;
+                    _networkOverlayVisible = false;
+                    ToggleNetworkOverlay();
+                    return;
+                case MainMenuItem.Media:
+                    _mainMenuVisible = false;
+                    _networkOverlayVisible = false;
+                    _audioOverlayVisible = false;
+                    _saveOverlayVisible = false;
+                    OpenMediaBrowser();
+                    return;
+                case MainMenuItem.Reset:
+                    OpenResetConfirmation();
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// Checks whether a top-level menu item is available in the current mode.
+        /// </summary>
+        /// <param name="item">Top-level menu item.</param>
+        /// <returns>True when the item can be activated.</returns>
+        private bool IsMainMenuItemEnabled(MainMenuItem item)
+        {
+            if (_networkMode != NetworkSessionMode.Client)
+            {
+                return true;
+            }
+
+            // Remote clients can manage local presentation and network leave/filter
+            // options, but media and drive ownership stay with the host.
+                return item == MainMenuItem.Settings || item == MainMenuItem.Network;
+        }
+
+        /// <summary>
         /// Toggles the settings overlay and pauses or resumes emulation timing.
         /// </summary>
         private void ToggleAudioOverlay()
@@ -934,6 +1187,9 @@ namespace C64Emulator
         /// </summary>
         private void OpenAudioOverlay()
         {
+            _mainMenuVisible = false;
+            _networkOverlayVisible = false;
+            _saveOverlayVisible = false;
             _audioOverlayVisible = true;
             ClampAudioOverlayScroll();
         }
@@ -959,16 +1215,18 @@ namespace C64Emulator
             {
                 // Only one modal emulator overlay is visible at a time. Closing the
                 // others avoids ambiguous key routing between menus.
+                _mainMenuVisible = false;
                 _audioOverlayVisible = false;
                 _saveOverlayVisible = false;
                 _mediaBrowserVisible = false;
                 _resetConfirmVisible = false;
+                _saveDeleteConfirmVisible = false;
                 ClampNetworkSelectedClientIndex();
                 if (!IsNetworkMenuRowEnabled(_networkOverlaySelection))
                 {
                     // If the current mode disables the previously selected row, land on
                     // the primary action for that mode.
-                    _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 11 : 2;
+                    _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 12 : 2;
                 }
             }
             else if (_networkMode != NetworkSessionMode.Client)
@@ -983,9 +1241,12 @@ namespace C64Emulator
         /// </summary>
         private void OpenSaveOverlay()
         {
+            _mainMenuVisible = false;
             _audioOverlayVisible = false;
+            _networkOverlayVisible = false;
             _mediaBrowserVisible = false;
             _resetConfirmVisible = false;
+            _saveDeleteConfirmVisible = false;
             _saveOverlayStatusText = "PAUSED";
             _saveOverlayVisible = true;
             _saveOverlayCurrentDirectory = GetSaveDirectory();
@@ -1002,6 +1263,8 @@ namespace C64Emulator
         private void CloseSaveOverlay()
         {
             _saveOverlayVisible = false;
+            _saveDeleteConfirmVisible = false;
+            _pendingDeleteSavePath = null;
             _saveOverlayStatusText = "F12 SAVE MENU";
             ResetEmulationTiming();
         }
@@ -1011,6 +1274,11 @@ namespace C64Emulator
         /// </summary>
         private bool HandleSaveOverlayKeyDown(Key key)
         {
+            if (_saveDeleteConfirmVisible)
+            {
+                return HandleSaveDeleteConfirmKeyDown(key);
+            }
+
             switch (key)
             {
                 case Key.Up:
@@ -1034,10 +1302,7 @@ namespace C64Emulator
                     ActivateSelectedSaveOverlayEntry();
                     return true;
                 case Key.Delete:
-                    DeleteSelectedSaveState();
-                    return true;
-                case Key.BackSpace:
-                    NavigateSaveOverlayUp();
+                    OpenSaveDeleteConfirmation();
                     return true;
                 case Key.Escape:
                     CloseSaveOverlay();
@@ -1097,6 +1362,74 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Opens a yes/no confirmation before deleting a savestate.
+        /// </summary>
+        private void OpenSaveDeleteConfirmation()
+        {
+            if (_saveOverlayEntries.Count == 0)
+            {
+                _saveOverlayStatusText = "NO SAVE SELECTED";
+                return;
+            }
+
+            SaveOverlayEntry selectedEntry = _saveOverlayEntries[_saveOverlaySelection];
+            if (selectedEntry.IsDirectory || selectedEntry.Metadata == null)
+            {
+                _saveOverlayStatusText = "SELECT A SAVE";
+                return;
+            }
+
+            _pendingDeleteSavePath = selectedEntry.Metadata.Path;
+            _saveDeleteConfirmYesSelected = false;
+            _saveDeleteConfirmVisible = true;
+            _saveOverlayStatusText = "CONFIRM DELETE";
+        }
+
+        /// <summary>
+        /// Handles keys in the savestate delete confirmation popup.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>True when consumed.</returns>
+        private bool HandleSaveDeleteConfirmKeyDown(Key key)
+        {
+            switch (key)
+            {
+                case Key.Left:
+                case Key.Right:
+                case Key.Up:
+                case Key.Down:
+                    _saveDeleteConfirmYesSelected = !_saveDeleteConfirmYesSelected;
+                    return true;
+                case Key.Enter:
+                    if (_saveDeleteConfirmYesSelected)
+                    {
+                        DeleteSelectedSaveStateConfirmed();
+                    }
+                    else
+                    {
+                        CancelSaveDeleteConfirmation();
+                    }
+
+                    return true;
+                case Key.Escape:
+                    CancelSaveDeleteConfirmation();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Cancels the pending savestate delete operation.
+        /// </summary>
+        private void CancelSaveDeleteConfirmation()
+        {
+            _saveDeleteConfirmVisible = false;
+            _pendingDeleteSavePath = null;
+            _saveOverlayStatusText = "DELETE CANCELED";
+        }
+
+        /// <summary>
         /// Loads the given savestate.
         /// </summary>
         private void LoadSelectedSaveState(SaveStateMetadata entry)
@@ -1116,10 +1449,9 @@ namespace C64Emulator
                 }
 
                 _lastLoadedSaveStatePath = entry.Path;
-                _saveOverlayVisible = false;
                 _overlayStatusText = "SAVE LOADED";
                 _saveOverlayStatusText = "SAVE LOADED";
-                ResetEmulationTiming();
+                CloseSaveOverlay();
             }
             catch (Exception ex)
             {
@@ -1131,36 +1463,34 @@ namespace C64Emulator
         /// <summary>
         /// Deletes the currently selected savestate file.
         /// </summary>
-        private void DeleteSelectedSaveState()
+        private void DeleteSelectedSaveStateConfirmed()
         {
-            if (_saveOverlayEntries.Count == 0)
+            if (string.IsNullOrWhiteSpace(_pendingDeleteSavePath))
             {
+                _saveDeleteConfirmVisible = false;
                 _saveOverlayStatusText = "NO SAVE SELECTED";
-                return;
-            }
-
-            SaveOverlayEntry selectedEntry = _saveOverlayEntries[_saveOverlaySelection];
-            if (selectedEntry.IsDirectory || selectedEntry.Metadata == null)
-            {
-                _saveOverlayStatusText = "SELECT A SAVE";
                 return;
             }
 
             try
             {
-                SaveStateMetadata entry = selectedEntry.Metadata;
-                File.Delete(entry.Path);
-                if (string.Equals(_lastLoadedSaveStatePath, entry.Path, StringComparison.OrdinalIgnoreCase))
+                string path = _pendingDeleteSavePath;
+                File.Delete(path);
+                if (string.Equals(_lastLoadedSaveStatePath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     _lastLoadedSaveStatePath = null;
                 }
 
+                _saveDeleteConfirmVisible = false;
+                _pendingDeleteSavePath = null;
                 _saveOverlayStatusText = "SAVE DELETED";
                 ReloadSaveStateEntries();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
+                _saveDeleteConfirmVisible = false;
+                _pendingDeleteSavePath = null;
                 _saveOverlayStatusText = "DELETE FAILED";
             }
         }
@@ -1287,30 +1617,6 @@ namespace C64Emulator
             }
 
             ClampSaveOverlayScroll();
-        }
-
-        /// <summary>
-        /// Navigates to the parent savestate folder if possible.
-        /// </summary>
-        private void NavigateSaveOverlayUp()
-        {
-            string saveDirectory = GetSaveDirectory();
-            string currentDirectory = string.IsNullOrWhiteSpace(_saveOverlayCurrentDirectory)
-                ? saveDirectory
-                : Path.GetFullPath(_saveOverlayCurrentDirectory);
-            string rootDirectory = Path.GetFullPath(saveDirectory);
-            if (string.Equals(currentDirectory.TrimEnd(Path.DirectorySeparatorChar), rootDirectory.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
-            {
-                _saveOverlayStatusText = "AT SAVE ROOT";
-                return;
-            }
-
-            DirectoryInfo parent = Directory.GetParent(currentDirectory);
-            _saveOverlayCurrentDirectory = parent == null ? rootDirectory : parent.FullName;
-            _saveOverlaySelection = 0;
-            _saveOverlayScroll = 0;
-            ReloadSaveStateEntries();
-            _saveOverlayStatusText = "UP";
         }
 
         /// <summary>
@@ -1674,9 +1980,11 @@ namespace C64Emulator
             {
                 if (_networkMode == NetworkSessionMode.Host)
                 {
-                    // If the server stopped asynchronously, release all remote joystick
+                    // If the server stopped asynchronously, release all remote input
                     // lines and fall back to local mode.
                     _system.ClearNetworkJoystickState();
+                    _system.ClearNetworkKeyboardState();
+                    _networkAppliedKeyboardKeys.Clear();
                     _networkMode = NetworkSessionMode.Local;
                 }
 
@@ -1686,6 +1994,39 @@ namespace C64Emulator
             // The server aggregates clients by granted permission, not by requested role.
             _system.SetNetworkJoystickState(JoystickPort.Port1, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port1));
             _system.SetNetworkJoystickState(JoystickPort.Port2, server.GetAggregatedJoystickState(C64NetJoystickPermission.Port2));
+            ApplyNetworkServerKeyboardInput(server);
+        }
+
+        /// <summary>
+        /// Applies the aggregate permitted remote keyboard state to the host machine.
+        /// </summary>
+        /// <param name="server">Running network server that owns client input snapshots.</param>
+        private void ApplyNetworkServerKeyboardInput(C64NetServer server)
+        {
+            HashSet<Key> pressedKeys = server.GetAggregatedKeyboardKeys();
+            var previousKeys = new List<Key>(_networkAppliedKeyboardKeys);
+            for (int index = 0; index < previousKeys.Count; index++)
+            {
+                Key key = previousKeys[index];
+                if (!pressedKeys.Contains(key))
+                {
+                    _system.SetNetworkKeyState(key, false);
+                }
+            }
+
+            foreach (Key key in pressedKeys)
+            {
+                if (!_networkAppliedKeyboardKeys.Contains(key))
+                {
+                    _system.SetNetworkKeyState(key, true);
+                }
+            }
+
+            _networkAppliedKeyboardKeys.Clear();
+            foreach (Key key in pressedKeys)
+            {
+                _networkAppliedKeyboardKeys.Add(key);
+            }
         }
 
         /// <summary>
@@ -1753,6 +2094,16 @@ namespace C64Emulator
         /// <returns>Host menu status text, or an empty string when the host is live.</returns>
         private string GetNetworkHostOverlayStatus()
         {
+            if (_resetConfirmVisible)
+            {
+                return "SERVER RESET PROMPT";
+            }
+
+            if (_mediaBrowserVisible)
+            {
+                return "SERVER IN MEDIA MENU";
+            }
+
             if (_networkOverlayVisible)
             {
                 return "SERVER IN NETWORK MENU";
@@ -1763,18 +2114,13 @@ namespace C64Emulator
                 return "SERVER IN SAVE MENU";
             }
 
+            if (_mainMenuVisible)
+            {
+                return "SERVER IN MAIN MENU";
+            }
+
             if (_audioOverlayVisible)
             {
-                if (_resetConfirmVisible)
-                {
-                    return "SERVER RESET PROMPT";
-                }
-
-                if (_mediaBrowserVisible)
-                {
-                    return "SERVER IN MEDIA MENU";
-                }
-
                 return "SERVER IN SETTINGS MENU";
             }
 
@@ -1840,13 +2186,21 @@ namespace C64Emulator
                 DrawOverlayText(24, (PixelsHeight / 2) - 10, "WAITING FOR SERVER FRAME", 1, 240, 248, 255);
             }
 
-            if (_networkOverlayVisible)
+            if (_mainMenuVisible)
+            {
+                DrawMainMenuOverlay();
+            }
+            else if (_networkOverlayVisible)
             {
                 DrawNetworkOverlay();
             }
             else if (_saveOverlayVisible)
             {
                 DrawSaveOverlay();
+            }
+            else if (_mediaBrowserVisible)
+            {
+                DrawStandaloneMediaBrowserOverlay();
             }
             else if (_audioOverlayVisible)
             {
@@ -2079,7 +2433,10 @@ namespace C64Emulator
                 // Clear remote input as soon as the host stops, otherwise the last
                 // active-low state could remain latched in CIA1.
                 _system.ClearNetworkJoystickState();
+                _system.ClearNetworkKeyboardState();
             }
+
+            _networkAppliedKeyboardKeys.Clear();
 
             lock (_networkClientsSync)
             {
@@ -2293,6 +2650,8 @@ namespace C64Emulator
             {
                 // The save overlay remains available as a read-only remote status surface,
                 // but it cannot load/save local C64 state while the remote host owns state.
+                _mainMenuVisible = false;
+                _networkOverlayVisible = false;
                 _audioOverlayVisible = false;
                 _mediaBrowserVisible = false;
                 _resetConfirmVisible = false;
@@ -2303,7 +2662,7 @@ namespace C64Emulator
 
             if (_saveOverlayVisible)
             {
-                if (key == Key.Escape || key == Key.BackSpace || key == Key.F12)
+                if (key == Key.Escape || key == Key.F12)
                 {
                     CloseSaveOverlay();
                 }
@@ -2313,7 +2672,13 @@ namespace C64Emulator
 
             if (key == Key.F10)
             {
-                ToggleAudioOverlay();
+                ToggleMainMenu();
+                return;
+            }
+
+            if (_mainMenuVisible)
+            {
+                HandleMainMenuKeyDown(key);
                 return;
             }
 
@@ -2329,12 +2694,6 @@ namespace C64Emulator
                 return;
             }
 
-            if (key == Key.F8)
-            {
-                ToggleDriveOverlay();
-                return;
-            }
-
             if (key == Key.F9)
             {
                 // Turbo is server-controlled because only the host runs emulation.
@@ -2342,7 +2701,34 @@ namespace C64Emulator
                 return;
             }
 
+            SendRemoteClientKeyboardKey(key, true);
             HandleRemoteClientJoystickKey(key, true);
+        }
+
+        /// <summary>
+        /// Sends a remote C64 keyboard event to the host when the key is not local UI.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="pressed">True for key down, false for key up.</param>
+        private void SendRemoteClientKeyboardKey(Key key, bool pressed)
+        {
+            C64NetClient client = _networkClient;
+            if (client == null || !client.IsConnected || IsRemoteClientKeyboardReservedKey(key))
+            {
+                return;
+            }
+
+            client.SendKeyboardKey(key, pressed);
+        }
+
+        /// <summary>
+        /// Checks whether a key is reserved for the client window instead of the C64.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>True for emulator control keys.</returns>
+        private static bool IsRemoteClientKeyboardReservedKey(Key key)
+        {
+            return key == Key.F9 || key == Key.F10 || key == Key.F11 || key == Key.F12;
         }
 
         /// <summary>
@@ -3285,6 +3671,32 @@ namespace C64Emulator
                 DrawFilledRectangle(thumbnailX, thumbnailY, thumbnailWidth, thumbnailHeight, 24, 24, 32);
                 DrawOverlayText(thumbnailX + 20, thumbnailY + 34, selectedOverlayEntry != null && selectedOverlayEntry.IsDirectory ? "FOLDER" : "NO IMAGE", 1, 115, 142, 196);
             }
+
+            if (_saveDeleteConfirmVisible)
+            {
+                DrawSaveDeleteConfirmOverlay(overlayX + 62, overlayY + 94, 252, 82);
+            }
+        }
+
+        /// <summary>
+        /// Draws the savestate delete confirmation popup.
+        /// </summary>
+        /// <param name="x">Popup x coordinate.</param>
+        /// <param name="y">Popup y coordinate.</param>
+        /// <param name="width">Popup width.</param>
+        /// <param name="height">Popup height.</param>
+        private void DrawSaveDeleteConfirmOverlay(int x, int y, int width, int height)
+        {
+            DrawFilledRectangleWithAlpha(x, y, width, height, 20, 24, 38, 242);
+            DrawLine(x, y, x + width - 1, y, 255, 243, 168);
+            DrawLine(x, y + height - 1, x + width - 1, y + height - 1, 255, 243, 168);
+            DrawLine(x, y, x, y + height - 1, 255, 243, 168);
+            DrawLine(x + width - 1, y, x + width - 1, y + height - 1, 255, 243, 168);
+
+            DrawOverlayText(x + 14, y + 10, "DELETE SAVE?", 2, 255, 243, 168);
+            DrawOverlayText(x + 14, y + 34, FormatOverlayValue(Path.GetFileName(_pendingDeleteSavePath), 30), 1, 232, 238, 244);
+            DrawOverlayText(x + 14, y + 50, _saveDeleteConfirmYesSelected ? "> YES     NO" : "  YES   > NO", 2, 240, 248, 255);
+            DrawOverlayText(x + 14, y + 68, "ENTER ACCEPT  ESC CANCEL", 1, 192, 210, 225);
         }
 
         private void DrawRemoteSaveOverlay()
@@ -3629,7 +4041,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Handles key input captured by the F7 network overlay.
+        /// Handles key input captured by the network overlay.
         /// </summary>
         /// <param name="key">Frontend key.</param>
         /// <param name="modifiers">Keyboard modifiers used for editable fields.</param>
@@ -3656,13 +4068,7 @@ namespace C64Emulator
                     ActivateNetworkMenuItem();
                     return true;
                 case Key.Escape:
-                    _networkOverlayVisible = false;
-                    if (_networkMode != NetworkSessionMode.Client)
-                    {
-                        // Closing the host/local menu resumes the paused emulation clock.
-                        ResetEmulationTiming();
-                    }
-
+                    ReturnToMainMenuFromSubmenu();
                     return true;
             }
 
@@ -3670,7 +4076,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Moves the selected F7 menu row with wraparound.
+        /// Moves the selected network menu row with wraparound.
         /// </summary>
         /// <param name="delta">Selection movement, usually -1 or +1.</param>
         private void MoveNetworkOverlaySelection(int delta)
@@ -3717,18 +4123,21 @@ namespace C64Emulator
                     // SELECT CLIENT cycles through connected clients.
                     MoveSelectedNetworkClient(direction);
                     break;
-                case 5:
-                    // KICK CLIENT uses the same selected client cursor.
-                    MoveSelectedNetworkClient(direction);
-                    break;
                 case 4:
                     CycleSelectedNetworkClientPermission();
                     break;
-                case 8:
+                case 5:
+                    ToggleSelectedNetworkClientKeyboard();
+                    break;
+                case 6:
+                    // KICK CLIENT uses the same selected client cursor.
+                    MoveSelectedNetworkClient(direction);
+                    break;
+                case 9:
                     _networkClientPort = ClampNetworkPort(_networkClientPort + direction);
                     SaveSettings();
                     break;
-                case 10:
+                case 11:
                     // Role is only the requested join role. Host permissions remain
                     // authoritative after connection.
                     _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
@@ -3736,14 +4145,14 @@ namespace C64Emulator
                         : C64NetClientRole.Observer;
                     SaveSettings();
                     break;
-                case 11:
+                case 12:
                     if (direction != 0)
                     {
                         ToggleNetworkClientSession();
                     }
 
                     break;
-                case 12:
+                case 13:
                     // Video filter is local presentation even during a remote session.
                     CycleVideoFilter();
                     break;
@@ -3773,25 +4182,28 @@ namespace C64Emulator
                     CycleSelectedNetworkClientPermission();
                     break;
                 case 5:
+                    ToggleSelectedNetworkClientKeyboard();
+                    break;
+                case 6:
                     KickSelectedNetworkClient();
                     break;
-                case 10:
+                case 11:
                     _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
                         ? C64NetClientRole.Player
                         : C64NetClientRole.Observer;
                     SaveSettings();
                     break;
-                case 11:
+                case 12:
                     ToggleNetworkClientSession();
                     break;
-                case 12:
+                case 13:
                     CycleVideoFilter();
                     break;
             }
         }
 
         /// <summary>
-        /// Starts or stops the local host server from the F7 menu.
+        /// Starts or stops the local host server from the network menu.
         /// </summary>
         private void ToggleNetworkServer()
         {
@@ -3807,7 +4219,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Joins or leaves a remote host session from the F7 menu.
+        /// Joins or leaves a remote host session from the network menu.
         /// </summary>
         private void ToggleNetworkClientSession()
         {
@@ -3835,7 +4247,7 @@ namespace C64Emulator
             }
 
             bool serverPortField = _networkOverlaySelection == 0;
-            bool clientPortField = _networkOverlaySelection == 8;
+            bool clientPortField = _networkOverlaySelection == 9;
             if (serverPortField || clientPortField)
             {
                 // Ports are edited as numbers directly inside the pixel overlay. A blank
@@ -3870,9 +4282,9 @@ namespace C64Emulator
             }
 
             bool serverPasswordField = _networkOverlaySelection == 1;
-            bool playerNameField = _networkOverlaySelection == 6;
-            bool hostField = _networkOverlaySelection == 7;
-            bool clientPasswordField = _networkOverlaySelection == 9;
+            bool playerNameField = _networkOverlaySelection == 7;
+            bool hostField = _networkOverlaySelection == 8;
+            bool clientPasswordField = _networkOverlaySelection == 10;
             if (!serverPasswordField && !playerNameField && !hostField && !clientPasswordField)
             {
                 return false;
@@ -4025,6 +4437,24 @@ namespace C64Emulator
             if (client != null)
             {
                 server.CycleClientPermission(client.ClientId);
+            }
+        }
+
+        /// <summary>
+        /// Toggles keyboard rights for the currently selected remote client.
+        /// </summary>
+        private void ToggleSelectedNetworkClientKeyboard()
+        {
+            C64NetServer server = _networkServer;
+            if (server == null || !server.IsRunning)
+            {
+                return;
+            }
+
+            C64NetClientSnapshot client = GetSelectedNetworkClient();
+            if (client != null)
+            {
+                server.SetClientKeyboardEnabled(client.ClientId, !client.KeyboardEnabled);
             }
         }
 
@@ -4320,64 +4750,13 @@ namespace C64Emulator
                         return true;
                     }
 
-                    if (_audioOverlaySelection == 4)
-                    {
-                        OpenMediaBrowser();
-                    }
-                    else if (_audioOverlaySelection == 5)
-                    {
-                        ToggleDisplayMode();
-                    }
-                    else if (_audioOverlaySelection == 6)
-                    {
-                        CycleVideoFilter();
-                    }
-                    else if (_audioOverlaySelection == 7)
-                    {
-                        ToggleVideoZoom();
-                    }
-                    else if (_audioOverlaySelection == 8)
-                    {
-                        ToggleTurboMode();
-                    }
-                    else if (_audioOverlaySelection == 9)
-                    {
-                        ToggleGamepadInput();
-                    }
-                    else if (_audioOverlaySelection == 10)
-                    {
-                        ToggleLoadHack();
-                    }
-                    else if (_audioOverlaySelection == 11)
-                    {
-                        ToggleSoftwareIecTransport();
-                    }
-                    else if (_audioOverlaySelection == 12)
-                    {
-                        ToggleInputInjection();
-                    }
-                    else if (_audioOverlaySelection == 13)
-                    {
-                        CycleResetMode();
-                    }
-                    else if (_audioOverlaySelection == 14)
-                    {
-                        ToggleDriveOverlay();
-                    }
-                    else if (_audioOverlaySelection == 15)
-                    {
-                        OpenResetConfirmation();
-                    }
-                    else
-                    {
-                        CloseAudioOverlay();
-                    }
+                    AdjustAudioSetting(1);
                     return true;
                 case Key.Escape:
-                    CloseAudioOverlay();
+                    ReturnToMainMenuFromSubmenu();
                     return true;
                 default:
-                    return false;
+                    return true;
             }
         }
 
@@ -4398,10 +4777,9 @@ namespace C64Emulator
                 case Key.Minus:
                 case Key.Enter:
                 case Key.Escape:
-                case Key.BackSpace:
                     return true;
                 default:
-                    return false;
+                    return true;
             }
         }
 
@@ -4441,86 +4819,63 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 4)
             {
-                if (direction >= 0)
-                {
-                    OpenMediaBrowser();
-                    return;
-                }
-
-                _overlayStatusText = _system.EjectMedia();
+                ToggleDisplayMode();
                 return;
             }
 
             if (_audioOverlaySelection == 5)
             {
-                ToggleDisplayMode();
+                CycleVideoFilter();
                 return;
             }
 
             if (_audioOverlaySelection == 6)
             {
-                CycleVideoFilter();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 7)
             {
-                ToggleVideoZoom();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                ToggleTurboMode();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleGamepadInput();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleLoadHack();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleSoftwareIecTransport();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                ToggleInputInjection();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                CycleResetMode();
-                return;
-            }
-
-            if (_audioOverlaySelection == 14)
-            {
                 ToggleDriveOverlay();
                 return;
             }
-
-            if (_audioOverlaySelection == 15)
-            {
-                if (direction >= 0)
-                {
-                    OpenResetConfirmation();
-                }
-
-                return;
-            }
-
         }
 
         /// <summary>
@@ -4578,12 +4933,11 @@ namespace C64Emulator
                     }
                     return true;
                 case Key.Escape:
-                case Key.BackSpace:
                     _overlayStatusText = GetConfirmationCanceledStatusText();
                     ClearConfirmationState();
                     return true;
                 default:
-                    return false;
+                    return true;
             }
         }
 
@@ -4600,10 +4954,9 @@ namespace C64Emulator
                 case Key.Down:
                 case Key.Enter:
                 case Key.Escape:
-                case Key.BackSpace:
                     return true;
                 default:
-                    return false;
+                    return true;
             }
         }
 
@@ -4650,18 +5003,128 @@ namespace C64Emulator
                     _mediaBrowserTargetDrive = 11;
                     SaveSettings();
                     return true;
-                case Key.BackSpace:
-                    NavigateMediaBrowserUp();
-                    return true;
                 case Key.Enter:
                     ActivateMediaBrowserSelection();
                     return true;
                 case Key.Escape:
-                    _mediaBrowserVisible = false;
+                    ReturnToMainMenuFromSubmenu();
                     return true;
                 default:
-                    return false;
+                    return true;
             }
+        }
+
+        /// <summary>
+        /// Draws the top-level F10 emulator menu.
+        /// </summary>
+        private void DrawMainMenuOverlay()
+        {
+            int overlayWidth = 294;
+            int overlayHeight = 158;
+            int overlayX = (PixelsWidth - overlayWidth) / 2;
+            int overlayY = (PixelsHeight - overlayHeight) / 2;
+
+            DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 10, 14, 24, 228);
+            DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 108, 214, 182);
+            DrawLine(overlayX, overlayY + overlayHeight - 1, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
+            DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 108, 214, 182);
+            DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
+
+            DrawOverlayText(overlayX + 16, overlayY + 14, "MAIN MENU", 2, 240, 248, 255);
+            DrawOverlayText(overlayX + 16, overlayY + 34, "ENTER OPEN/CHANGE  ESC CLOSE", 1, 192, 210, 225);
+
+            int itemX = overlayX + 26;
+            int itemY = overlayY + 56;
+            for (int index = 0; index < MainMenuItemCount; index++)
+            {
+                bool selected = _mainMenuSelection == index;
+                bool enabled = IsMainMenuItemEnabled((MainMenuItem)index);
+                byte red = enabled ? (selected ? (byte)255 : (byte)192) : (byte)100;
+                byte green = enabled ? (selected ? (byte)243 : (byte)210) : (byte)108;
+                byte blue = enabled ? (selected ? (byte)168 : (byte)225) : (byte)118;
+                DrawOverlayText(itemX, itemY + (index * 18), (selected ? "> " : "  ") + GetMainMenuLabel((MainMenuItem)index), 2, red, green, blue);
+                if (index == (int)MainMenuItem.Media)
+                {
+                    DrawOverlayText(itemX + 128, itemY + (index * 18) + 4, FormatOverlayValue(FormatMainMenuMediaValue(), 20), 1, red, green, blue);
+                }
+
+                if (index == (int)MainMenuItem.Reset)
+                {
+                    DrawOverlayText(itemX + 176, itemY + (index * 18), FormatResetMode(_resetMode), 2, red, green, blue);
+                }
+            }
+
+            if (_resetConfirmVisible)
+            {
+                DrawResetConfirmOverlay(overlayX + 49, overlayY + 62, 196, 84, _system.MountedMedia.HasMedia);
+            }
+        }
+
+        /// <summary>
+        /// Gets a top-level F10 menu label.
+        /// </summary>
+        /// <param name="item">Menu item.</param>
+        /// <returns>Display label.</returns>
+        private static string GetMainMenuLabel(MainMenuItem item)
+        {
+            switch (item)
+            {
+                case MainMenuItem.Settings:
+                    return "SETTINGS";
+                case MainMenuItem.Network:
+                    return "NETWORK";
+                case MainMenuItem.Media:
+                    return "MEDIA";
+                case MainMenuItem.Reset:
+                    return "RESET";
+                default:
+                    return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Formats the currently mounted media for the compact main menu value column.
+        /// </summary>
+        /// <returns>Mounted media label.</returns>
+        private string FormatMainMenuMediaValue()
+        {
+            Dictionary<int, string> mountedDrivePaths = _system.GetMountedDriveHostPaths();
+            List<KeyValuePair<int, string>> mountedDisks = mountedDrivePaths
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Value))
+                .OrderBy(entry => entry.Key)
+                .ToList();
+
+            if (mountedDisks.Count > 0)
+            {
+                KeyValuePair<int, string> firstDisk = mountedDisks[0];
+                string diskName = Path.GetFileNameWithoutExtension(firstDisk.Value);
+                if (string.IsNullOrWhiteSpace(diskName))
+                {
+                    diskName = Path.GetFileName(firstDisk.Value);
+                }
+
+                string diskText = "D" + firstDisk.Key.ToString(CultureInfo.InvariantCulture) + " " + diskName;
+                if (mountedDisks.Count > 1)
+                {
+                    diskText += " +" + (mountedDisks.Count - 1).ToString(CultureInfo.InvariantCulture);
+                }
+
+                return diskText;
+            }
+
+            MountedMediaInfo mountedMediaInfo = _system.MountedMedia;
+            if (mountedMediaInfo == null || !mountedMediaInfo.HasMedia)
+            {
+                return "NO MEDIA";
+            }
+
+            string mediaName = !string.IsNullOrWhiteSpace(mountedMediaInfo.DisplayName)
+                ? mountedMediaInfo.DisplayName
+                : Path.GetFileNameWithoutExtension(mountedMediaInfo.HostPath);
+            string mediaLabel = string.IsNullOrWhiteSpace(mountedMediaInfo.ShortLabel)
+                ? mountedMediaInfo.Kind.ToString()
+                : mountedMediaInfo.ShortLabel;
+            return string.IsNullOrWhiteSpace(mediaName) ? mediaLabel : mediaLabel + " " + mediaName;
         }
 
         /// <summary>
@@ -4683,7 +5146,7 @@ namespace C64Emulator
             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
 
             DrawOverlayText(overlayX + 14, overlayY + 11, "NETWORK", 2, 240, 248, 255);
-            DrawOverlayText(overlayX + 14, overlayY + 29, "F7 CLOSE  ENTER ACT  DEL CLEAR  TYPE EDIT", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 14, overlayY + 29, "ESC BACK  ENTER ACT  DEL CLEAR  TYPE EDIT", 1, 192, 210, 225);
             DrawOverlayText(overlayX + 248, overlayY + 13, FormatNetworkMode(_networkMode), 1, 108, 214, 182);
 
             int menuX = overlayX + 14;
@@ -4696,7 +5159,7 @@ namespace C64Emulator
             }
 
             // Server controls live above the separator; client controls live below it.
-            int separatorY = menuY + (NetworkOverlayServerItemCount * 10) + 3;
+            int separatorY = menuY + (NetworkOverlayServerItemCount * 9) + 3;
             DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
 
             int clientsY = overlayY + overlayHeight - 85;
@@ -4718,11 +5181,12 @@ namespace C64Emulator
                     byte green = selected ? (byte)243 : (byte)238;
                     byte blue = selected ? (byte)168 : (byte)244;
                     string text = string.Format(
-                        "{0}{1} {2} {3} {4}",
+                        "{0}{1} {2} {3} {4} {5}",
                         selected ? "> " : "  ",
                         client.ClientId,
-                        FormatOverlayValue(FormatNetworkClientDisplay(client), 19),
+                        FormatOverlayValue(FormatNetworkClientDisplay(client), 15),
                         FormatNetworkPermission(client.Permission),
+                        FormatNetworkKeyboardRightCompact(client.KeyboardEnabled),
                         FormatNetworkLatencyCompact(client.LatencyMilliseconds));
                     DrawOverlayText(menuX, clientsY + 13 + (row * 12), FormatOverlayValue(text, 56), 1, red, green, blue);
                 }
@@ -4777,7 +5241,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Draws one row of the F7 network menu.
+        /// Draws one row of the network menu.
         /// </summary>
         /// <param name="x">Menu label x coordinate.</param>
         /// <param name="y">Menu row y coordinate.</param>
@@ -4806,8 +5270,8 @@ namespace C64Emulator
         /// <returns>Pixel y coordinate for the row.</returns>
         private static int GetNetworkMenuRowY(int menuY, int index)
         {
-            int extraGap = index >= NetworkOverlayServerItemCount ? 12 : 0;
-            return menuY + (index * 10) + extraGap;
+            int extraGap = index >= NetworkOverlayServerItemCount ? 10 : 0;
+            return menuY + (index * 9) + extraGap;
         }
 
         /// <summary>
@@ -4821,14 +5285,14 @@ namespace C64Emulator
             {
                 // Remote clients may leave and change their local filter, but server-owned
                 // emulator/session settings are locked.
-                return index == 11 || index == 12;
+                return index == 12 || index == 13;
             }
 
             if (_networkMode == NetworkSessionMode.Host)
             {
                 // While hosting, server controls and the local filter remain available;
                 // joining another host from the same instance is disabled.
-                return index <= 5 || index == 12;
+                return index <= 6 || index == 13;
             }
 
             return true;
@@ -4854,20 +5318,22 @@ namespace C64Emulator
                 case 4:
                     return "CLIENT RIGHT";
                 case 5:
-                    return "KICK CLIENT";
+                    return "KEYBOARD RIGHT";
                 case 6:
-                    return "PLAYER NAME";
+                    return "KICK CLIENT";
                 case 7:
-                    return "CLIENT HOST";
+                    return "PLAYER NAME";
                 case 8:
-                    return "CLIENT PORT";
+                    return "CLIENT HOST";
                 case 9:
-                    return "CLIENT PASSWORD";
+                    return "CLIENT PORT";
                 case 10:
-                    return "CLIENT ROLE";
+                    return "CLIENT PASSWORD";
                 case 11:
-                    return "CLIENT";
+                    return "CLIENT ROLE";
                 case 12:
+                    return "CLIENT";
+                case 13:
                     return "VIDEO FILTER";
                 default:
                     return string.Empty;
@@ -4898,20 +5364,23 @@ namespace C64Emulator
                     return client == null ? "NONE" : FormatNetworkPermission(client.Permission);
                 case 5:
                     client = GetSelectedNetworkClient();
-                    return client == null ? "NONE" : FormatNetworkClientDisplay(client);
+                    return client == null ? "NONE" : FormatNetworkKeyboardRight(client.KeyboardEnabled);
                 case 6:
-                    return NormalizeNetworkPlayerName(_networkPlayerName);
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : FormatNetworkClientDisplay(client);
                 case 7:
-                    return string.IsNullOrWhiteSpace(_networkHost) ? "TYPE HOST" : _networkHost;
+                    return NormalizeNetworkPlayerName(_networkPlayerName);
                 case 8:
-                    return _networkClientPort <= 0 ? "TYPE PORT" : _networkClientPort.ToString();
+                    return string.IsNullOrWhiteSpace(_networkHost) ? "TYPE HOST" : _networkHost;
                 case 9:
-                    return FormatNetworkPassword(_networkClientPassword);
+                    return _networkClientPort <= 0 ? "TYPE PORT" : _networkClientPort.ToString();
                 case 10:
-                    return _networkRequestedRole == C64NetClientRole.Observer ? "OBSERVER" : "PLAYER";
+                    return FormatNetworkPassword(_networkClientPassword);
                 case 11:
-                    return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
+                    return _networkRequestedRole == C64NetClientRole.Observer ? "OBSERVER" : "PLAYER";
                 case 12:
+                    return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
+                case 13:
                     return FormatVideoFilter(_videoFilterMode);
                 default:
                     return string.Empty;
@@ -4931,8 +5400,8 @@ namespace C64Emulator
             }
 
             // Remote clients can control only local display/presentation choices. The
-            // server owns emulation-affecting settings such as SID, media, reset, and turbo.
-            return menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 9;
+            // server owns emulation-affecting settings such as SID, reset, and turbo.
+            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 8;
         }
 
         /// <summary>
@@ -4988,7 +5457,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Formats the active network throughput footer for the F7 overlay.
+        /// Formats the active network throughput footer for the network overlay.
         /// </summary>
         /// <returns>Short send/receive throughput string.</returns>
         private string FormatNetworkTrafficText()
@@ -5021,7 +5490,7 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Formats the visible TLS certificate fingerprint line for the F7 overlay.
+        /// Formats the visible TLS certificate fingerprint line for the network overlay.
         /// </summary>
         /// <returns>Short TLS fingerprint text for host or client context.</returns>
         private string FormatNetworkFingerprintText()
@@ -5098,6 +5567,26 @@ namespace C64Emulator
             }
         }
 
+        /// <summary>
+        /// Formats keyboard input rights for the host network menu.
+        /// </summary>
+        /// <param name="enabled">True when remote keyboard input reaches the host.</param>
+        /// <returns>ON or OFF.</returns>
+        private static string FormatNetworkKeyboardRight(bool enabled)
+        {
+            return enabled ? "ON" : "OFF";
+        }
+
+        /// <summary>
+        /// Formats keyboard input rights for the compact client list.
+        /// </summary>
+        /// <param name="enabled">True when keyboard input is allowed.</param>
+        /// <returns>Compact keyboard marker.</returns>
+        private static string FormatNetworkKeyboardRightCompact(bool enabled)
+        {
+            return enabled ? "KEY" : "NOKEY";
+        }
+
         private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
         {
             int overlayWidth = 280;
@@ -5112,7 +5601,7 @@ namespace C64Emulator
             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 182, 214, 108);
 
             DrawOverlayText(overlayX + 16, overlayY + 14, "SETTINGS", 2, 240, 248, 255);
-            DrawOverlayText(overlayX + 16, overlayY + 32, "F8 DRIVES  F9 TURBO  F10 CLOSE  F11 FULL", 1, 192, 210, 225);
+            DrawOverlayText(overlayX + 16, overlayY + 32, "ENTER CHANGE  ESC BACK  F11 FULL", 1, 192, 210, 225);
             DrawAudioOverlayMenu(overlayX + 18, overlayY + 52, overlayWidth - 36, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
             DrawOverlayText(overlayX + 18, overlayY + 212, "MOUNTED " + FormatOverlayValue(mountedMediaInfo.DisplayName, 24), 1, 232, 238, 244);
             DrawOverlayText(overlayX + 18, overlayY + 222, "STATUS  " + FormatOverlayValue(_overlayStatusText, 24), 1, 182, 214, 108);
@@ -5184,40 +5673,34 @@ namespace C64Emulator
 
                     break;
                 case 4:
-                    DrawOverlayActionItem(x, y, "MEDIA", mountedMediaInfo.HasMedia ? mountedMediaInfo.ShortLabel : "BROWSE", _audioOverlaySelection == menuIndex, enabled);
-                    break;
-                case 5:
                     DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 6:
+                case 5:
                     DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 7:
+                case 6:
                     DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 8:
+                case 7:
                     DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 9:
+                case 8:
                     DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 10:
+                case 9:
                     DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 11:
+                case 10:
                     DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 12:
+                case 11:
                     DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 13:
+                case 12:
                     DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
-                case 14:
+                case 13:
                     DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
-                    break;
-                case 15:
-                    DrawOverlayActionItem(x, y, "RESET", "YES/NO", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
         }
@@ -5413,6 +5896,10 @@ namespace C64Emulator
         {
             try
             {
+                _mainMenuVisible = false;
+                _audioOverlayVisible = false;
+                _networkOverlayVisible = false;
+                _saveOverlayVisible = false;
                 _resetConfirmVisible = false;
                 _mediaBrowserCurrentDirectory = ResolveInitialMediaBrowserDirectory();
                 UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, false);
@@ -5425,7 +5912,7 @@ namespace C64Emulator
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                _mediaBrowserVisible = false;
+                ReturnToMainMenuFromSubmenu();
                 _overlayStatusText = "BROWSER FAILED";
             }
         }
@@ -5485,7 +5972,7 @@ namespace C64Emulator
         /// </summary>
         private void OpenConfirmation(ConfirmationAction confirmationAction)
         {
-            _mediaBrowserVisible = false;
+            ReturnToMainMenuFromSubmenu();
             _resetConfirmVisible = true;
             _resetConfirmYesSelected = true;
             _confirmationAction = confirmationAction;
@@ -5869,28 +6356,6 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Handles the navigate media browser up operation.
-        /// </summary>
-        private void NavigateMediaBrowserUp()
-        {
-            if (!string.IsNullOrWhiteSpace(_mediaBrowserCurrentDirectory))
-            {
-                DirectoryInfo parent = Directory.GetParent(_mediaBrowserCurrentDirectory);
-                if (parent != null)
-                {
-                    _mediaBrowserCurrentDirectory = parent.FullName;
-                    UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, true);
-                    _mediaBrowserSelection = 0;
-                    _mediaBrowserScroll = 0;
-                    ReloadMediaBrowserEntries();
-                    return;
-                }
-            }
-
-            _mediaBrowserVisible = false;
-        }
-
-        /// <summary>
         /// Handles the activate media browser selection operation.
         /// </summary>
         private void ActivateMediaBrowserSelection()
@@ -5917,8 +6382,9 @@ namespace C64Emulator
             }
 
             UpdateLastMediaBrowserDirectory(Path.GetDirectoryName(entry.Path), true);
-            _overlayStatusText = _system.MountMedia(entry.Path, _mediaBrowserTargetDrive);
-            _mediaBrowserVisible = false;
+            string statusText = _system.MountMedia(entry.Path, _mediaBrowserTargetDrive);
+            ReturnToMainMenuFromSubmenu();
+            _overlayStatusText = statusText;
         }
 
         /// <summary>
@@ -5987,15 +6453,26 @@ namespace C64Emulator
                 case Key.Right:
                 case Key.Enter:
                 case Key.Escape:
-                case Key.BackSpace:
                 case Key.Number0:
                 case Key.Number1:
                 case Key.Number8:
                 case Key.Number9:
                     return true;
                 default:
-                    return false;
+                    return true;
             }
+        }
+
+        /// <summary>
+        /// Draws the media browser as a direct F10 main-menu submenu.
+        /// </summary>
+        private void DrawStandaloneMediaBrowserOverlay()
+        {
+            int overlayWidth = Math.Min(PixelsWidth - 12, 376);
+            int overlayHeight = Math.Min(PixelsHeight - 12, 214);
+            int overlayX = (PixelsWidth - overlayWidth) / 2;
+            int overlayY = (PixelsHeight - overlayHeight) / 2;
+            DrawMediaBrowserOverlay(overlayX, overlayY, overlayWidth, overlayHeight);
         }
 
         /// <summary>
@@ -6011,7 +6488,7 @@ namespace C64Emulator
 
             DrawOverlayText(x + 10, y + 8, "MEDIA BROWSER", 1, 240, 248, 255);
             DrawOverlayText(x + 10, y + 18, "ENTER MOUNT  LEFT/RIGHT OR 8/9/0/1 DRIVE", 1, 192, 210, 225);
-            DrawOverlayText(x + 10, y + 30, "TARGET DRIVE " + _mediaBrowserTargetDrive, 1, 182, 214, 108);
+            DrawOverlayText(x + 10, y + 30, "ESC MAIN MENU  DRIVE " + _mediaBrowserTargetDrive, 1, 182, 214, 108);
             DrawOverlayText(x + 10, y + 42, "DIR " + FormatOverlayPath(_mediaBrowserCurrentDirectory, 35), 1, 182, 214, 108);
 
             int rowY = y + 58;

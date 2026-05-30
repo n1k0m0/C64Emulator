@@ -60,17 +60,17 @@ namespace C64Emulator.Core
         public string MediaBrowserDirectory { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the TCP port shown in the server section of the F7 network menu.
+        /// Gets or sets the TCP port shown in the server section of the network menu.
         /// </summary>
         public int NetworkServerPort { get; set; } = 6464;
 
         /// <summary>
-        /// Gets or sets the optional server password remembered for the F7 network menu.
+        /// Gets or sets the optional server password remembered for the network menu.
         /// </summary>
         public string NetworkServerPassword { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the host name/IP shown in the client section of the F7 network menu.
+        /// Gets or sets the host name/IP shown in the client section of the network menu.
         /// </summary>
         public string NetworkClientHost { get; set; } = "127.0.0.1";
 
@@ -90,7 +90,7 @@ namespace C64Emulator.Core
         public string NetworkPlayerName { get; set; } = "player";
 
         /// <summary>
-        /// Gets or sets the requested client role name persisted from the F7 menu.
+        /// Gets or sets the requested client role name persisted from the network menu.
         /// </summary>
         public string NetworkRequestedRole { get; set; } = "Player";
     }

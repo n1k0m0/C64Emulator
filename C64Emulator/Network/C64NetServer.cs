@@ -22,6 +22,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenTK.Input;
 
 namespace C64Emulator.Network
 {
@@ -150,7 +151,7 @@ namespace C64Emulator.Network
         public void Start(int port, string password)
         {
             // Restarting creates a fresh session. That also clears per-session kicks
-            // exactly as the F7 menu promises.
+            // exactly as the network menu promises.
             Stop();
             _password = password ?? string.Empty;
             _hostOverlayStatus = string.Empty;
@@ -363,9 +364,33 @@ namespace C64Emulator.Network
             // The changed client receives a dedicated permission update, while all
             // clients receive the refreshed list so observers see the new state too.
             client.Permission = permission;
-            client.EnqueueControl(CreateMessage(C64NetMessageType.PermissionUpdate, C64NetProtocol.CreatePermissionPayload(permission)));
+            client.EnqueueControl(CreateMessage(C64NetMessageType.PermissionUpdate, C64NetProtocol.CreatePermissionPayload(permission, client.KeyboardEnabled)));
             BroadcastClientList();
             RaiseStatus("CLIENT " + clientId + " " + FormatPermission(permission));
+        }
+
+        /// <summary>
+        /// Changes whether a client may send C64 keyboard matrix input.
+        /// </summary>
+        /// <param name="clientId">Host-assigned client id.</param>
+        /// <param name="enabled">True to accept keyboard input from this client.</param>
+        public void SetClientKeyboardEnabled(int clientId, bool enabled)
+        {
+            ClientConnection client = FindClient(clientId);
+            if (client == null)
+            {
+                return;
+            }
+
+            client.KeyboardEnabled = enabled;
+            if (!enabled)
+            {
+                client.ClearKeyboardState();
+            }
+
+            client.EnqueueControl(CreateMessage(C64NetMessageType.PermissionUpdate, C64NetProtocol.CreatePermissionPayload(client.Permission, client.KeyboardEnabled)));
+            BroadcastClientList();
+            RaiseStatus("CLIENT " + clientId + " KEYBOARD " + (enabled ? "ON" : "OFF"));
         }
 
         /// <summary>
@@ -428,6 +453,34 @@ namespace C64Emulator.Network
             }
 
             return (byte)(state | 0xE0);
+        }
+
+        /// <summary>
+        /// Aggregates all currently pressed C64 keyboard keys from clients with keyboard rights.
+        /// </summary>
+        /// <returns>Set of frontend keys that should be held in the host C64 keyboard matrix.</returns>
+        public HashSet<Key> GetAggregatedKeyboardKeys()
+        {
+            var keys = new HashSet<Key>();
+            lock (_syncRoot)
+            {
+                for (int index = 0; index < _clients.Count; index++)
+                {
+                    ClientConnection client = _clients[index];
+                    if (!client.IsConnected || !client.KeyboardEnabled)
+                    {
+                        continue;
+                    }
+
+                    List<Key> clientKeys = client.GetPressedKeyboardKeys();
+                    for (int keyIndex = 0; keyIndex < clientKeys.Count; keyIndex++)
+                    {
+                        keys.Add(clientKeys[keyIndex]);
+                    }
+                }
+            }
+
+            return keys;
         }
 
         public void Dispose()
@@ -556,7 +609,7 @@ namespace C64Emulator.Network
                 client = new ClientConnection(this, tcpClient, stream, clientId, name, role, permission);
                 AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
                     C64NetMessageType.ServerWelcome,
-                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, "TLS CONNECTED"))));
+                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, client.KeyboardEnabled, "TLS CONNECTED"))));
 
                 // Add the client only after welcome was sent, so the UI never shows a
                 // half-handshaken socket.
@@ -615,6 +668,13 @@ namespace C64Emulator.Network
                     // Store only the latest input. The emulator thread samples it once
                     // per render update and combines all granted clients there.
                     client.JoystickState = C64NetProtocol.ReadInputStatePayload(message.Payload);
+                    break;
+                case C64NetMessageType.KeyboardInput:
+                    if (client.KeyboardEnabled && C64NetProtocol.ReadKeyboardInputPayload(message.Payload, out Key key, out bool pressed))
+                    {
+                        client.SetKeyboardKeyState(key, pressed);
+                    }
+
                     break;
                 case C64NetMessageType.Ping:
                     // Echo the payload and a timestamp-preserving pong for round-trip
@@ -791,7 +851,7 @@ namespace C64Emulator.Network
         /// Returns the next permission in the host menu cycle.
         /// </summary>
         /// <param name="permission">Current permission.</param>
-        /// <returns>Next permission shown by the F7 menu.</returns>
+        /// <returns>Next permission shown by the network menu.</returns>
         private static C64NetJoystickPermission GetNextPermission(C64NetJoystickPermission permission)
         {
             switch (permission)
@@ -891,7 +951,7 @@ namespace C64Emulator.Network
         /// <summary>
         /// Raises a user-visible server status event.
         /// </summary>
-        /// <param name="status">Status text for the F7 overlay/toast.</param>
+        /// <param name="status">Status text for the network overlay/toast.</param>
         private void RaiseStatus(string status)
         {
             Action<string> handler = StatusChanged;
@@ -991,6 +1051,8 @@ namespace C64Emulator.Network
             private readonly TcpClient _tcpClient;
             private readonly Stream _stream;
             private readonly object _sendLock = new object();
+            private readonly object _keyboardLock = new object();
+            private readonly HashSet<Key> _pressedKeyboardKeys = new HashSet<Key>();
             /// <summary>
             /// Reliable control messages that must be delivered in order before media.
             /// </summary>
@@ -1067,6 +1129,11 @@ namespace C64Emulator.Network
             /// Gets or sets the current host-granted joystick permission.
             /// </summary>
             public C64NetJoystickPermission Permission { get; set; }
+
+            /// <summary>
+            /// Gets or sets whether host accepts C64 keyboard input from this client.
+            /// </summary>
+            public bool KeyboardEnabled { get; set; }
 
             /// <summary>
             /// Gets or sets the last active-low joystick state received from this client.
@@ -1181,10 +1248,54 @@ namespace C64Emulator.Network
                     RemoteEndpoint = RemoteEndpoint,
                     Role = Role,
                     Permission = Permission,
+                    KeyboardEnabled = KeyboardEnabled,
                     JoystickState = JoystickState,
                     LatencyMilliseconds = LatencyMilliseconds,
                     Connected = IsConnected
                 };
+            }
+
+            /// <summary>
+            /// Records one remote keyboard key press or release.
+            /// </summary>
+            /// <param name="key">Frontend key.</param>
+            /// <param name="pressed">True for key down, false for key up.</param>
+            public void SetKeyboardKeyState(Key key, bool pressed)
+            {
+                lock (_keyboardLock)
+                {
+                    if (pressed)
+                    {
+                        _pressedKeyboardKeys.Add(key);
+                    }
+                    else
+                    {
+                        _pressedKeyboardKeys.Remove(key);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Clears all currently held remote keyboard keys.
+            /// </summary>
+            public void ClearKeyboardState()
+            {
+                lock (_keyboardLock)
+                {
+                    _pressedKeyboardKeys.Clear();
+                }
+            }
+
+            /// <summary>
+            /// Returns a copy of currently held remote keyboard keys.
+            /// </summary>
+            /// <returns>Pressed frontend keys.</returns>
+            public List<Key> GetPressedKeyboardKeys()
+            {
+                lock (_keyboardLock)
+                {
+                    return new List<Key>(_pressedKeyboardKeys);
+                }
             }
 
             /// <summary>
@@ -1214,6 +1325,7 @@ namespace C64Emulator.Network
                 _closed = true;
                 // Release all emulated joystick lines immediately when a client leaves.
                 JoystickState = 0xFF;
+                ClearKeyboardState();
                 _sendSignal.Set();
                 try
                 {

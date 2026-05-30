@@ -21,6 +21,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using C64Emulator.Core;
+using OpenTK.Input;
 
 namespace C64Emulator.Network
 {
@@ -118,6 +119,10 @@ namespace C64Emulator.Network
         /// </summary>
         public C64NetJoystickPermission Permission { get; private set; }
         /// <summary>
+        /// Gets whether the host currently accepts C64 keyboard input from this client.
+        /// </summary>
+        public bool KeyboardEnabled { get; private set; }
+        /// <summary>
         /// Gets the latest status text shown in the network overlay.
         /// </summary>
         public string StatusText { get; private set; } = "DISCONNECTED";
@@ -165,8 +170,8 @@ namespace C64Emulator.Network
         /// <summary>
         /// Connects to a host session.
         /// </summary>
-        /// <param name="host">Host name or IP address from the F7 client menu.</param>
-        /// <param name="port">TCP port from the F7 client menu.</param>
+        /// <param name="host">Host name or IP address from the network client menu.</param>
+        /// <param name="port">TCP port from the network client menu.</param>
         /// <param name="password">Optional session password.</param>
         /// <param name="role">Requested client role.</param>
         /// <param name="name">Player name to show on the host.</param>
@@ -245,6 +250,7 @@ namespace C64Emulator.Network
                     out int audioSampleRate,
                     out C64NetClientRole acceptedRole,
                     out C64NetJoystickPermission permission,
+                    out bool keyboardEnabled,
                     out string welcomeStatus);
 
                 ClientId = clientId;
@@ -253,6 +259,7 @@ namespace C64Emulator.Network
                 AudioSampleRate = audioSampleRate;
                 Role = acceptedRole;
                 Permission = permission;
+                KeyboardEnabled = keyboardEnabled;
                 StatusText = string.IsNullOrWhiteSpace(welcomeStatus) ? "CONNECTED" : welcomeStatus;
                 _connected = true;
 
@@ -378,6 +385,7 @@ namespace C64Emulator.Network
             Interlocked.Exchange(ref _lastLatencyPingTicks, 0);
             ClientId = 0;
             Permission = C64NetJoystickPermission.Observer;
+            KeyboardEnabled = false;
             _serverCertificateFingerprint = "UNKNOWN";
             _videoReferencePalettePixels = null;
             _videoReferenceFrameId = 0;
@@ -411,6 +419,26 @@ namespace C64Emulator.Network
                 Type = C64NetMessageType.InputState,
                 Timestamp = DateTime.UtcNow.Ticks,
                 Payload = C64NetProtocol.CreateInputStatePayload(activeLowJoystickState)
+            });
+        }
+
+        /// <summary>
+        /// Sends one C64 keyboard key press or release to the host.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="pressed">True for key down, false for key up.</param>
+        public void SendKeyboardKey(Key key, bool pressed)
+        {
+            if (!KeyboardEnabled)
+            {
+                return;
+            }
+
+            SendMessage(new C64NetMessage
+            {
+                Type = C64NetMessageType.KeyboardInput,
+                Timestamp = DateTime.UtcNow.Ticks,
+                Payload = C64NetProtocol.CreateKeyboardInputPayload(key, pressed)
             });
         }
 
@@ -532,7 +560,7 @@ namespace C64Emulator.Network
                     if (listHandler != null)
                     {
                         // Clients use this mainly for observer information and for keeping
-                        // the F7 client list consistent with the host.
+                        // the network client list consistent with the host.
                         listHandler(clients);
                     }
 
@@ -540,8 +568,10 @@ namespace C64Emulator.Network
                 case C64NetMessageType.PermissionUpdate:
                     // Permission is authoritative from the host. The local F10 joystick
                     // item is displayed read-only while connected.
-                    Permission = C64NetProtocol.ReadPermissionPayload(message.Payload);
-                    StatusText = "PERMISSION " + FormatPermission(Permission);
+                    C64NetProtocol.ReadPermissionPayload(message.Payload, out C64NetJoystickPermission permission, out bool keyboardEnabled);
+                    Permission = permission;
+                    KeyboardEnabled = keyboardEnabled;
+                    StatusText = "PERMISSION " + FormatPermission(Permission) + " KEYBOARD " + (KeyboardEnabled ? "ON" : "OFF");
                     RaiseStatus(StatusText);
                     break;
                 case C64NetMessageType.HostOverlayStatus:

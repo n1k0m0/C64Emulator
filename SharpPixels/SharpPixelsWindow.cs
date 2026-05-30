@@ -920,8 +920,11 @@ namespace SharpPixels
                 case Keys.Tab: return Key.Tab;
                 case Keys.Delete: return Key.Delete;
                 case Keys.F1: return Key.F1;
+                case Keys.F2: return Key.F2;
                 case Keys.F3: return Key.F3;
+                case Keys.F4: return Key.F4;
                 case Keys.F5: return Key.F5;
+                case Keys.F6: return Key.F6;
                 case Keys.F7: return Key.F7;
                 case Keys.F8: return Key.F8;
                 case Keys.F9: return Key.F9;

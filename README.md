@@ -43,30 +43,29 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - Startup update check against the latest GitHub Release with a setup download progress window, optional SHA-256 verification, and safe setup launch after the emulator exits.
-- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send joystick input or watch as observers.
+- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send host-approved joystick/keyboard input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| `F7` | Open the network multiplayer overlay. The emulator pauses while this menu is open on the host. |
-| `F8` | Toggle the drive activity footer overlay. |
+| `F1` - `F8` | C64 function keys. `F2` / `F4` / `F6` / `F8` are sent as shifted C64 function keys. |
 | `F9` | Toggle turbo mode. |
-| `F10` | Open the settings/media overlay. The emulator pauses while this menu is open. |
+| `F10` | Open the main emulator menu. From there you can open Settings, Network, Media, or Reset. The emulator pauses while a menu is open on the host. |
 | `F11` | Toggle fullscreen mode. |
 | `F12` | Open the savestate overlay. The emulator pauses while this menu is open. |
 | Drag `.prg` / `.d64` onto the window | Load PRG directly or mount D64 into the currently selected target drive. |
 | Gamepad left stick / D-pad | C64 joystick direction for the selected joystick port. |
 | Gamepad A/B/RB | C64 joystick fire. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
-| `Enter` / `L` in savestate menu | Load the selected savestate. |
-| `Del` in savestate menu | Delete the selected savestate. |
-| `Esc` | Close the active emulator overlay. |
+| `Enter` / `L` in savestate menu | Load the selected savestate and close the menu. |
+| `Del` in savestate menu | Ask for confirmation and then delete the selected savestate. |
+| `Esc` | Close the active emulator overlay or return from a F10 submenu to the F10 overview. |
 
-## F7 Network Multiplayer Menu
+## F10 Network Multiplayer Menu
 
-`F7` opens the network multiplayer overlay. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send joystick input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection. The network overlay shows the host certificate fingerprint on the server and the trusted server fingerprint on connected clients.
+Open the main menu with `F10` and choose `NETWORK` to manage multiplayer. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send host-approved joystick and keyboard input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection. The network overlay shows the host certificate fingerprint on the server and the trusted server fingerprint on connected clients.
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
@@ -92,6 +91,7 @@ Server-side entries:
 | `SERVER` | `START SERVER` / `STOP SERVER` | Starts or stops the host session. |
 | `SELECT CLIENT` | Connected client | Selects a connected client by id, address, and player name. |
 | `CLIENT RIGHT` | `OBSERVER`, `PORT 1`, `PORT 2`, `BOTH` | Chooses whether the selected client may control a joystick port. |
+| `KEYBOARD RIGHT` | `ON` / `OFF` | Chooses whether the selected client may type on the host C64 keyboard matrix. This is independent from joystick rights. |
 | `KICK CLIENT` | Connected client | Disconnects the selected client. Kicked clients cannot rejoin the same server session; restarting the server clears this session ban list. |
 
 Client-side entries:
@@ -102,7 +102,7 @@ Client-side entries:
 | `CLIENT HOST` | Host name or IP | Address of the host to connect to. |
 | `CLIENT PORT` | TLS/TCP port | Port of the host session. |
 | `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
-| `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick rights after connection. |
+| `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick and keyboard rights after connection. |
 | `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. The F10 `VIDEO ZOOM` setting is also local and remains available on clients. |
 
@@ -116,13 +116,24 @@ Network menu controls:
 | `Enter` | Activate the selected entry. |
 | `Del` | Clear editable text fields. |
 | `Backspace` | Delete the previous character in editable text fields. |
-| `Esc` / `F7` | Close the network menu. |
+| `Esc` | Return to the F10 overview. |
 
 When the host is in a menu, connected clients receive a persistent popup such as `SERVER IN NETWORK MENU` or `SERVER IN SETTINGS MENU`, so observers and remote players know why the C64 picture is paused.
 
-## F10 Settings Menu
+## F10 Main And Settings Menu
 
-`F10` opens the main runtime settings overlay. Emulation is paused while this menu is open, so it is safe to change media, reset behavior, input, video, and compatibility options without the machine continuing to run in the background.
+The `F10` overview contains `SETTINGS`, `NETWORK`, `MEDIA`, and `RESET`. The `MEDIA` row shows the currently mounted disk or media next to the entry. `Esc` from a submenu returns to this overview; `Esc` from the overview closes the emulator menu.
+
+Top-level entries:
+
+| Entry | Action |
+| --- | --- |
+| `SETTINGS` | Opens the runtime settings overlay. |
+| `NETWORK` | Opens the multiplayer/network overlay. |
+| `MEDIA` | Opens the media browser. The row also shows the currently mounted disk or `NO MEDIA`. |
+| `RESET` | Opens the reset confirmation for the selected reset mode. |
+
+Choose `SETTINGS` to open the runtime settings overlay. Emulation is paused while this menu is open, so it is safe to change audio, input, video, reset mode, and compatibility options without the machine continuing to run in the background.
 
 <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="403">
 
@@ -133,8 +144,8 @@ Navigation inside the menu:
 | `Up` / `Down` | Move through the menu entries. The menu scrolls when needed. |
 | `Left` / `Right` | Adjust the selected value or trigger the selected toggle. |
 | `-` / `+` | Same as `Left` / `Right` for adjustable settings. |
-| `Enter` | Activate the selected entry. For simple toggles this changes the value; for `MEDIA` and `RESET` it opens the related sub-menu. |
-| `Esc` | Close the settings menu and resume emulation. |
+| `Enter` | Activate the selected entry. For simple toggles this changes the value. |
+| `Esc` | Return to the F10 overview. |
 
 Menu entries:
 
@@ -144,7 +155,6 @@ Menu entries:
 | `NOISE LEVEL` | Soft to harsh | Adjusts the generated SID noise amount. Lower values are cleaner; higher values make noise-heavy effects more aggressive. |
 | `SID MODEL` | `6581` / `8580` | Switches the SID character model. `6581` is the older, rougher sounding chip family; `8580` is cleaner and behaves differently for some filters and digi tricks. |
 | `JOYSTICK` | `PORT 2`, `PORT 1`, `BOTH` | Selects which C64 joystick port receives keyboard/gamepad joystick input. Most C64 games use port 2, while some use port 1. `BOTH` mirrors input to both ports for convenience. |
-| `MEDIA` | Browse / mounted media label | Opens the media browser with `Enter` or `Right`. `Left` ejects the currently mounted media. The browser can mount `.prg` and `.d64` files. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
@@ -153,20 +163,20 @@ Menu entries:
 | `LOAD HACK` | `OFF` / `ON` | Enables the direct KERNAL `LOAD` compatibility path. It improves convenience for simple loads, but is less hardware-faithful than pure IEC/drive behavior. |
 | `IEC SOFTWARE` | `OFF` / `ON` | Toggles the high-level software IEC/DOS transport for standard disk traffic. This can improve compatibility for normal file access, while low-level custom loaders may still need more accurate 1541 behavior. |
 | `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
-| `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
-| `DRIVE OVERLAY` | `OFF` / `ON` | Shows or hides the drive activity footer. This is the same action as `F8`. |
-| `RESET` | Confirmation dialog | Opens a confirmation prompt for the selected reset mode. Use `Left` / `Right` to choose `YES` or `NO`, `Enter` to confirm, and `Esc` / `Backspace` to cancel. |
+| `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the main menu `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
+| `DRIVE OVERLAY` | `OFF` / `ON` | Shows or hides the drive activity footer. |
 
-The `MEDIA` browser opened from the F10 menu has its own controls:
+The `MEDIA` browser opened from the F10 overview has its own controls:
 
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` | Select a directory or media file. |
-| `Enter` | Enter a directory or mount the selected `.prg` / `.d64`. |
-| `Backspace` | Go to the parent directory. |
+| `Enter` | Enter a directory or mount the selected `.prg` / `.d64`. Mounting media returns to the F10 overview. |
 | `Left` / `Right` | Change the target drive from 8 to 11. |
 | `8` / `9` / `0` / `1` | Select target drive 8, 9, 10, or 11. |
-| `Esc` | Close the media browser and return to the F10 menu. |
+| `Esc` | Return to the F10 overview. |
+
+The main menu `RESET` entry opens a `YES` / `NO` confirmation for the selected reset mode. Use `Left` / `Right` to choose, `Enter` to confirm, or `Esc` to cancel and return to the F10 overview.
 
 ## Project Layout
 
@@ -290,7 +300,7 @@ For the Phase 4 developer-tool smoke suite:
 .\scripts\run-phase4-checks.ps1
 ```
 
-The drive activity footer can be toggled with `F8` or through the `DRIVE OVERLAY` entry in the `F10` settings menu.
+The drive activity footer can be toggled through the `DRIVE OVERLAY` entry in the `F10` settings menu.
 
 ## Media Handling
 
@@ -298,15 +308,25 @@ PRG files are loaded directly into C64 memory. D64 files are mounted into an emu
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
 
-Media can be selected from the `F10` browser or dropped directly onto the emulator window. The default user media directory is `%USERPROFILE%\Documents\C64Emulator`; the emulator creates it on demand and remembers the last media browser directory. Dropped D64 images use the menu's current target drive.
+Media can be selected from the `MEDIA` entry in the `F10` main menu or dropped directly onto the emulator window. The default user media directory is `%USERPROFILE%\Documents\C64Emulator`; the emulator creates it on demand and remembers the last media browser directory. Dropped D64 images use the menu's current target drive.
 
 The D64 parser handles the common 35-track layout and extended image sizes where supported by the image parser. Some copy-protected titles or custom fast loaders can still expose gaps in the current 1541 accuracy work.
 
 ## Savestates
 
-Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay.
+Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay. Deleting a savestate always opens a `YES` / `NO` confirmation first.
 
 <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="403">
+
+Savestate menu controls:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Select a savestate. |
+| `S` / `F5` | Create a new savestate. |
+| `Enter` / `L` | Load the selected savestate and close the menu after a successful load. |
+| `Del` | Open the delete confirmation for the selected savestate. |
+| `Esc` | Close the savestate menu, or cancel the delete confirmation. |
 
 ## Settings
 

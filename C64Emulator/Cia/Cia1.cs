@@ -32,6 +32,7 @@ namespace C64Emulator.Core
         private const byte JoystickFireMask = 0x10;
         private readonly byte[] _registers = new byte[0x10];
         private readonly bool[,] _keyboardMatrix = new bool[8, 8];
+        private readonly bool[,] _networkKeyboardMatrix = new bool[8, 8];
         private readonly Dictionary<Key, MatrixKey> _keyMap = new Dictionary<Key, MatrixKey>();
 
         private ushort _timerALatch;
@@ -70,6 +71,7 @@ namespace C64Emulator.Core
         {
             System.Array.Clear(_registers, 0, _registers.Length);
             System.Array.Clear(_keyboardMatrix, 0, _keyboardMatrix.Length);
+            System.Array.Clear(_networkKeyboardMatrix, 0, _networkKeyboardMatrix.Length);
             _registers[0x00] = 0xFF;
             _registers[0x01] = 0xFF;
             _timerALatch = 0;
@@ -338,6 +340,27 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Sets a network-controlled keyboard matrix key without touching joystick lines.
+        /// </summary>
+        /// <param name="key">Frontend key to map into the C64 keyboard matrix.</param>
+        /// <param name="pressed">True when the remote key is currently held.</param>
+        public void SetNetworkKeyState(Key key, bool pressed)
+        {
+            // Remote keyboard rights are separate from joystick rights. Do not call
+            // SetJoystickState here, otherwise cursor/fire keys would bypass the host's
+            // joystick permission and become joystick input as a side effect.
+            SetKeyState(key, pressed, _networkKeyboardMatrix);
+        }
+
+        /// <summary>
+        /// Releases all network-controlled keyboard matrix keys.
+        /// </summary>
+        public void ClearNetworkKeyboardState()
+        {
+            System.Array.Clear(_networkKeyboardMatrix, 0, _networkKeyboardMatrix.Length);
+        }
+
+        /// <summary>
         /// Writes the complete CIA state into a savestate stream.
         /// </summary>
         public void SaveState(BinaryWriter writer)
@@ -483,7 +506,7 @@ namespace C64Emulator.Core
 
                 for (int column = 0; column < 8; column++)
                 {
-                    if (_keyboardMatrix[row, column] && ((_registers[0x02] >> column) & 0x01) == 0)
+                    if ((_keyboardMatrix[row, column] || _networkKeyboardMatrix[row, column]) && ((_registers[0x02] >> column) & 0x01) == 0)
                     {
                         result = (byte)(result & ~(1 << column));
                     }
@@ -511,7 +534,7 @@ namespace C64Emulator.Core
 
                 for (int row = 0; row < 8; row++)
                 {
-                    if (_keyboardMatrix[row, column] && ((_registers[0x03] >> row) & 0x01) == 0)
+                    if ((_keyboardMatrix[row, column] || _networkKeyboardMatrix[row, column]) && ((_registers[0x03] >> row) & 0x01) == 0)
                     {
                         result = (byte)(result & ~(1 << row));
                     }
@@ -527,11 +550,64 @@ namespace C64Emulator.Core
         /// </summary>
         private void SetKeyState(Key key, bool pressed)
         {
+            SetKeyState(key, pressed, _keyboardMatrix);
+        }
+
+        /// <summary>
+        /// Sets a key state in the requested keyboard matrix layer.
+        /// </summary>
+        private void SetKeyState(Key key, bool pressed, bool[,] matrix)
+        {
             MatrixKey matrixKey;
+            if (SetShiftedFunctionKeyState(key, pressed, matrix))
+            {
+                return;
+            }
+
             if (_keyMap.TryGetValue(key, out matrixKey))
             {
-                _keyboardMatrix[matrixKey.Row, matrixKey.Column] = pressed;
+                matrix[matrixKey.Row, matrixKey.Column] = pressed;
             }
+        }
+
+        /// <summary>
+        /// Maps PC F2/F4/F6/F8 to the shifted C64 function-key variants.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="pressed">True when the key is held.</param>
+        /// <param name="matrix">Keyboard matrix layer to update.</param>
+        /// <returns>True when the key was handled as a shifted function key.</returns>
+        private bool SetShiftedFunctionKeyState(Key key, bool pressed, bool[,] matrix)
+        {
+            Key baseFunctionKey;
+            switch (key)
+            {
+                case Key.F2:
+                    baseFunctionKey = Key.F1;
+                    break;
+                case Key.F4:
+                    baseFunctionKey = Key.F3;
+                    break;
+                case Key.F6:
+                    baseFunctionKey = Key.F5;
+                    break;
+                case Key.F8:
+                    baseFunctionKey = Key.F7;
+                    break;
+                default:
+                    return false;
+            }
+
+            MatrixKey matrixKey;
+            if (_keyMap.TryGetValue(baseFunctionKey, out matrixKey))
+            {
+                matrix[matrixKey.Row, matrixKey.Column] = pressed;
+            }
+
+            // C64 function keys F2/F4/F6/F8 are the shifted versions of
+            // F1/F3/F5/F7. Use left shift (row 7, column 1) as the synthetic modifier.
+            matrix[7, 1] = pressed;
+            return true;
         }
 
         /// <summary>

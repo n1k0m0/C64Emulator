@@ -12,7 +12,7 @@ Der interne Entwickleroverlay zeigt kompakte Laufzeitdaten:
 - Speicherbanking
 - CIA, SID, IEC und Drive-8 Kurzstatus
 
-Hinweis: `F8` ist im normalen Emulatorfenster fuer den Laufwerks-Footer reserviert. Der Entwickleroverlay bleibt als Diagnoseansicht im Code erhalten, ist aber nicht mehr auf `F8` gelegt.
+Hinweis: `F8` wird wieder als C64-Funktionstaste durchgereicht. Der Entwickleroverlay bleibt als Diagnoseansicht im Code erhalten, ist aber nicht auf eine Funktionstaste gelegt.
 
 ## Headless Trace
 

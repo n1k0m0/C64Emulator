@@ -932,6 +932,32 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Sets a network-controlled C64 keyboard matrix key.
+        /// </summary>
+        /// <param name="key">Frontend key received from a permitted network client.</param>
+        /// <param name="pressed">True when the remote key is currently held.</param>
+        public void SetNetworkKeyState(Key key, bool pressed)
+        {
+            lock (_syncRoot)
+            {
+                // Keep remote keyboard input on its own CIA1 layer. Joystick input has a
+                // separate permission path and is not affected by this call.
+                _cia1.SetNetworkKeyState(key, pressed);
+            }
+        }
+
+        /// <summary>
+        /// Releases all network-controlled C64 keyboard matrix keys.
+        /// </summary>
+        public void ClearNetworkKeyboardState()
+        {
+            lock (_syncRoot)
+            {
+                _cia1.ClearNetworkKeyboardState();
+            }
+        }
+
         public MountedMediaInfo MountedMedia
         {
             get

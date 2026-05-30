@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using OpenTK.Input;
 
 namespace C64Emulator.Network
 {
@@ -75,7 +76,11 @@ namespace C64Emulator.Network
         /// <summary>
         /// Server-to-client menu status text shown while the host is paused in a UI overlay.
         /// </summary>
-        HostOverlayStatus = 12
+        HostOverlayStatus = 12,
+        /// <summary>
+        /// Client-to-server keyboard matrix key press or release.
+        /// </summary>
+        KeyboardInput = 13
     }
 
     /// <summary>
@@ -177,6 +182,10 @@ namespace C64Emulator.Network
         /// </summary>
         public C64NetJoystickPermission Permission { get; set; }
         /// <summary>
+        /// Gets or sets whether the host accepts C64 keyboard input from this client.
+        /// </summary>
+        public bool KeyboardEnabled { get; set; }
+        /// <summary>
         /// Gets or sets the last active-low C64 joystick state received from this client.
         /// </summary>
         public byte JoystickState { get; set; }
@@ -228,9 +237,9 @@ namespace C64Emulator.Network
         /// <summary>
         /// Current wire protocol version accepted by host and client.
         /// </summary>
-        public const int Version = 5;
+        public const int Version = 6;
         /// <summary>
-        /// Default TCP port shown in the F7 network menu.
+        /// Default TCP port shown in the network menu.
         /// </summary>
         public const int DefaultPort = 6464;
         /// <summary>
@@ -420,7 +429,7 @@ namespace C64Emulator.Network
         /// Builds a ClientHello payload for the initial client-to-host handshake.
         /// </summary>
         /// <param name="name">Player name shown in the host client list.</param>
-        /// <param name="password">Plain-text session password entered in the F7 menu.</param>
+        /// <param name="password">Plain-text session password entered in the network menu.</param>
         /// <param name="role">Requested role. The server still decides joystick rights.</param>
         /// <returns>Serialized handshake payload.</returns>
         public static byte[] CreateClientHelloPayload(string name, string password, C64NetClientRole role)
@@ -467,9 +476,10 @@ namespace C64Emulator.Network
         /// <param name="audioSampleRate">PCM audio sample rate used for AudioChunk messages.</param>
         /// <param name="role">Accepted role.</param>
         /// <param name="permission">Initial joystick permission.</param>
+        /// <param name="keyboardEnabled">Initial keyboard permission.</param>
         /// <param name="status">Human-readable connection status text.</param>
         /// <returns>Serialized welcome payload.</returns>
-        public static byte[] CreateServerWelcomePayload(int clientId, int width, int height, int audioSampleRate, C64NetClientRole role, C64NetJoystickPermission permission, string status)
+        public static byte[] CreateServerWelcomePayload(int clientId, int width, int height, int audioSampleRate, C64NetClientRole role, C64NetJoystickPermission permission, bool keyboardEnabled, string status)
         {
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream, Encoding.UTF8))
@@ -482,6 +492,7 @@ namespace C64Emulator.Network
                 writer.Write(audioSampleRate);
                 writer.Write((byte)role);
                 writer.Write((byte)permission);
+                writer.Write(keyboardEnabled);
                 WriteString(writer, status);
                 return stream.ToArray();
             }
@@ -497,8 +508,9 @@ namespace C64Emulator.Network
         /// <param name="audioSampleRate">Decoded remote audio sample rate.</param>
         /// <param name="role">Decoded accepted role.</param>
         /// <param name="permission">Decoded initial joystick permission.</param>
+        /// <param name="keyboardEnabled">Decoded initial keyboard permission.</param>
         /// <param name="status">Decoded welcome status text.</param>
-        public static void ReadServerWelcomePayload(byte[] payload, out int clientId, out int width, out int height, out int audioSampleRate, out C64NetClientRole role, out C64NetJoystickPermission permission, out string status)
+        public static void ReadServerWelcomePayload(byte[] payload, out int clientId, out int width, out int height, out int audioSampleRate, out C64NetClientRole role, out C64NetJoystickPermission permission, out bool keyboardEnabled, out string status)
         {
             using (var stream = new MemoryStream(payload ?? EmptyPayload))
             using (var reader = new BinaryReader(stream, Encoding.UTF8))
@@ -509,6 +521,7 @@ namespace C64Emulator.Network
                 audioSampleRate = reader.ReadInt32();
                 role = (C64NetClientRole)reader.ReadByte();
                 permission = (C64NetJoystickPermission)reader.ReadByte();
+                keyboardEnabled = reader.ReadBoolean();
                 status = ReadString(reader);
             }
         }
@@ -564,6 +577,48 @@ namespace C64Emulator.Network
         public static byte ReadInputStatePayload(byte[] payload)
         {
             return payload != null && payload.Length > 0 ? (byte)(payload[0] | 0xE0) : (byte)0xFF;
+        }
+
+        /// <summary>
+        /// Builds a keyboard-input payload from a frontend key and press state.
+        /// </summary>
+        /// <param name="key">Frontend key understood by the C64 keyboard matrix.</param>
+        /// <param name="pressed">True for key down, false for key up.</param>
+        /// <returns>Serialized keyboard event.</returns>
+        public static byte[] CreateKeyboardInputPayload(Key key, bool pressed)
+        {
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+            {
+                writer.Write((int)key);
+                writer.Write(pressed);
+                return stream.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Reads a keyboard-input payload.
+        /// </summary>
+        /// <param name="payload">Serialized keyboard event.</param>
+        /// <param name="key">Decoded frontend key.</param>
+        /// <param name="pressed">Decoded press state.</param>
+        /// <returns>True when the payload was well-formed.</returns>
+        public static bool ReadKeyboardInputPayload(byte[] payload, out Key key, out bool pressed)
+        {
+            key = default(Key);
+            pressed = false;
+            if (payload == null || payload.Length < 5)
+            {
+                return false;
+            }
+
+            using (var stream = new MemoryStream(payload))
+            using (var reader = new BinaryReader(stream, Encoding.UTF8))
+            {
+                key = (Key)reader.ReadInt32();
+                pressed = reader.ReadBoolean();
+                return true;
+            }
         }
 
         /// <summary>
@@ -1787,7 +1842,7 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
-        /// Builds a client-list payload for the host's F7 client overview.
+        /// Builds a client-list payload for the host's network client overview.
         /// </summary>
         /// <param name="clients">Current snapshot list to broadcast.</param>
         /// <returns>Serialized list payload.</returns>
@@ -1809,6 +1864,7 @@ namespace C64Emulator.Network
                     WriteString(writer, client.RemoteEndpoint);
                     writer.Write((byte)client.Role);
                     writer.Write((byte)client.Permission);
+                    writer.Write(client.KeyboardEnabled);
                     writer.Write(client.JoystickState);
                     writer.Write(client.LatencyMilliseconds);
                     writer.Write(client.Connected);
@@ -1840,6 +1896,7 @@ namespace C64Emulator.Network
                         RemoteEndpoint = ReadString(reader),
                         Role = (C64NetClientRole)reader.ReadByte(),
                         Permission = (C64NetJoystickPermission)reader.ReadByte(),
+                        KeyboardEnabled = reader.ReadBoolean(),
                         JoystickState = reader.ReadByte(),
                         LatencyMilliseconds = reader.ReadInt32(),
                         Connected = reader.ReadBoolean()
@@ -1854,22 +1911,25 @@ namespace C64Emulator.Network
         /// Builds a permission-update payload.
         /// </summary>
         /// <param name="permission">Host-granted joystick permission.</param>
-        /// <returns>One-byte serialized permission payload.</returns>
-        public static byte[] CreatePermissionPayload(C64NetJoystickPermission permission)
+        /// <param name="keyboardEnabled">Host-granted keyboard permission.</param>
+        /// <returns>Serialized permission payload.</returns>
+        public static byte[] CreatePermissionPayload(C64NetJoystickPermission permission, bool keyboardEnabled)
         {
-            return new[] { (byte)permission };
+            return new[] { (byte)permission, (byte)(keyboardEnabled ? 1 : 0) };
         }
 
         /// <summary>
         /// Reads a permission-update payload.
         /// </summary>
         /// <param name="payload">Serialized permission payload.</param>
-        /// <returns>Decoded permission, or observer when the payload is empty.</returns>
-        public static C64NetJoystickPermission ReadPermissionPayload(byte[] payload)
+        /// <param name="permission">Decoded joystick permission.</param>
+        /// <param name="keyboardEnabled">Decoded keyboard permission.</param>
+        public static void ReadPermissionPayload(byte[] payload, out C64NetJoystickPermission permission, out bool keyboardEnabled)
         {
-            return payload != null && payload.Length > 0
+            permission = payload != null && payload.Length > 0
                 ? (C64NetJoystickPermission)payload[0]
                 : C64NetJoystickPermission.Observer;
+            keyboardEnabled = payload != null && payload.Length > 1 && payload[1] != 0;
         }
 
         /// <summary>
