@@ -78,6 +78,8 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
             failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
             failures += RunCase(output, "VIC badline is not created after compare cycle", TestVicBadlineIsNotCreatedAfterCompareCycle);
+            failures += RunCase(output, "VIC DMA delay starts late badline from idle", TestVicDmaDelayStartsLateBadlineFromIdle);
+            failures += RunCase(output, "VIC FLI can create consecutive badlines", TestVicFliCanCreateConsecutiveBadlines);
             failures += RunCase(output, "VIC register writes are phased through render registers", TestVicRegisterWritesUseRenderRegisterPhase);
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
             failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
@@ -528,6 +530,93 @@ namespace C64Emulator.Core
             vic.FinishCycle();
         }
 
+        private static void TestVicDmaDelayStartsLateBadlineFromIdle(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            // Keep DEN set in line $30 but avoid normal badlines until raster $33.
+            // Switching YSCROLL after the cycle-14 compare then creates the classic
+            // DMA-delay condition: c-accesses start late while AEC needs three
+            // cycles before the VIC owns the bus.
+            vic.Write(0x11, 0x1C);
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 13; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            vic.PrepareCycle();
+            context.True("cycle 14 starts idle before DMA delay", !vic.GetTiming().BadLine);
+            context.True("cycle 14 display state is idle", !vic.GetPipelineState().GraphicsDisplayState);
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            vic.Write(0x11, 0x1B);
+
+            vic.PrepareCycle();
+            VicPipelineState cycle15 = vic.GetPipelineState();
+            context.True("cycle 15 starts late badline", vic.GetTiming().BadLine);
+            context.True("cycle 15 switches to display state", cycle15.GraphicsDisplayState);
+            context.True("cycle 15 starts matrix fetch sequence", cycle15.MatrixFetchStartedThisLine);
+            context.Equal("DMA-delay request start cycle", 15, cycle15.MatrixFetchRequestStartCycle);
+            context.Equal("DMA-delay c-access start cycle", 15, cycle15.MatrixFetchStartCycle);
+            context.Equal("DMA-delay CPU block start cycle", 18, cycle15.MatrixFetchCpuBlockStartCycle);
+            context.Equal("cycle 15 tries matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 15 has BA low before AEC", vic.HasBusRequestPendingThisCycle());
+            context.True("cycle 15 does not block CPU yet", !vic.RequiresBusThisCycle());
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            vic.PrepareCycle();
+            context.Equal("cycle 16 keeps matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 16 still waits for AEC", vic.HasBusRequestPendingThisCycle());
+            context.True("cycle 16 does not block CPU yet", !vic.RequiresBusThisCycle());
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            vic.PrepareCycle();
+            context.Equal("cycle 17 keeps matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 17 still waits for AEC", vic.HasBusRequestPendingThisCycle());
+            context.True("cycle 17 does not block CPU yet", !vic.RequiresBusThisCycle());
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            vic.PrepareCycle();
+            context.Equal("cycle 18 keeps matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
+            context.True("cycle 18 blocks CPU after AEC delay", vic.RequiresBusThisCycle());
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+        }
+
+        private static void TestVicFliCanCreateConsecutiveBadlines(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x1B);
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 14; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            context.True("first display line entered display state", vic.GetPipelineState().GraphicsDisplayState);
+            vic.Write(0x11, 0x1C);
+
+            for (int cycle = 14; cycle < C64Model.Pal.CyclesPerLine + 13; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            vic.PrepareCycle();
+            VicPipelineState fliLine = vic.GetPipelineState();
+            context.True("next line cycle 14 creates another badline", vic.GetTiming().BadLine);
+            context.True("FLI badline starts matrix fetch", fliLine.MatrixFetchStartedThisLine);
+            context.Equal("FLI request start cycle", 12, fliLine.MatrixFetchRequestStartCycle);
+            context.Equal("FLI c-access start cycle", 15, fliLine.MatrixFetchStartCycle);
+            context.Equal("FLI CPU block start cycle", 15, fliLine.MatrixFetchCpuBlockStartCycle);
+            context.Equal("FLI row counter reset", 0, fliLine.GraphicsRc);
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+        }
+
         private static void TestVicRegisterWritesUseRenderRegisterPhase(AccuracyContext context)
         {
             var bus = new SystemBus();
@@ -925,6 +1014,11 @@ namespace C64Emulator.Core
         private static void RunVicCycleWithoutCpu(Vic2 vic, SystemBus bus)
         {
             vic.PrepareCycle();
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+        }
+
+        private static void FinishPreparedVicCycleWithoutCpu(Vic2 vic, SystemBus bus)
+        {
             bool blocksCpu = vic.RequiresBusThisCycle();
             bool requestPending = vic.HasBusRequestPendingThisCycle();
             // The probes drive the VIC directly, but the chip still observes the

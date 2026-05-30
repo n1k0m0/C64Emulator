@@ -1780,7 +1780,7 @@ namespace C64Emulator.Core
             switch (action)
             {
                 case VicBusAction.MatrixFetch:
-                    if (_matrixFetchRequestStartCycle == _matrixFetchStartCycle)
+                    if (IsMatrixFetchBeforeAecTakesBus())
                     {
                         FetchInvalidMatrixCell();
                     }
@@ -1860,6 +1860,17 @@ namespace C64Emulator.Core
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Returns whether a matrix fetch happens while AEC still leaves the CPU-side bus visible.
+        /// </summary>
+        private bool IsMatrixFetchBeforeAecTakesBus()
+        {
+            int cycle = _cycleInLine + 1;
+            return _matrixFetchStartedThisLine &&
+                cycle >= _matrixFetchStartCycle &&
+                cycle < _matrixFetchCpuBlockStartCycle;
         }
 
         /// <summary>
@@ -2097,6 +2108,21 @@ namespace C64Emulator.Core
                 {
                     BeginVideoMatrixFetchSequence();
                 }
+            }
+
+            if (!_matrixFetchStartedThisLine &&
+                badLineCondition &&
+                !_graphicsDisplayState &&
+                cycle >= 15 &&
+                cycle <= 53)
+            {
+                _isBadLine = true;
+                _graphicsDisplayState = true;
+                _matrixFetchStartedThisLine = true;
+                _matrixFetchRequestStartCycle = cycle;
+                _matrixFetchStartCycle = cycle;
+                _matrixFetchCpuBlockStartCycle = cycle + 3;
+                BeginVideoMatrixFetchSequence();
             }
 
             if (cycle == 58)
