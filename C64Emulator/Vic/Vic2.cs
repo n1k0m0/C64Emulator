@@ -284,6 +284,7 @@ namespace C64Emulator.Core
             ApplyGraphicsBusOverrides();
             _cpuBusBlockedThisCycle = _currentBusSlot.BlocksCpu;
             ExecuteFetchAction(_currentBusSlot.Phi1Action);
+            UpdateEarlySpriteDmaEndForCurrentCycle();
         }
 
         /// <summary>
@@ -2362,6 +2363,38 @@ namespace C64Emulator.Core
             if (activatedAnySprite)
             {
                 _currentBusSlot = _busPlan.GetSlot(_cycleInLine);
+            }
+        }
+
+        /// <summary>
+        /// Releases early-line sprite DMA after the final sprite row has been fetched.
+        /// </summary>
+        private void UpdateEarlySpriteDmaEndForCurrentCycle()
+        {
+            if (_cycleInLine + 1 != 16)
+            {
+                return;
+            }
+
+            for (int spriteIndex = 3; spriteIndex < 8; spriteIndex++)
+            {
+                if (!_spriteDmaLatched[spriteIndex] || !_spriteDmaActive[spriteIndex])
+                {
+                    continue;
+                }
+
+                if (_spriteLatchedYExpanded[spriteIndex] || _spriteFetchRow[spriteIndex] < 20 || _spriteFetchPhase[spriteIndex] < 3)
+                {
+                    continue;
+                }
+
+                // Sprites 3-7 fetch their bytes at the start of the raster line.
+                // Once row 20 is fetched, DMA is off before the cycle-55 Y compare,
+                // while the already latched row remains visible for this line.
+                _spriteDmaActive[spriteIndex] = false;
+                _spriteDmaLatched[spriteIndex] = false;
+                _spriteFetchPhase[spriteIndex] = 0;
+                _spriteDataValid[spriteIndex] = false;
             }
         }
 

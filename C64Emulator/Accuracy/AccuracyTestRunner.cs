@@ -74,6 +74,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC frame timing", TestVicFrameTiming);
             failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
             failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
+            failures += RunCase(output, "VIC early sprite DMA can restart on final row", TestVicEarlySpriteDmaCanRestartOnFinalRow);
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
             failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
             failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
@@ -383,6 +384,37 @@ namespace C64Emulator.Core
             vic.PrepareCycle();
             context.True("sprite 0 DMA blocks CPU at cycle 58", vic.RequiresBusThisCycle());
             vic.FinishCycle();
+        }
+
+        private static void TestVicEarlySpriteDmaCanRestartOnFinalRow(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            bool[] latched = GetPrivateArray<bool>(vic, "_spriteDmaLatched");
+            int[] latchedY = GetPrivateArray<int>(vic, "_spriteLatchedY");
+
+            vic.Write(0x15, 0x08);
+            vic.Write(0x06, 0x64);
+            vic.Write(0x07, 0x0A);
+
+            RunVicUntil(vic, bus, 0x0A, 54);
+            RunVicCycleWithoutCpu(vic, bus);
+            context.True("sprite 3 latches on the first Y compare", latched[3]);
+            context.Equal("sprite 3 first latched Y", 0x0A, latchedY[3]);
+
+            RunVicUntil(vic, bus, 0x1F, 15);
+            context.True("sprite 3 stays latched until its final early fetches complete", latched[3]);
+            RunVicCycleWithoutCpu(vic, bus);
+            context.True("sprite 3 releases before the final-row Y compare", !latched[3]);
+
+            vic.Write(0x07, 0x1F);
+            RunVicUntil(vic, bus, 0x1F, 54);
+            context.True("sprite 3 is still released before the second Y compare", !latched[3]);
+            RunVicCycleWithoutCpu(vic, bus);
+            context.True("sprite 3 re-latches on the same raster line", latched[3]);
+            context.Equal("sprite 3 second latched Y", 0x1F, latchedY[3]);
         }
 
         private static void TestVicBusPlanGoldenSlots(AccuracyContext context)
@@ -1017,6 +1049,23 @@ namespace C64Emulator.Core
             FinishPreparedVicCycleWithoutCpu(vic, bus);
         }
 
+        private static void RunVicUntil(Vic2 vic, SystemBus bus, int rasterLine, int cycleInLine)
+        {
+            int maxCycles = C64Model.Pal.RasterLines * C64Model.Pal.CyclesPerLine * 2;
+            for (int cycle = 0; cycle < maxCycles; cycle++)
+            {
+                VicTiming timing = vic.GetTiming();
+                if (timing.RasterLine == rasterLine && timing.CycleInLine == cycleInLine)
+                {
+                    return;
+                }
+
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            throw new InvalidOperationException("Target VIC timing position was not reached.");
+        }
+
         private static void FinishPreparedVicCycleWithoutCpu(Vic2 vic, SystemBus bus)
         {
             bool blocksCpu = vic.RequiresBusThisCycle();
@@ -1031,6 +1080,25 @@ namespace C64Emulator.Core
                 !requestPending && !blocksCpu,
                 blocksCpu);
             vic.FinishCycle();
+        }
+
+        private static T[] GetPrivateArray<T>(object target, string fieldName)
+        {
+            var field = target.GetType().GetField(
+                fieldName,
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (field == null)
+            {
+                throw new InvalidOperationException("Missing private field " + fieldName + ".");
+            }
+
+            var value = field.GetValue(target) as T[];
+            if (value == null)
+            {
+                throw new InvalidOperationException("Private field " + fieldName + " is not the expected array type.");
+            }
+
+            return value;
         }
 
         private static void TestCiaTimerATiming(AccuracyContext context)
