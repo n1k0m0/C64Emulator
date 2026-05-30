@@ -1081,11 +1081,7 @@ namespace C64Emulator.Core
         /// </summary>
         private void ApplySprites(ref PixelResult result, int frameX, int frameY)
         {
-            if (!IsInsideActiveDisplayArea(frameX, frameY))
-            {
-                return;
-            }
-
+            bool insideActiveDisplayArea = IsInsideActiveDisplayArea(frameX, frameY);
             byte opaqueSpriteMask = 0;
             bool spriteVisible = false;
 
@@ -1100,13 +1096,13 @@ namespace C64Emulator.Core
                 byte bit = (byte)(1 << spriteIndex);
                 opaqueSpriteMask |= bit;
 
-                if (result.GraphicsForeground)
+                if (insideActiveDisplayArea && result.GraphicsForeground)
                 {
                     _spriteDataCollision |= bit;
                 }
 
                 bool behindGraphics = ((_pixelRegisters[0x1B] >> spriteIndex) & 0x01) != 0;
-                if (!spriteVisible && (!behindGraphics || !result.GraphicsForeground))
+                if (insideActiveDisplayArea && !spriteVisible && (!behindGraphics || !result.GraphicsForeground))
                 {
                     result.Color = spriteColor;
                     spriteVisible = true;

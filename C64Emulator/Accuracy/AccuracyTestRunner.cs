@@ -75,6 +75,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC raster IRQ compare is cycle driven", TestVicRasterIrqCompareIsCycleDriven);
             failures += RunCase(output, "VIC sprite DMA starts at Y-compare cycle", TestVicSpriteDmaStartsAtYCompareCycle);
             failures += RunCase(output, "VIC early sprite DMA can restart on final row", TestVicEarlySpriteDmaCanRestartOnFinalRow);
+            failures += RunCase(output, "VIC sprite collisions happen outside active display", TestVicSpriteCollisionOutsideActiveDisplay);
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
             failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
             failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
@@ -415,6 +416,44 @@ namespace C64Emulator.Core
             RunVicCycleWithoutCpu(vic, bus);
             context.True("sprite 3 re-latches on the same raster line", latched[3]);
             context.Equal("sprite 3 second latched Y", 0x1F, latchedY[3]);
+        }
+
+        private static void TestVicSpriteCollisionOutsideActiveDisplay(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            const ushort screenBase = 0xC400;
+            const byte spritePointer0 = 0x30;
+            const byte spritePointer1 = 0x31;
+            bus.WriteRam((ushort)(screenBase + 0x03F8), spritePointer0);
+            bus.WriteRam((ushort)(screenBase + 0x03F9), spritePointer1);
+
+            ushort spriteBase0 = (ushort)(bus.GetVicBankBase() + (spritePointer0 * 64));
+            ushort spriteBase1 = (ushort)(bus.GetVicBankBase() + (spritePointer1 * 64));
+            for (int offset = 0; offset < 63; offset++)
+            {
+                bus.WriteRam((ushort)(spriteBase0 + offset), 0xFF);
+                bus.WriteRam((ushort)(spriteBase1 + offset), 0xFF);
+            }
+
+            // X=0 keeps the whole 24-pixel sprite left of the normal 40-column
+            // display window, but the VIC-II still latches sprite-sprite hits.
+            vic.Write(0x00, 0x00);
+            vic.Write(0x01, 0x32);
+            vic.Write(0x02, 0x00);
+            vic.Write(0x03, 0x32);
+            vic.Write(0x15, 0x03);
+
+            int totalCycles = 80 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            context.Equal("overlapping sprites collide left of the active display", (byte)0x03, vic.Read(0x1E));
         }
 
         private static void TestVicBusPlanGoldenSlots(AccuracyContext context)
