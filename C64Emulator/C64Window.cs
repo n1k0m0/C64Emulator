@@ -2728,6 +2728,16 @@ namespace C64Emulator
         /// <returns>True for emulator control keys.</returns>
         private static bool IsRemoteClientKeyboardReservedKey(Key key)
         {
+            byte joystickMask;
+            if (TryGetJoystickMask(key, out joystickMask))
+            {
+                // Match the local CIA behavior: cursor keys and left control are
+                // joystick controls, not simultaneous C64 keyboard-matrix keys. Sending
+                // left control as a keyboard key can pull matrix row 2 low and look like
+                // joystick-port-1 left to games that poll both ports.
+                return true;
+            }
+
             return key == Key.F9 || key == Key.F10 || key == Key.F11 || key == Key.F12;
         }
 
