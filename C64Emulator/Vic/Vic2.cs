@@ -394,10 +394,12 @@ namespace C64Emulator.Core
                 case 0x11:
                     _registers[0x11] = value;
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x00FF) | ((value & 0x80) << 1));
+                    TriggerRasterIrqForCurrentLineIfMatched();
                     break;
                 case 0x12:
                     _registers[0x12] = value;
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x0100) | value);
+                    TriggerRasterIrqForCurrentLineIfMatched();
                     break;
                 case 0x19:
                     _irqFlags = (byte)(_irqFlags & ~(value & 0x0F));
@@ -801,12 +803,25 @@ namespace C64Emulator.Core
 
             if (_graphicsSequencerBitmapMode)
             {
+                // ECM combined with bitmap selects an illegal VIC-II mode; the chip
+                // blanks the graphics output instead of decoding bitmap data.
+                if (_graphicsSequencerExtendedColorMode)
+                {
+                    return CreateBackgroundPixel(Palette[0]);
+                }
+
                 return ComputeBitmapPixel(
                     pixelXInCell,
                     _graphicsSequencerScreenCode,
                     _graphicsSequencerColorNibble,
                     _graphicsSequencerPattern,
                     _graphicsSequencerMulticolorMode && !_graphicsSequencerExtendedColorMode);
+            }
+
+            // ECM combined with multicolor text is illegal as well and must blank.
+            if (_graphicsSequencerExtendedColorMode && _graphicsSequencerMulticolorMode)
+            {
+                return CreateBackgroundPixel(Palette[0]);
             }
 
             return ComputeCharacterPixel(
@@ -909,11 +924,10 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            bool hasLatchedMatrix = _videoMatrixValid &&
-                _videoMatrixFetched[cellX];
+            bool hasLatchedMatrix = CanUseLatchedMatrixCell(cellX);
             bool currentBitmapMode = hasLatchedPattern
                 ? _videoPatternBitmapModes[cellX]
-                : (hasLatchedMatrix ? _videoMatrixBitmapModes[cellX] : _displaySourceBitmapMode);
+                : _displaySourceBitmapMode;
 
             if (currentBitmapMode)
             {
@@ -928,10 +942,10 @@ namespace C64Emulator.Core
                 int lineMatrixBaseIndex = GetGraphicsLineMatrixBaseIndex(cellY);
                 int matrixIndex = NormalizeVideoMatrixIndex(lineMatrixBaseIndex + cellX);
 
-                _graphicsSequencerScreenCode = CanUseLatchedMatrixCell(cellX, true)
+                _graphicsSequencerScreenCode = hasLatchedMatrix
                     ? _videoMatrixScreenCodes[cellX]
                     : ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
-                _graphicsSequencerColorNibble = CanUseLatchedMatrixCell(cellX, true)
+                _graphicsSequencerColorNibble = hasLatchedMatrix
                     ? _videoMatrixColorNibbles[cellX]
                     : _bus.ReadColorRam((ushort)matrixIndex);
                 bool useLatchedBitmapPattern = _videoPatternValid &&
@@ -944,10 +958,10 @@ namespace C64Emulator.Core
                 _graphicsSequencerBitmapMode = true;
                 _graphicsSequencerExtendedColorMode = useLatchedBitmapPattern
                     ? _videoPatternExtendedColorModes[cellX]
-                    : (CanUseLatchedMatrixCell(cellX, true) ? _videoMatrixExtendedColorModes[cellX] : _displaySourceExtendedColorMode);
+                    : _displaySourceExtendedColorMode;
                 _graphicsSequencerMulticolorMode = useLatchedBitmapPattern
                     ? _videoPatternMulticolorModes[cellX]
-                    : (CanUseLatchedMatrixCell(cellX, true) ? _videoMatrixMulticolorModes[cellX] : _displaySourceMulticolorMode);
+                    : _displaySourceMulticolorMode;
             }
             else
             {
@@ -962,7 +976,7 @@ namespace C64Emulator.Core
                 int textLineMatrixBaseIndex = GetGraphicsLineMatrixBaseIndex(textCellY);
                 int textMatrixIndex = NormalizeVideoMatrixIndex(textLineMatrixBaseIndex + cellX);
 
-                if (CanUseLatchedMatrixCell(cellX, false))
+                if (hasLatchedMatrix)
                 {
                     _graphicsSequencerScreenCode = _videoMatrixScreenCodes[cellX];
                     _graphicsSequencerColorNibble = _videoMatrixColorNibbles[cellX];
@@ -983,10 +997,10 @@ namespace C64Emulator.Core
                 _graphicsSequencerBitmapMode = false;
                 _graphicsSequencerExtendedColorMode = useLatchedCharacterPattern
                     ? _videoPatternExtendedColorModes[cellX]
-                    : (CanUseLatchedMatrixCell(cellX, false) ? _videoMatrixExtendedColorModes[cellX] : _displaySourceExtendedColorMode);
+                    : _displaySourceExtendedColorMode;
                 _graphicsSequencerMulticolorMode = useLatchedCharacterPattern
                     ? _videoPatternMulticolorModes[cellX]
-                    : (CanUseLatchedMatrixCell(cellX, false) ? _videoMatrixMulticolorModes[cellX] : _displaySourceMulticolorMode);
+                    : _displaySourceMulticolorMode;
             }
 
             _graphicsSequencerCellLoaded = true;
@@ -1175,6 +1189,19 @@ namespace C64Emulator.Core
                 _registers[0x19] = _irqFlags;
                 _rasterIrqTriggeredThisLine = true;
             }
+        }
+
+        /// <summary>
+        /// Immediately asserts a raster IRQ when a D011/D012 write selects the current line.
+        /// </summary>
+        private void TriggerRasterIrqForCurrentLineIfMatched()
+        {
+            if (_rasterLine == 0 && _cycleInLine <= 1)
+            {
+                return;
+            }
+
+            UpdateRasterIrq();
         }
 
         /// <summary>
@@ -1748,14 +1775,14 @@ namespace C64Emulator.Core
         /// <summary>
         /// Returns whether the component can use latched matrix cell.
         /// </summary>
-        private bool CanUseLatchedMatrixCell(int cellX, bool bitmapMode)
+        private bool CanUseLatchedMatrixCell(int cellX)
         {
             if ((uint)cellX >= VisibleColumns)
             {
                 return false;
             }
 
-            if (!_videoMatrixValid || !_videoMatrixFetched[cellX] || _videoMatrixBitmapModes[cellX] != bitmapMode)
+            if (!_videoMatrixValid || !_videoMatrixFetched[cellX])
             {
                 return false;
             }
@@ -1858,9 +1885,7 @@ namespace C64Emulator.Core
                 }
                 else
                 {
-                    byte screenCode = (_videoMatrixValid &&
-                        !_videoMatrixBitmapModes[cellX] &&
-                        _videoMatrixFetched[cellX])
+                    byte screenCode = CanUseLatchedMatrixCell(cellX)
                         ? _videoMatrixScreenCodes[cellX]
                         : ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
 
@@ -2005,16 +2030,6 @@ namespace C64Emulator.Core
                 {
                     BeginVideoMatrixFetchSequence();
                 }
-            }
-            else if (!_matrixFetchStartedThisLine && badLineCondition && cycle >= 15 && cycle <= 53)
-            {
-                _isBadLine = true;
-                _graphicsDisplayState = true;
-                _matrixFetchStartedThisLine = true;
-                _matrixFetchRequestStartCycle = cycle + 1;
-                _matrixFetchStartCycle = _matrixFetchRequestStartCycle;
-                _matrixFetchCpuBlockStartCycle = System.Math.Min(54, _matrixFetchRequestStartCycle + 3);
-                BeginVideoMatrixFetchSequence();
             }
 
             if (cycle == 58)

@@ -77,10 +77,13 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC bus-plan golden slots", TestVicBusPlanGoldenSlots);
             failures += RunCase(output, "VIC badline pipeline gates c-accesses", TestVicBadlinePipelineGatesCAccesses);
             failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
+            failures += RunCase(output, "VIC badline is not created after compare cycle", TestVicBadlineIsNotCreatedAfterCompareCycle);
             failures += RunCase(output, "VIC register writes are phased through render registers", TestVicRegisterWritesUseRenderRegisterPhase);
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
             failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
             failures += RunCase(output, "VIC midline D011 RSEL affects vertical border", TestVicMidlineD011RselAffectsVerticalBorder);
+            failures += RunCase(output, "VIC invalid display modes render black", TestVicInvalidDisplayModesRenderBlack);
+            failures += RunCase(output, "VIC matrix fetch does not latch display mode", TestVicMatrixFetchDoesNotLatchDisplayMode);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
@@ -332,6 +335,18 @@ namespace C64Emulator.Core
             context.True("line 0 cycle 0 compare has not fired yet", !vic.IsIrqAsserted());
             vic.Tick();
             context.True("line 0 cycle 1 compare asserts raster IRQ", vic.IsIrqAsserted());
+
+            var immediateBus = new SystemBus();
+            var immediateFrameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var immediateVic = new Vic2(immediateBus, immediateFrameBuffer, C64Model.Pal);
+            for (int cycle = 0; cycle < (10 * C64Model.Pal.CyclesPerLine) + 5; cycle++)
+            {
+                immediateVic.Tick();
+            }
+
+            immediateVic.Write(0x1A, 0x01);
+            immediateVic.Write(0x12, 0x0A);
+            context.True("D012 write matching current nonzero line asserts immediately", immediateVic.IsIrqAsserted());
         }
 
         private static void TestVicSpriteDmaStartsAtYCompareCycle(AccuracyContext context)
@@ -484,6 +499,33 @@ namespace C64Emulator.Core
             vic.FinishCycle();
         }
 
+        private static void TestVicBadlineIsNotCreatedAfterCompareCycle(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            // Keep DEN set so the display is enabled, but choose a Y-scroll value
+            // that does not match raster $33 during the VIC's badline compare.
+            vic.Write(0x11, 0x1A);
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 13; cycle++)
+            {
+                vic.Tick();
+            }
+
+            vic.PrepareCycle();
+            context.True("cycle 14 is not a badline before the Y-scroll write", !vic.GetTiming().BadLine);
+            vic.FinishCycle();
+
+            vic.Write(0x11, 0x1B);
+            vic.PrepareCycle();
+            context.True("cycle 15 does not create a late badline", !vic.GetTiming().BadLine);
+            context.Equal("cycle 15 keeps normal phi2 access", VicBusAction.Idle, vic.GetTiming().Phi2Action);
+            context.True("cycle 15 does not block CPU", !vic.RequiresBusThisCycle());
+            vic.FinishCycle();
+        }
+
         private static void TestVicRegisterWritesUseRenderRegisterPhase(AccuracyContext context)
         {
             var bus = new SystemBus();
@@ -541,6 +583,21 @@ namespace C64Emulator.Core
                 !string.Equals(stableNarrowHash, widenedMidframeHash, StringComparison.Ordinal));
         }
 
+        private static void TestVicInvalidDisplayModesRenderBlack(AccuracyContext context)
+        {
+            context.Equal("ECM plus multicolor text blanks graphics", 0xFF000000u, RenderInvalidModeProbePixel(0x5B, 0x18));
+            context.Equal("ECM plus bitmap blanks graphics", 0xFF000000u, RenderInvalidModeProbePixel(0x7B, 0x08));
+            context.Equal("ECM plus bitmap plus multicolor blanks graphics", 0xFF000000u, RenderInvalidModeProbePixel(0x7B, 0x18));
+        }
+
+        private static void TestVicMatrixFetchDoesNotLatchDisplayMode(AccuracyContext context)
+        {
+            context.Equal(
+                "screen matrix fetched during illegal ECM+MCM is decoded after ECM clears",
+                0xFFFFFFFFu,
+                RenderMatrixModeSwitchProbePixel());
+        }
+
         private static string RenderD016SplitProbeFrame(bool writeMidlineScroll)
         {
             var bus = new SystemBus();
@@ -587,6 +644,92 @@ namespace C64Emulator.Core
             }
 
             return DevTraceExporter.ComputeFrameHash(frameBuffer);
+        }
+
+        private static uint RenderInvalidModeProbePixel(byte d011, byte d016)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, d011);
+            vic.Write(0x16, d016);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x06);
+            vic.Write(0x21, 0x06);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, 0x01);
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int totalCycles = 70 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return frameBuffer.Pixels[(45 * frameBuffer.Width) + 80];
+        }
+
+        private static uint RenderMatrixModeSwitchProbePixel()
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x5B);
+            vic.Write(0x16, 0x18);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x00);
+            vic.Write(0x21, 0x00);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, 0x01);
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int switchCycle = (0x34 * C64Model.Pal.CyclesPerLine) + 2;
+            for (int cycle = 0; cycle < switchCycle; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            vic.Write(0x11, 0x1B);
+
+            int totalCycles = 70 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = switchCycle; cycle < totalCycles; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return frameBuffer.Pixels[(45 * frameBuffer.Width) + 80];
         }
 
         private static string RenderD016CselBorderProbeFrame(bool widenMidline)
