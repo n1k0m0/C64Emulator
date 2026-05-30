@@ -354,12 +354,34 @@ namespace C64Emulator.Core
                     return _lightPenX;
                 case 0x14:
                     return _lightPenY;
+                case 0x16:
+                    return (byte)(_registers[0x16] | 0xC0);
+                case 0x18:
+                    return (byte)(_registers[0x18] | 0x01);
                 case 0x19:
-                    return (byte)(_irqFlags | (IsIrqAsserted() ? 0x80 : 0x00));
+                    return (byte)(_irqFlags | 0x70 | (IsIrqAsserted() ? 0x80 : 0x00));
+                case 0x1A:
+                    return (byte)(_registers[0x1A] | 0xF0);
                 case 0x1E:
                     return ReadAndClearSpriteSpriteCollision();
                 case 0x1F:
                     return ReadAndClearSpriteDataCollision();
+                case 0x20:
+                case 0x21:
+                case 0x22:
+                case 0x23:
+                case 0x24:
+                case 0x25:
+                case 0x26:
+                case 0x27:
+                case 0x28:
+                case 0x29:
+                case 0x2A:
+                case 0x2B:
+                case 0x2C:
+                case 0x2D:
+                case 0x2E:
+                    return (byte)(_registers[address] | 0xF0);
                 case 0x2F:
                 case 0x30:
                 case 0x31:
@@ -804,10 +826,14 @@ namespace C64Emulator.Core
             if (_graphicsSequencerBitmapMode)
             {
                 // ECM combined with bitmap selects an illegal VIC-II mode; the chip
-                // blanks the graphics output instead of decoding bitmap data.
+                // blanks the graphics output while the hidden sequencer still produces
+                // foreground/background bits for sprite priority and collisions.
                 if (_graphicsSequencerExtendedColorMode)
                 {
-                    return CreateBackgroundPixel(Palette[0]);
+                    return ComputeInvalidBitmapPixel(
+                        pixelXInCell,
+                        _graphicsSequencerPattern,
+                        _graphicsSequencerMulticolorMode);
                 }
 
                 return ComputeBitmapPixel(
@@ -821,7 +847,10 @@ namespace C64Emulator.Core
             // ECM combined with multicolor text is illegal as well and must blank.
             if (_graphicsSequencerExtendedColorMode && _graphicsSequencerMulticolorMode)
             {
-                return CreateBackgroundPixel(Palette[0]);
+                return ComputeInvalidCharacterPixel(
+                    pixelXInCell,
+                    _graphicsSequencerColorNibble,
+                    _graphicsSequencerPattern);
             }
 
             return ComputeCharacterPixel(
@@ -909,6 +938,44 @@ namespace C64Emulator.Core
             }
 
             return CreateForegroundPixel(Palette[(screenCode >> 4) & 0x0F]);
+        }
+
+        /// <summary>
+        /// Computes the hidden foreground/background result for illegal ECM+MCM text.
+        /// </summary>
+        private static PixelResult ComputeInvalidCharacterPixel(int pixelXInCell, byte colorNibble, byte pattern)
+        {
+            bool foreground;
+            if ((colorNibble & 0x08) != 0)
+            {
+                int pair = (pattern >> ((3 - (pixelXInCell / 2)) * 2)) & 0x03;
+                foreground = pair >= 2;
+            }
+            else
+            {
+                foreground = (pattern & (0x80 >> pixelXInCell)) != 0;
+            }
+
+            return foreground ? CreateForegroundPixel(Palette[0]) : CreateBackgroundPixel(Palette[0]);
+        }
+
+        /// <summary>
+        /// Computes the hidden foreground/background result for illegal ECM bitmap modes.
+        /// </summary>
+        private static PixelResult ComputeInvalidBitmapPixel(int pixelXInCell, byte pattern, bool multicolorMode)
+        {
+            bool foreground;
+            if (multicolorMode)
+            {
+                int pair = (pattern >> ((3 - (pixelXInCell / 2)) * 2)) & 0x03;
+                foreground = pair >= 2;
+            }
+            else
+            {
+                foreground = (pattern & (0x80 >> pixelXInCell)) != 0;
+            }
+
+            return foreground ? CreateForegroundPixel(Palette[0]) : CreateBackgroundPixel(Palette[0]);
         }
 
         /// <summary>

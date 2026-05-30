@@ -82,7 +82,9 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
             failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
             failures += RunCase(output, "VIC midline D011 RSEL affects vertical border", TestVicMidlineD011RselAffectsVerticalBorder);
+            failures += RunCase(output, "VIC unused register bits read high", TestVicUnusedRegisterBitsReadHigh);
             failures += RunCase(output, "VIC invalid display modes render black", TestVicInvalidDisplayModesRenderBlack);
+            failures += RunCase(output, "VIC invalid display modes keep hidden foreground", TestVicInvalidDisplayModesKeepHiddenForeground);
             failures += RunCase(output, "VIC matrix fetch does not latch display mode", TestVicMatrixFetchDoesNotLatchDisplayMode);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
@@ -590,6 +592,47 @@ namespace C64Emulator.Core
             context.Equal("ECM plus bitmap plus multicolor blanks graphics", 0xFF000000u, RenderInvalidModeProbePixel(0x7B, 0x18));
         }
 
+        private static void TestVicUnusedRegisterBitsReadHigh(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x16, 0x00);
+            context.Equal("D016 unconnected bits read as one", (byte)0xC0, vic.Read(0x16));
+
+            vic.Write(0x18, 0xFE);
+            context.Equal("D018 unconnected bit zero reads as one", (byte)0xFF, vic.Read(0x18));
+
+            context.Equal("D019 unused latch bits read as one", (byte)0x70, vic.Read(0x19));
+
+            vic.Write(0x1A, 0x05);
+            context.Equal("D01A unused enable bits read as one", (byte)0xF5, vic.Read(0x1A));
+
+            vic.Write(0x20, 0x05);
+            context.Equal("D020 high nibble reads as one", (byte)0xF5, vic.Read(0x20));
+
+            vic.Write(0x27, 0x0A);
+            context.Equal("sprite color high nibble reads as one", (byte)0xFA, vic.Read(0x27));
+        }
+
+        private static void TestVicInvalidDisplayModesKeepHiddenForeground(AccuracyContext context)
+        {
+            context.Equal(
+                "invalid ECM+MCM text foreground still collides with sprite",
+                (byte)0x01,
+                RenderInvalidModeSpriteDataCollision(0x5B, 0x18, 0x09));
+            context.Equal(
+                "invalid ECM+BMM bitmap foreground still collides with sprite",
+                (byte)0x01,
+                RenderInvalidModeSpriteDataCollision(0x7B, 0x08, 0x01));
+            context.Equal(
+                "invalid ECM+BMM+MCM bitmap foreground still collides with sprite",
+                (byte)0x01,
+                RenderInvalidModeSpriteDataCollision(0x7B, 0x18, 0x01));
+        }
+
         private static void TestVicMatrixFetchDoesNotLatchDisplayMode(AccuracyContext context)
         {
             context.Equal(
@@ -683,6 +726,58 @@ namespace C64Emulator.Core
             }
 
             return frameBuffer.Pixels[(45 * frameBuffer.Width) + 80];
+        }
+
+        private static byte RenderInvalidModeSpriteDataCollision(byte d011, byte d016, byte colorNibble)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, d011);
+            vic.Write(0x16, d016);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x06);
+            vic.Write(0x21, 0x06);
+
+            const ushort screenBase = 0xC400;
+            const ushort patternBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, colorNibble);
+                }
+            }
+
+            for (int offset = 0; offset < 0x2000; offset++)
+            {
+                bus.WriteRam((ushort)(patternBase + offset), 0xFF);
+            }
+
+            const byte spritePointer = 0x30;
+            bus.WriteRam((ushort)(screenBase + 0x03F8), spritePointer);
+            ushort spriteBase = (ushort)(bus.GetVicBankBase() + (spritePointer * 64));
+            for (int offset = 0; offset < 63; offset++)
+            {
+                bus.WriteRam((ushort)(spriteBase + offset), 0xFF);
+            }
+
+            vic.Write(0x00, 0x3F);
+            vic.Write(0x01, 0x3A);
+            vic.Write(0x15, 0x01);
+            vic.Write(0x27, 0x01);
+
+            int totalCycles = 80 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            return vic.Read(0x1F);
         }
 
         private static uint RenderMatrixModeSwitchProbePixel()
