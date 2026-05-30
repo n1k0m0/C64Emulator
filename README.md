@@ -2,6 +2,8 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
+Latest GitHub release: [C64Emulator 0.3.5](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.5), including a self-contained Windows x64 setup package.
+
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
 The original source code of my emulator started in 2017 as a welcome change of pace while I was writing my dissertation. That first version already supported the C64 ROMs, basic PRG loading, and an early working VIC-II implementation, but it was still far from a polished emulator. SID audio did not exist yet at all.
@@ -31,7 +33,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 ## Current Features
 
 - MOS 6510 CPU emulation with cycle-oriented execution and support for the implemented official and illegal opcodes.
-- VIC-II video output with raster timing, sprites, bitmap/text modes, scrolling, borders, and PAL-oriented display timing.
+- VIC-II video output with raster timing, sprites, bitmap/text modes, scrolling, borders, PAL-oriented display timing, DMA-delay/FLI badline behavior, sprite DMA reuse timing, and sprite collision latching.
 - SID register handling and audio output.
 - CIA1/CIA2 emulation for keyboard, joystick, timers, interrupts, and IEC interaction.
 - IEC bus infrastructure with emulated 1541-compatible drives on device numbers 8 to 11.
@@ -233,6 +235,8 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.5`.
+
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
 ```powershell
@@ -356,7 +360,7 @@ ROM images and disk/program media are not covered by the source-code license. Ch
 
 ## Status
 
-The emulator is already useful for BASIC, PRG loading, D64 directory access, several games, savestates, and interactive testing. Cycle accuracy, VIC-II edge cases, and 1541 custom loader compatibility remain the main long-term accuracy areas.
+The emulator is already useful for BASIC, PRG loading, D64 directory access, several games, savestates, and interactive testing. Recent VIC-II work improved display-mode latch timing, invalid display mode behavior, DMA-delay/FLI badlines, tightly multiplexed sprite reuse, and sprite-sprite collision latching outside the active display area. Cycle accuracy, remaining VIC-II edge cases, and 1541 custom loader compatibility remain the main long-term accuracy areas.
 
 ## License
 
