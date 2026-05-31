@@ -46,6 +46,14 @@ namespace C64Emulator.Core
 
         public int GraphicsVmli { get; set; }
 
+        public int GraphicsMatrixFetchColumn { get; set; }
+
+        public int GraphicsPatternFetchColumn { get; set; }
+
+        public int GraphicsVideoCounterOffset { get; set; }
+
+        public string GraphicsVmliShiftRegister { get; set; }
+
         public int GraphicsRc { get; set; }
 
         public int GraphicsLineCellY { get; set; }

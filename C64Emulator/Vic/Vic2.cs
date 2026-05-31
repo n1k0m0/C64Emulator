@@ -52,6 +52,7 @@ namespace C64Emulator.Core
         private const int SpriteVisibleOffsetX = StandardSpriteDisplayLeft - BorderLeft;
         private const int SpriteVisibleOffsetY = StandardSpriteDisplayTop - BorderTop;
         private const int SpriteRasterStartOffsetY = 1;
+        private const ulong DisplaySequencerColumnMask = (1UL << VisibleColumns) - 1UL;
 
         private static readonly uint[] Palette =
         {
@@ -72,6 +73,89 @@ namespace C64Emulator.Core
             0xFF6C5EB5u,
             0xFF959595u
         };
+
+        /// <summary>
+        /// Tracks the VIC-II display sequencer independently from the visible pixel latch.
+        /// </summary>
+        private struct DisplaySequencerState
+        {
+            public int MatrixFetchColumn;
+            public int PatternFetchColumn;
+            public int VideoCounterOffset;
+            public ulong VmliShiftRegister;
+            public bool PreviousDisplayWindowActive;
+
+            /// <summary>
+            /// Clears all sequencer state at power-on or frame restart.
+            /// </summary>
+            public void ResetFrame()
+            {
+                MatrixFetchColumn = 0;
+                PatternFetchColumn = 0;
+                VideoCounterOffset = 0;
+                VmliShiftRegister = 0;
+                PreviousDisplayWindowActive = false;
+            }
+
+            /// <summary>
+            /// Starts a raster line without clearing the physical VMLI carry state.
+            /// </summary>
+            public void BeginRasterLine()
+            {
+                MatrixFetchColumn = 0;
+                PatternFetchColumn = 0;
+                VideoCounterOffset = 0;
+                PreviousDisplayWindowActive = false;
+            }
+
+            /// <summary>
+            /// Restarts the fetch columns when a badline opens a new display row.
+            /// </summary>
+            public void RestartFetchColumns()
+            {
+                MatrixFetchColumn = 0;
+                PatternFetchColumn = 0;
+                VideoCounterOffset = 0;
+            }
+
+            /// <summary>
+            /// Restarts the fetch columns with a DMA-delay video-counter offset.
+            /// </summary>
+            public void RestartFetchColumns(int videoCounterOffset)
+            {
+                MatrixFetchColumn = 0;
+                PatternFetchColumn = 0;
+                VideoCounterOffset = videoCounterOffset & 0x3F;
+            }
+
+            /// <summary>
+            /// Advances the display shift register for one VIC cycle.
+            /// </summary>
+            public void ClockVmli(int cycle, bool displayState)
+            {
+                bool displayWindowActive = displayState && cycle >= 16 && cycle <= 55;
+                bool injectDisplayToken = displayWindowActive && !PreviousDisplayWindowActive;
+                VmliShiftRegister = ((VmliShiftRegister << 1) & DisplaySequencerColumnMask) |
+                    (injectDisplayToken ? 1UL : 0UL);
+                PreviousDisplayWindowActive = displayWindowActive;
+            }
+
+            /// <summary>
+            /// Advances the matrix-fetch side of the sequencer.
+            /// </summary>
+            public void AdvanceMatrixFetch()
+            {
+                MatrixFetchColumn = (MatrixFetchColumn + 1) & 0x3F;
+            }
+
+            /// <summary>
+            /// Advances the pattern-fetch side of the sequencer.
+            /// </summary>
+            public void AdvancePatternFetch()
+            {
+                PatternFetchColumn = (PatternFetchColumn + 1) & 0x3F;
+            }
+        }
 
         private readonly SystemBus _bus;
         private readonly FrameBuffer _frameBuffer;
@@ -154,6 +238,7 @@ namespace C64Emulator.Core
         private int _graphicsVc;
         private int _graphicsVcBase;
         private int _graphicsVmli;
+        private DisplaySequencerState _displaySequencer;
         private int _graphicsRc;
         private int _graphicsLineMatrixBaseIndex;
         private int _graphicsLineCellY;
@@ -254,6 +339,7 @@ namespace C64Emulator.Core
             _busPlan.LoadState(reader);
             StateSerializer.ReadObjectFields(reader, this, "_bus", "_frameBuffer", "_model", "_busPlan");
             SynchronizePixelRegisters();
+            RepairDisplaySequencerAfterLoad();
             RepairSpriteDmaLatchAfterLoad();
         }
 
@@ -523,6 +609,10 @@ namespace C64Emulator.Core
                 GraphicsVc = _graphicsVc,
                 GraphicsVcBase = _graphicsVcBase,
                 GraphicsVmli = _graphicsVmli,
+                GraphicsMatrixFetchColumn = _displaySequencer.MatrixFetchColumn,
+                GraphicsPatternFetchColumn = _displaySequencer.PatternFetchColumn,
+                GraphicsVideoCounterOffset = _displaySequencer.VideoCounterOffset,
+                GraphicsVmliShiftRegister = _displaySequencer.VmliShiftRegister,
                 GraphicsRc = _graphicsRc,
                 GraphicsLineMatrixBaseIndex = _graphicsLineMatrixBaseIndex,
                 GraphicsLineCellY = _graphicsLineCellY,
@@ -587,6 +677,7 @@ namespace C64Emulator.Core
             _graphicsVc = 0;
             _graphicsVcBase = 0;
             _graphicsVmli = 0;
+            _displaySequencer.ResetFrame();
             _graphicsRc = 7;
             _graphicsLineMatrixBaseIndex = -1;
             _graphicsLineCellY = -1;
@@ -1650,6 +1741,7 @@ namespace C64Emulator.Core
                 _graphicsVc = 0;
                 _graphicsVcBase = 0;
                 _graphicsVmli = 0;
+                _displaySequencer.ResetFrame();
                 _graphicsRc = 7;
                 _graphicsLineMatrixBaseIndex = -1;
                 _graphicsLineCellY = -1;
@@ -1662,6 +1754,7 @@ namespace C64Emulator.Core
                 _previousBitmapDisplayLine = false;
             }
 
+            _displaySequencer.BeginRasterLine();
             _rasterIrqTriggeredThisLine = false;
             LatchCurrentLineState();
             LatchDisplaySourceFromLineState();
@@ -1690,6 +1783,41 @@ namespace C64Emulator.Core
             _busPlan.BuildLine(false, _spriteDmaActive);
             _currentBusSlot = _busPlan.GetSlot(0);
             ResetGraphicsOutputDelayLine();
+        }
+
+        /// <summary>
+        /// Rebuilds sequencer helper state after loading older savestates.
+        /// </summary>
+        private void RepairDisplaySequencerAfterLoad()
+        {
+            bool hasSerializedSequencerState =
+                _displaySequencer.MatrixFetchColumn != 0 ||
+                _displaySequencer.PatternFetchColumn != 0 ||
+                _displaySequencer.VideoCounterOffset != 0 ||
+                _displaySequencer.VmliShiftRegister != 0 ||
+                _displaySequencer.PreviousDisplayWindowActive;
+            if (hasSerializedSequencerState)
+            {
+                return;
+            }
+
+            _displaySequencer.MatrixFetchColumn = _graphicsVmli;
+            _displaySequencer.PatternFetchColumn = _graphicsVmli;
+            _displaySequencer.VideoCounterOffset = NormalizeVideoMatrixIndex(_graphicsVc - _graphicsVcBase - _graphicsVmli) & 0x3F;
+            _displaySequencer.PreviousDisplayWindowActive = _graphicsDisplayState &&
+                (_cycleInLine + 1) >= 16 &&
+                (_cycleInLine + 1) <= 55;
+            int activeColumn = (_cycleInLine + 1) - 16;
+            if (_displaySequencer.PreviousDisplayWindowActive &&
+                activeColumn >= 0 &&
+                activeColumn < VisibleColumns)
+            {
+                _displaySequencer.VmliShiftRegister = 1UL << activeColumn;
+            }
+            else if (_graphicsVmli > 0 && _graphicsVmli <= VisibleColumns)
+            {
+                _displaySequencer.VmliShiftRegister = 1UL << (_graphicsVmli - 1);
+            }
         }
 
         /// <summary>
@@ -1900,12 +2028,15 @@ namespace C64Emulator.Core
             }
 
             int cellX = _graphicsVmli;
+            int matrixIndex = NormalizeVideoMatrixIndex(_graphicsVc);
+            // Track the DMLI side independently while keeping the established
+            // VC/VMLI decode path for visible data until the mixer consumes it.
+            _displaySequencer.AdvanceMatrixFetch();
             if ((uint)cellX >= VisibleColumns)
             {
                 return;
             }
 
-            int matrixIndex = NormalizeVideoMatrixIndex(_graphicsVc);
             _videoMatrixScreenCodes[cellX] = ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
             _videoMatrixColorNibbles[cellX] = _bus.ReadColorRam((ushort)matrixIndex);
             _videoMatrixFetched[cellX] = true;
@@ -1938,6 +2069,171 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Reads the matrix latch selected by the display sequencer's VMLI mask.
+        /// </summary>
+        private bool TryReadDisplaySequencerMatrixCell(
+            int fallbackCellX,
+            int fallbackMatrixIndex,
+            out byte screenCode,
+            out byte colorNibble,
+            out bool bitmapMode,
+            out bool extendedColorMode,
+            out bool multicolorMode)
+        {
+            ulong readMask = GetDisplaySequencerReadMask(fallbackCellX);
+            if (readMask == 0)
+            {
+                screenCode = 0;
+                colorNibble = 0;
+                bitmapMode = _displaySourceBitmapMode;
+                extendedColorMode = _displaySourceExtendedColorMode;
+                multicolorMode = _displaySourceMulticolorMode;
+                return false;
+            }
+
+            bool hasValue = false;
+            bool hasMultipleColumns = (readMask & (readMask - 1)) != 0;
+            screenCode = hasMultipleColumns ? (byte)0xFF : (byte)0x00;
+            colorNibble = hasMultipleColumns ? (byte)0x0F : (byte)0x00;
+            bitmapMode = _displaySourceBitmapMode;
+            extendedColorMode = _displaySourceExtendedColorMode;
+            multicolorMode = _displaySourceMulticolorMode;
+
+            for (int column = 0; column < VisibleColumns; column++)
+            {
+                ulong columnMask = 1UL << column;
+                if ((readMask & columnMask) == 0)
+                {
+                    continue;
+                }
+
+                byte candidateScreenCode;
+                byte candidateColorNibble;
+                bool candidateBitmapMode;
+                bool candidateExtendedColorMode;
+                bool candidateMulticolorMode;
+                ReadDisplaySequencerMatrixColumn(
+                    column,
+                    fallbackMatrixIndex,
+                    out candidateScreenCode,
+                    out candidateColorNibble,
+                    out candidateBitmapMode,
+                    out candidateExtendedColorMode,
+                    out candidateMulticolorMode);
+
+                if (!hasValue)
+                {
+                    screenCode = candidateScreenCode;
+                    colorNibble = candidateColorNibble;
+                    bitmapMode = candidateBitmapMode;
+                    extendedColorMode = candidateExtendedColorMode;
+                    multicolorMode = candidateMulticolorMode;
+                    hasValue = true;
+                    continue;
+                }
+
+                screenCode &= candidateScreenCode;
+                colorNibble = (byte)((colorNibble & candidateColorNibble) & 0x0F);
+                bitmapMode &= candidateBitmapMode;
+                extendedColorMode &= candidateExtendedColorMode;
+                multicolorMode &= candidateMulticolorMode;
+            }
+
+            if (hasValue && hasMultipleColumns)
+            {
+                WriteBackDisplaySequencerMixedMatrix(readMask, screenCode, colorNibble, bitmapMode, extendedColorMode, multicolorMode);
+            }
+
+            return hasValue;
+        }
+
+        /// <summary>
+        /// Builds the matrix-read mask used by the current display sequencer access.
+        /// </summary>
+        private ulong GetDisplaySequencerReadMask(int fallbackCellX)
+        {
+            ulong readMask = _displaySequencer.VmliShiftRegister & DisplaySequencerColumnMask;
+            if (readMask != 0)
+            {
+                return readMask;
+            }
+
+            if ((uint)fallbackCellX >= VisibleColumns)
+            {
+                return 0;
+            }
+
+            return 1UL << fallbackCellX;
+        }
+
+        /// <summary>
+        /// Reads one matrix column from the latch or from the current display source.
+        /// </summary>
+        private void ReadDisplaySequencerMatrixColumn(
+            int column,
+            int fallbackMatrixIndex,
+            out byte screenCode,
+            out byte colorNibble,
+            out bool bitmapMode,
+            out bool extendedColorMode,
+            out bool multicolorMode)
+        {
+            if (CanUseLatchedMatrixCell(column))
+            {
+                screenCode = _videoMatrixScreenCodes[column];
+                colorNibble = _videoMatrixColorNibbles[column];
+                bitmapMode = _videoMatrixBitmapModes[column];
+                extendedColorMode = _videoMatrixExtendedColorModes[column];
+                multicolorMode = _videoMatrixMulticolorModes[column];
+                return;
+            }
+
+            int matrixIndex = NormalizeVideoMatrixIndex(_graphicsVcBase + column);
+            if ((uint)column >= VisibleColumns)
+            {
+                matrixIndex = fallbackMatrixIndex;
+            }
+
+            screenCode = ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
+            colorNibble = _bus.ReadColorRam((ushort)matrixIndex);
+            bitmapMode = _displaySourceBitmapMode;
+            extendedColorMode = _displaySourceExtendedColorMode;
+            multicolorMode = _displaySourceMulticolorMode;
+        }
+
+        /// <summary>
+        /// Stores a mixed multi-column sequencer read back into all selected latches.
+        /// </summary>
+        private void WriteBackDisplaySequencerMixedMatrix(
+            ulong readMask,
+            byte screenCode,
+            byte colorNibble,
+            bool bitmapMode,
+            bool extendedColorMode,
+            bool multicolorMode)
+        {
+            if (!_videoMatrixValid)
+            {
+                return;
+            }
+
+            for (int column = 0; column < VisibleColumns; column++)
+            {
+                if ((readMask & (1UL << column)) == 0)
+                {
+                    continue;
+                }
+
+                _videoMatrixScreenCodes[column] = screenCode;
+                _videoMatrixColorNibbles[column] = (byte)(colorNibble & 0x0F);
+                _videoMatrixFetched[column] = true;
+                _videoMatrixBitmapModes[column] = bitmapMode;
+                _videoMatrixExtendedColorModes[column] = extendedColorMode;
+                _videoMatrixMulticolorModes[column] = multicolorMode;
+            }
+        }
+
+        /// <summary>
         /// Returns whether a matrix fetch happens while AEC still leaves the CPU-side bus visible.
         /// </summary>
         private bool IsMatrixFetchBeforeAecTakesBus()
@@ -1959,6 +2255,8 @@ namespace C64Emulator.Core
             }
 
             int cellX = _graphicsVmli;
+            // Invalid c-accesses still move the tracked DMLI side of the sequencer.
+            _displaySequencer.AdvanceMatrixFetch();
             if ((uint)cellX >= VisibleColumns)
             {
                 return;
@@ -2025,34 +2323,53 @@ namespace C64Emulator.Core
 
             if (_graphicsDisplayState)
             {
-                int cellX = _graphicsVmli;
+                int cellX = _displaySequencer.PatternFetchColumn;
                 if ((uint)cellX >= VisibleColumns)
                 {
                     return;
                 }
 
                 int matrixIndex = NormalizeVideoMatrixIndex(_graphicsVc);
+                byte sequencerScreenCode;
+                byte sequencerColorNibble;
+                bool sequencerBitmapMode;
+                bool sequencerExtendedColorMode;
+                bool sequencerMulticolorMode;
+                bool hasSequencerMatrixCell = TryReadDisplaySequencerMatrixCell(
+                    cellX,
+                    matrixIndex,
+                    out sequencerScreenCode,
+                    out sequencerColorNibble,
+                    out sequencerBitmapMode,
+                    out sequencerExtendedColorMode,
+                    out sequencerMulticolorMode);
                 if (_displaySourceBitmapMode)
                 {
                     _videoPatternBytes[cellX] = ReadDisplaySourceBitmapPattern(matrixIndex, pixelRow);
                 }
                 else
                 {
-                    byte screenCode = CanUseLatchedMatrixCell(cellX)
-                        ? _videoMatrixScreenCodes[cellX]
+                    byte screenCode = hasSequencerMatrixCell
+                        ? sequencerScreenCode
                         : ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
 
                     _videoPatternBytes[cellX] = ReadDisplaySourceCharacterPattern(pixelRow, screenCode);
                 }
 
                 _videoPatternFetched[cellX] = true;
-                _videoPatternBitmapModes[cellX] = _displaySourceBitmapMode;
-                _videoPatternExtendedColorModes[cellX] = _displaySourceExtendedColorMode;
-                _videoPatternMulticolorModes[cellX] = _displaySourceMulticolorMode;
+                _videoPatternBitmapModes[cellX] = hasSequencerMatrixCell
+                    ? sequencerBitmapMode
+                    : _displaySourceBitmapMode;
+                _videoPatternExtendedColorModes[cellX] = hasSequencerMatrixCell
+                    ? sequencerExtendedColorMode
+                    : _displaySourceExtendedColorMode;
+                _videoPatternMulticolorModes[cellX] = hasSequencerMatrixCell
+                    ? sequencerMulticolorMode
+                    : _displaySourceMulticolorMode;
                 _videoPatternIdle[cellX] = false;
                 _videoPatternBitmapMode = _displaySourceBitmapMode;
-                _graphicsVc = NormalizeVideoMatrixIndex(_graphicsVc + 1);
-                _graphicsVmli = (_graphicsVmli + 1) & 0x3F;
+                _displaySequencer.AdvancePatternFetch();
+                SynchronizeLegacyDisplaySequencerFields();
                 return;
             }
 
@@ -2148,6 +2465,18 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Mirrors the new sequencer columns into the legacy VC/VMLI diagnostics.
+        /// </summary>
+        private void SynchronizeLegacyDisplaySequencerFields()
+        {
+            _graphicsVmli = _displaySequencer.PatternFetchColumn;
+            _graphicsVc = NormalizeVideoMatrixIndex(
+                _graphicsVcBase +
+                _displaySequencer.VideoCounterOffset +
+                _displaySequencer.PatternFetchColumn);
+        }
+
+        /// <summary>
         /// Updates graphics state for current cycle.
         /// </summary>
         private void UpdateGraphicsStateForCurrentCycle()
@@ -2167,6 +2496,7 @@ namespace C64Emulator.Core
             {
                 _graphicsVc = NormalizeVideoMatrixIndex(_graphicsVcBase);
                 _graphicsVmli = 0;
+                _displaySequencer.RestartFetchColumns();
                 if (badLineCondition)
                 {
                     _isBadLine = true;
@@ -2194,6 +2524,8 @@ namespace C64Emulator.Core
                 _isBadLine = true;
                 _graphicsDisplayState = true;
                 _matrixFetchStartedThisLine = true;
+                _displaySequencer.RestartFetchColumns();
+                SynchronizeLegacyDisplaySequencerFields();
                 _matrixFetchRequestStartCycle = cycle;
                 _matrixFetchStartCycle = cycle;
                 _matrixFetchCpuBlockStartCycle = cycle + 3;
@@ -2218,6 +2550,8 @@ namespace C64Emulator.Core
                     _graphicsRc = (_graphicsRc + 1) & 0x07;
                 }
             }
+
+            _displaySequencer.ClockVmli(cycle, _graphicsDisplayState);
         }
 
         /// <summary>

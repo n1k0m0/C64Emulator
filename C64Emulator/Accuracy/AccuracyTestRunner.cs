@@ -81,6 +81,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC badline state survives later D011 changes", TestVicBadlineStateSurvivesLaterD011Changes);
             failures += RunCase(output, "VIC badline is not created after compare cycle", TestVicBadlineIsNotCreatedAfterCompareCycle);
             failures += RunCase(output, "VIC DMA delay starts late badline from idle", TestVicDmaDelayStartsLateBadlineFromIdle);
+            failures += RunCase(output, "VIC display sequencer tracks VMLI token", TestVicDisplaySequencerTracksVmliToken);
             failures += RunCase(output, "VIC FLI can create consecutive badlines", TestVicFliCanCreateConsecutiveBadlines);
             failures += RunCase(output, "VIC register writes are phased through render registers", TestVicRegisterWritesUseRenderRegisterPhase);
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
@@ -653,6 +654,31 @@ namespace C64Emulator.Core
             vic.PrepareCycle();
             context.Equal("cycle 18 keeps matrix fetch", VicBusAction.MatrixFetch, vic.GetTiming().Phi2Action);
             context.True("cycle 18 blocks CPU after AEC delay", vic.RequiresBusThisCycle());
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+        }
+
+        private static void TestVicDisplaySequencerTracksVmliToken(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            for (int cycle = 0; cycle < (0x33 * C64Model.Pal.CyclesPerLine) + 15; cycle++)
+            {
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            vic.PrepareCycle();
+            VicPipelineState cycle16 = vic.GetPipelineState();
+            context.Equal("cycle 16 VMLI token enters column 0", 0x0000000001UL, cycle16.GraphicsVmliShiftRegister);
+            context.Equal("cycle 16 pattern fetch advanced to column 1", 1, cycle16.GraphicsPatternFetchColumn);
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            vic.PrepareCycle();
+            VicPipelineState cycle17 = vic.GetPipelineState();
+            context.Equal("cycle 17 VMLI token shifts to column 1", 0x0000000002UL, cycle17.GraphicsVmliShiftRegister);
+            context.Equal("cycle 17 pattern fetch advanced to column 2", 2, cycle17.GraphicsPatternFetchColumn);
             FinishPreparedVicCycleWithoutCpu(vic, bus);
         }
 

@@ -35,6 +35,10 @@ namespace C64Emulator.Core
         public int GraphicsVc;
         public int GraphicsVcBase;
         public int GraphicsVmli;
+        public int GraphicsMatrixFetchColumn;
+        public int GraphicsPatternFetchColumn;
+        public int GraphicsVideoCounterOffset;
+        public ulong GraphicsVmliShiftRegister;
         public int GraphicsRc;
         public int GraphicsLineMatrixBaseIndex;
         public int GraphicsLineCellY;
