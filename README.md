@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.6](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.6), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.7](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.7), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
