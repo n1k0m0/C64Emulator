@@ -156,6 +156,14 @@ namespace C64Emulator.Core
         /// </summary>
         public static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles)
         {
+            RunPrgSys(prgPath, startAddress, cycles, logPath, framePath, warmupCycles, string.Empty);
+        }
+
+        /// <summary>
+        /// Runs a PRG from a direct machine-code entry point and writes log plus optional detailed CPU/VIC event trace.
+        /// </summary>
+        public static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles, string traceMode)
+        {
             EnsureDirectory(logPath);
             if (!string.IsNullOrWhiteSpace(framePath))
             {
@@ -169,16 +177,62 @@ namespace C64Emulator.Core
             log.AppendLine("StartAddress=" + startAddress.ToString("X4", CultureInfo.InvariantCulture));
             log.AppendLine("WarmupCycles=" + warmupCycles.ToString(CultureInfo.InvariantCulture));
             log.AppendLine("Cycles=" + cycles.ToString(CultureInfo.InvariantCulture));
+            log.AppendLine("TraceMode=" + (traceMode ?? string.Empty));
 
             try
             {
                 using (var system = new C64System(C64Model.Pal, C64AccuracyOptions.Accuracy))
                 {
                     const int maxVicWriteLogCount = 4096;
+                    const int maxDetailedTraceLogCount = 20000;
                     int vicWriteLogCount = 0;
-                    system.Cpu.TraceEnabled = true;
+                    int detailedTraceLogCount = 0;
+                    bool detailedTrace = string.Equals(traceMode, "detailed", StringComparison.OrdinalIgnoreCase);
+                    system.Cpu.TraceEnabled = false;
                     system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
                     {
+                        if (detailedTrace &&
+                            detailedTraceLogCount < maxDetailedTraceLogCount &&
+                            ShouldLogDetailedPrgTrace(entry))
+                        {
+                            VicTiming timing = system.Timing;
+                            CpuBusAccessPrediction prediction = system.LastCpuBusPrediction;
+                            log.AppendFormat(
+                                "Trace[{0}]=global:{1} raster:{2} cycle:{3} cpuCycle:{4} state:{5}->{6} step:{7}->{8} pc:{9:X4}->{10:X4} op:{11:X2} instr:{12} access:{13} addr:{14:X4} value:{15:X2} ba:{16} aec:{17} cpuCan:{18} vicCan:{19} pred:{20}:{21:X4}:{22:X2} a:{23:X2}->{24:X2} x:{25:X2}->{26:X2} y:{27:X2}->{28:X2} sr:{29:X2}->{30:X2}",
+                                detailedTraceLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.Cycle,
+                                entry.StateBefore,
+                                entry.StateAfter,
+                                entry.StepIndexBefore,
+                                entry.StepIndexAfter,
+                                entry.PcBefore,
+                                entry.PcAfter,
+                                entry.Opcode,
+                                entry.InstructionName ?? string.Empty,
+                                entry.AccessType,
+                                entry.Address,
+                                entry.Value,
+                                system.BaLow,
+                                system.AecLow,
+                                system.CpuCanAccess,
+                                system.VicCanAccess,
+                                prediction.AccessType,
+                                prediction.Address,
+                                prediction.Value,
+                                entry.ABefore,
+                                entry.AAfter,
+                                entry.XBefore,
+                                entry.XAfter,
+                                entry.YBefore,
+                                entry.YAfter,
+                                entry.SrBefore,
+                                entry.SrAfter).AppendLine();
+                            detailedTraceLogCount++;
+                        }
+
                         if (entry.AccessType != CpuTraceAccessType.Write || vicWriteLogCount >= maxVicWriteLogCount)
                         {
                             return;
@@ -209,6 +263,8 @@ namespace C64Emulator.Core
 
                     log.AppendLine("Mount=" + system.MountMedia(prgPath, 8));
                     system.Cpu.StartAt(startAddress);
+                    system.Cpu.TraceEnabled = true;
+                    log.AppendLine("TraceEnabledAtCycle=" + system.Timing.GlobalCycle.ToString(CultureInfo.InvariantCulture));
                     system.RunCycles(Math.Max(0, cycles));
 
                     VicTiming timing = system.Timing;
@@ -216,6 +272,7 @@ namespace C64Emulator.Core
                     log.AppendFormat("FinalVic=raster:{0} cycle:{1} badLine:{2}", timing.RasterLine, timing.CycleInLine, timing.BadLine).AppendLine();
                     log.AppendLine("FinalCpu=" + system.GetCpuDebugInfo());
                     log.AppendLine("FinalMem=" + system.GetMemoryConfigDebugInfo());
+                    log.AppendLine("DetailedTraceEntries=" + detailedTraceLogCount.ToString(CultureInfo.InvariantCulture));
                     string frameHash = ComputeFrameHash(system.FrameBuffer);
                     log.AppendLine("FrameSHA256=" + frameHash);
 
@@ -235,6 +292,50 @@ namespace C64Emulator.Core
             }
 
             File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Returns whether a CPU trace row is useful for PRG/VIC timing diagnosis.
+        /// </summary>
+        private static bool ShouldLogDetailedPrgTrace(CpuTraceEntry entry)
+        {
+            if (entry.StateBefore == CpuState.InterruptSequence ||
+                entry.StateAfter == CpuState.InterruptSequence ||
+                string.Equals(entry.InstructionName, "IRQ", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(entry.InstructionName, "NMI", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (entry.AccessType == CpuTraceAccessType.None)
+            {
+                return false;
+            }
+
+            ushort address = entry.Address;
+            if (address >= 0xD000 && address <= 0xD02E)
+            {
+                return true;
+            }
+
+            if (address >= 0xDC00 && address <= 0xDD0F)
+            {
+                return true;
+            }
+
+            if (address >= 0x0314 && address <= 0x0319)
+            {
+                return true;
+            }
+
+            if (address >= 0xFFFA && address <= 0xFFFF)
+            {
+                return true;
+            }
+
+            return address >= 0x0100 && address <= 0x01FF &&
+                (entry.StateBefore == CpuState.InterruptSequence ||
+                    entry.StateAfter == CpuState.InterruptSequence);
         }
 
         /// <summary>

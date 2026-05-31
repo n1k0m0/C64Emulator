@@ -196,7 +196,8 @@ namespace C64Emulator
                 int warmupCycles = args.Length >= 7 && int.TryParse(args[6], out int parsedWarmupCycles) && parsedWarmupCycles >= 0
                     ? parsedWarmupCycles
                     : 0;
-                RunPrgSys(args[1], startAddress, cycles, logPath, framePath, warmupCycles);
+                string traceMode = args.Length >= 8 ? args[7] : string.Empty;
+                RunPrgSys(args[1], startAddress, cycles, logPath, framePath, warmupCycles, traceMode);
                 return;
             }
 
@@ -552,11 +553,11 @@ namespace C64Emulator
         /// <summary>
         /// Runs a PRG by jumping directly to a machine-code entry point.
         /// </summary>
-        private static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles)
+        private static void RunPrgSys(string prgPath, ushort startAddress, int cycles, string logPath, string framePath, int warmupCycles, string traceMode)
         {
             try
             {
-                DevTraceExporter.RunPrgSys(prgPath, startAddress, cycles, logPath, framePath, warmupCycles);
+                DevTraceExporter.RunPrgSys(prgPath, startAddress, cycles, logPath, framePath, warmupCycles, traceMode);
                 Console.WriteLine("PRG SYS log written: " + Path.GetFullPath(logPath));
                 if (!string.IsNullOrWhiteSpace(framePath))
                 {

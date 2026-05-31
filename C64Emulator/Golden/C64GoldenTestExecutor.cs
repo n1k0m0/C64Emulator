@@ -30,6 +30,17 @@ namespace C64Emulator.Core
         private const int CycleChunkSize = 1000000;
 
         /// <summary>
+        /// Describes an optional CPU write that can stop a golden run.
+        /// </summary>
+        private sealed class StopOnWriteCondition
+        {
+            public ushort Address;
+            public bool HasValue;
+            public byte Value;
+            public long AfterCycles;
+        }
+
+        /// <summary>
         /// Runs a test and returns observed results.
         /// </summary>
         public GoldenTestResult Execute(GoldenTestDefinition test, GoldenRunContext context)
@@ -65,9 +76,9 @@ namespace C64Emulator.Core
 
                 EnqueueOptionalCommand(system, test);
                 StartOptionalAddress(system, test);
-                RunMachine(system, test.MaxCycles);
+                string exitReason = RunMachineForTest(system, test, result);
                 FillObservedState(system, test, context, result);
-                result.ExitReason = "cycles";
+                result.ExitReason = exitReason;
                 return result;
             }
         }
@@ -150,11 +161,26 @@ namespace C64Emulator.Core
                 return;
             }
 
-            ushort startAddress = ParseAddress(startAddressText);
+            ushort startAddress = ParseAddress(startAddressText, "startAddress");
             system.Cpu.StartAt(startAddress);
         }
 
         private static ushort ParseAddress(string value)
+        {
+            return ParseAddress(value, "address");
+        }
+
+        private static ushort ParseAddress(string value, string argumentName)
+        {
+            return (ushort)ParseIntegralValue(value, argumentName, 0xFFFF);
+        }
+
+        private static byte ParseByteValue(string value, string argumentName)
+        {
+            return (byte)ParseIntegralValue(value, argumentName, 0xFF);
+        }
+
+        private static int ParseIntegralValue(string value, string argumentName, int maximum)
         {
             string text = (value ?? string.Empty).Trim();
             NumberStyles style = NumberStyles.Integer;
@@ -170,12 +196,123 @@ namespace C64Emulator.Core
             }
 
             int parsed = int.Parse(text, style, CultureInfo.InvariantCulture);
-            if (parsed < 0 || parsed > 0xFFFF)
+            if (parsed < 0 || parsed > maximum)
             {
-                throw new ArgumentOutOfRangeException("startAddress", "Start address must be in the 16-bit C64 address range.");
+                throw new ArgumentOutOfRangeException(argumentName, "Value is outside the supported range.");
             }
 
-            return (ushort)parsed;
+            return parsed;
+        }
+
+        private static StopOnWriteCondition ResolveStopOnWriteCondition(GoldenTestDefinition test)
+        {
+            string addressText = GetArgument(test, "stopOnWriteAddress");
+            if (string.IsNullOrWhiteSpace(addressText))
+            {
+                return null;
+            }
+
+            var condition = new StopOnWriteCondition();
+            condition.Address = ParseAddress(addressText, "stopOnWriteAddress");
+
+            string valueText = GetArgument(test, "stopOnWriteValue");
+            condition.HasValue = !string.IsNullOrWhiteSpace(valueText);
+            if (condition.HasValue)
+            {
+                condition.Value = ParseByteValue(valueText, "stopOnWriteValue");
+            }
+
+            condition.AfterCycles = GetLongArgument(test, "stopAfterWriteCycles", 0);
+            if (condition.AfterCycles < 0)
+            {
+                throw new ArgumentOutOfRangeException("stopAfterWriteCycles", "Stop delay must not be negative.");
+            }
+
+            return condition;
+        }
+
+        private static string RunMachineForTest(C64System system, GoldenTestDefinition test, GoldenTestResult result)
+        {
+            StopOnWriteCondition condition = ResolveStopOnWriteCondition(test);
+            if (condition == null)
+            {
+                RunMachine(system, test.MaxCycles);
+                return "cycles";
+            }
+
+            return RunMachineUntilWrite(system, test, result, condition);
+        }
+
+        private static string RunMachineUntilWrite(C64System system, GoldenTestDefinition test, GoldenTestResult result, StopOnWriteCondition condition)
+        {
+            bool previousTraceEnabled = system.Cpu.TraceEnabled;
+            long matchedCycle = -1;
+            int matchedRasterLine = -1;
+            int matchedCycleInLine = -1;
+            ushort matchedPc = 0;
+            byte matchedValue = 0;
+
+            Action<CpuTraceEntry> traceHandler = delegate(CpuTraceEntry entry)
+            {
+                if (matchedCycle >= 0 ||
+                    entry.AccessType != CpuTraceAccessType.Write ||
+                    entry.Address != condition.Address)
+                {
+                    return;
+                }
+
+                if (condition.HasValue && entry.Value != condition.Value)
+                {
+                    return;
+                }
+
+                VicTiming timing = system.Timing;
+                matchedCycle = timing.GlobalCycle;
+                matchedRasterLine = timing.RasterLine;
+                matchedCycleInLine = timing.CycleInLine;
+                matchedPc = entry.LastOpcodeAddress;
+                matchedValue = entry.Value;
+            };
+
+            long remaining = Math.Max(0, test.MaxCycles);
+            system.Cpu.TraceEmitted += traceHandler;
+            system.Cpu.TraceEnabled = true;
+            try
+            {
+                while (remaining > 0 && matchedCycle < 0)
+                {
+                    system.RunCycles(1);
+                    remaining--;
+                }
+
+                if (matchedCycle >= 0)
+                {
+                    long afterCycles = Math.Min(condition.AfterCycles, remaining);
+                    if (afterCycles > 0)
+                    {
+                        RunMachine(system, afterCycles);
+                    }
+
+                    result.ActualProperties["stopOnWriteMatched"] = "true";
+                    result.ActualProperties["stopOnWriteAddress"] = condition.Address.ToString("X4", CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopOnWriteValue"] = matchedValue.ToString("X2", CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopOnWritePc"] = matchedPc.ToString("X4", CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopOnWriteCycle"] = matchedCycle.ToString(CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopOnWriteRasterLine"] = matchedRasterLine.ToString(CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopOnWriteCycleInLine"] = matchedCycleInLine.ToString(CultureInfo.InvariantCulture);
+                    result.ActualProperties["stopAfterWriteCycles"] = afterCycles.ToString(CultureInfo.InvariantCulture);
+                    return afterCycles == condition.AfterCycles ? "stopOnWrite" : "stopOnWriteMaxCycles";
+                }
+
+                result.ActualProperties["stopOnWriteMatched"] = "false";
+                result.ActualProperties["stopOnWriteAddress"] = condition.Address.ToString("X4", CultureInfo.InvariantCulture);
+                return "cycles";
+            }
+            finally
+            {
+                system.Cpu.TraceEmitted -= traceHandler;
+                system.Cpu.TraceEnabled = previousTraceEnabled;
+            }
         }
 
         private static void RunMachine(C64System system, long cycles)

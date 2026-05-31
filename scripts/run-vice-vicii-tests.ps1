@@ -46,7 +46,11 @@ param(
 
     [switch]$Build,
 
-    [switch]$NoDiff
+    [switch]$NoDiff,
+
+    [switch]$StopOnD7FF,
+
+    [long]$StopAfterWriteCycles = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -166,7 +170,9 @@ function Invoke-GoldenTest {
         [object]$Candidate,
         [string]$TestOutputDirectory,
         [long]$Cycles,
-        [long]$Warmup
+        [long]$Warmup,
+        [switch]$StopOnD7FF,
+        [long]$StopAfterWriteCycles
     )
 
     New-Item -ItemType Directory -Force -Path $TestOutputDirectory | Out-Null
@@ -195,6 +201,12 @@ function Invoke-GoldenTest {
                 }
             }
         )
+    }
+
+    if ($StopOnD7FF) {
+        $manifest.tests[0].arguments["stopOnWriteAddress"] = '$D7FF'
+        $manifest.tests[0].arguments["stopOnWriteValue"] = "0"
+        $manifest.tests[0].arguments["stopAfterWriteCycles"] = $StopAfterWriteCycles.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     }
 
     if (!$UseBasicRun -and $null -ne $Candidate.SysAddress) {
@@ -269,7 +281,7 @@ for ($index = 0; $index -lt $total; $index++) {
     $reportPath = ""
 
     try {
-        $framePath = Invoke-GoldenTest -ExePath $exePath -Candidate $candidate -TestOutputDirectory $testOutputPath -Cycles $MaxCycles -Warmup $WarmupCycles
+        $framePath = Invoke-GoldenTest -ExePath $exePath -Candidate $candidate -TestOutputDirectory $testOutputPath -Cycles $MaxCycles -Warmup $WarmupCycles -StopOnD7FF:$StopOnD7FF -StopAfterWriteCycles $StopAfterWriteCycles
 
         $compareArguments = @(
             "-NoProfile",

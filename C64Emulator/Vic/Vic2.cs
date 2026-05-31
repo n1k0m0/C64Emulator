@@ -48,6 +48,7 @@ namespace C64Emulator.Core
         private const int NarrowSpriteDisplayLeft = 31;
         private const int NarrowSpriteDisplayTop = 55;
         private const int SpriteSameLineDisplayX = 0x164;
+        private const int RasterIrqCompareClearLastCycle = 55;
         private const int SpriteVisibleOffsetX = StandardSpriteDisplayLeft - BorderLeft;
         private const int SpriteVisibleOffsetY = StandardSpriteDisplayTop - BorderTop;
         private const int SpriteRasterStartOffsetY = 1;
@@ -137,7 +138,11 @@ namespace C64Emulator.Core
         private bool _cpuBusBlockedThisCycle;
         private bool _isBadLine;
         private bool _badLineConditionThisCycle;
+#pragma warning disable 0414
+        // Kept for savestate compatibility with builds that serialized a per-line guard.
         private bool _rasterIrqTriggeredThisLine;
+#pragma warning restore 0414
+        private bool _rasterIrqCompareState;
         private bool _videoMatrixValid;
         private int _videoMatrixCellY;
         private bool _videoMatrixBitmapMode;
@@ -570,6 +575,7 @@ namespace C64Emulator.Core
             _cpuBusBlockedThisCycle = false;
             _isBadLine = false;
             _rasterIrqTriggeredThisLine = false;
+            _rasterIrqCompareState = false;
             _videoMatrixValid = false;
             _videoMatrixCellY = -1;
             _videoMatrixBitmapMode = false;
@@ -1293,12 +1299,13 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateRasterIrq()
         {
-            if (!_rasterIrqTriggeredThisLine && _rasterLine == _rasterIrqLine)
+            bool compareState = _rasterLine == _rasterIrqLine;
+            if (compareState && !_rasterIrqCompareState)
             {
-                _irqFlags |= 0x01;
-                _registers[0x19] = _irqFlags;
-                _rasterIrqTriggeredThisLine = true;
+                SetRasterIrqFlag();
             }
+
+            _rasterIrqCompareState = compareState;
         }
 
         /// <summary>
@@ -1311,7 +1318,32 @@ namespace C64Emulator.Core
                 return;
             }
 
-            UpdateRasterIrq();
+            bool compareState = _rasterLine == _rasterIrqLine;
+            if (compareState)
+            {
+                if (!_rasterIrqCompareState)
+                {
+                    SetRasterIrqFlag();
+                }
+
+                _rasterIrqCompareState = true;
+                return;
+            }
+
+            if (_cycleInLine <= RasterIrqCompareClearLastCycle)
+            {
+                _rasterIrqCompareState = false;
+            }
+        }
+
+        /// <summary>
+        /// Raises the raster IRQ flag and mirrors it into D019.
+        /// </summary>
+        private void SetRasterIrqFlag()
+        {
+            _irqFlags |= 0x01;
+            _registers[0x19] = _irqFlags;
+            _rasterIrqTriggeredThisLine = true;
         }
 
         /// <summary>
@@ -2638,11 +2670,10 @@ namespace C64Emulator.Core
         /// </summary>
         private void TriggerRasterIrqIfMatched()
         {
-            if (!_rasterIrqTriggeredThisLine && _rasterLine == _rasterIrqLine)
+            if (!_rasterIrqCompareState && _rasterLine == _rasterIrqLine)
             {
-                _irqFlags |= 0x01;
-                _registers[0x19] = _irqFlags;
-                _rasterIrqTriggeredThisLine = true;
+                SetRasterIrqFlag();
+                _rasterIrqCompareState = true;
             }
         }
 
