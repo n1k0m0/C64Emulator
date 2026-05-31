@@ -408,6 +408,41 @@ namespace C64Emulator.Core
             using (var system = new C64System(C64Model.Pal))
             {
                 SaveStateFile.Load(savePath, system);
+                bool traceVicWrites = string.Equals(
+                    Environment.GetEnvironmentVariable("C64_TRACE_RENDER_SAVESTATE"),
+                    "1",
+                    StringComparison.Ordinal);
+                int vicWriteLogCount = 0;
+                if (traceVicWrites)
+                {
+                    system.Cpu.TraceEnabled = true;
+                    system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
+                    {
+                        if (entry.AccessType != CpuTraceAccessType.Write ||
+                            entry.Address < 0xD000 ||
+                            entry.Address > 0xD03F ||
+                            vicWriteLogCount >= 4096)
+                        {
+                            return;
+                        }
+
+                        VicTiming writeTiming = system.Timing;
+                        log.AppendFormat(
+                            CultureInfo.InvariantCulture,
+                            "VicWrite[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} addr:{5:X4} value:{6:X2}",
+                            vicWriteLogCount,
+                            writeTiming.GlobalCycle,
+                            writeTiming.RasterLine,
+                            writeTiming.CycleInLine,
+                            entry.LastOpcodeAddress,
+                            entry.Address,
+                            entry.Value);
+                        AppendVicPipelineSummary(log, system);
+                        log.AppendLine();
+                        vicWriteLogCount++;
+                    };
+                }
+
                 int safeFrames = Math.Max(0, frames);
                 int cycles = C64Model.Pal.RasterLines * C64Model.Pal.CyclesPerLine * safeFrames;
                 system.RunCycles(cycles);
@@ -421,11 +456,11 @@ namespace C64Emulator.Core
                 log.AppendLine("FinalSid=" + system.GetSidDebugInfo());
                 log.AppendLine("FinalIec=" + system.GetIecDebugInfo());
                 log.AppendLine("FinalDrive8=" + system.GetDriveDebugInfo(8));
-                log.AppendLine("FrameSHA256=" + ComputeFrameHash(system.FrameBuffer));
+                log.AppendLine("FrameSHA256=" + ComputePixelHash(system.FrameBuffer.Width, system.FrameBuffer.Height, system.FrameBuffer.CompletedPixels));
 
                 if (!string.IsNullOrWhiteSpace(framePath))
                 {
-                    WriteFrameBufferPpm(system.FrameBuffer, framePath);
+                    WritePixelsPpm(system.FrameBuffer.Width, system.FrameBuffer.Height, system.FrameBuffer.CompletedPixels, framePath);
                     log.AppendLine("FramePath=" + Path.GetFullPath(framePath));
                 }
             }
@@ -438,14 +473,22 @@ namespace C64Emulator.Core
         /// </summary>
         public static void WriteFrameBufferPpm(FrameBuffer frameBuffer, string path)
         {
+            WritePixelsPpm(frameBuffer.Width, frameBuffer.Height, frameBuffer.Pixels, path);
+        }
+
+        /// <summary>
+        /// Writes ARGB pixels as binary PPM (P6).
+        /// </summary>
+        private static void WritePixelsPpm(int width, int height, uint[] pixels, string path)
+        {
             EnsureDirectory(path);
             using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
             {
-                byte[] header = Encoding.ASCII.GetBytes(string.Format(CultureInfo.InvariantCulture, "P6\n{0} {1}\n255\n", frameBuffer.Width, frameBuffer.Height));
+                byte[] header = Encoding.ASCII.GetBytes(string.Format(CultureInfo.InvariantCulture, "P6\n{0} {1}\n255\n", width, height));
                 stream.Write(header, 0, header.Length);
-                for (int index = 0; index < frameBuffer.Pixels.Length; index++)
+                for (int index = 0; index < pixels.Length; index++)
                 {
-                    uint pixel = frameBuffer.Pixels[index];
+                    uint pixel = pixels[index];
                     stream.WriteByte((byte)((pixel >> 16) & 0xFF));
                     stream.WriteByte((byte)((pixel >> 8) & 0xFF));
                     stream.WriteByte((byte)(pixel & 0xFF));
@@ -458,15 +501,23 @@ namespace C64Emulator.Core
         /// </summary>
         public static string ComputeFrameHash(FrameBuffer frameBuffer)
         {
+            return ComputePixelHash(frameBuffer.Width, frameBuffer.Height, frameBuffer.Pixels);
+        }
+
+        /// <summary>
+        /// Computes a stable SHA-256 hash over framebuffer dimensions and the given pixels.
+        /// </summary>
+        private static string ComputePixelHash(int width, int height, uint[] pixels)
+        {
             using (SHA256 sha256 = SHA256.Create())
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream))
             {
-                writer.Write(frameBuffer.Width);
-                writer.Write(frameBuffer.Height);
-                for (int index = 0; index < frameBuffer.Pixels.Length; index++)
+                writer.Write(width);
+                writer.Write(height);
+                for (int index = 0; index < pixels.Length; index++)
                 {
-                    writer.Write(frameBuffer.Pixels[index]);
+                    writer.Write(pixels[index]);
                 }
 
                 writer.Flush();

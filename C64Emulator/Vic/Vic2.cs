@@ -569,7 +569,41 @@ namespace C64Emulator.Core
                     break;
             }
 
+            BackfillCroppedLeftBorderColor(address, _registers[address]);
             QueuePixelRegisterWrite(address, _registers[address]);
+        }
+
+        /// <summary>
+        /// Backfills early border-color writes that land inside the host-visible left crop.
+        /// </summary>
+        private void BackfillCroppedLeftBorderColor(ushort address, byte value)
+        {
+            if (address != 0x20 || !_cyclePrepared)
+            {
+                return;
+            }
+
+            int beamX = (_cycleInLine * PixelsPerCycle) + CpuWriteVisibleDot;
+            int frameXLimit = beamX - CropLeft;
+            int frameY = _rasterLine - CropTop;
+            if (frameXLimit <= 0 ||
+                frameXLimit > GetCurrentBorderLeftFrame() ||
+                (uint)frameY >= (uint)_model.VisibleHeight)
+            {
+                return;
+            }
+
+            uint oldColor = Palette[_pixelRegisters[0x20] & 0x0F];
+            uint color = Palette[value & 0x0F];
+            int rowOffset = frameY * _frameBuffer.Width;
+            for (int frameX = 0; frameX < frameXLimit; frameX++)
+            {
+                int pixelIndex = rowOffset + frameX;
+                if (_frameBuffer.Pixels[pixelIndex] == oldColor)
+                {
+                    _frameBuffer.SetPixelUnchecked(frameX, frameY, color);
+                }
+            }
         }
 
         /// <summary>
