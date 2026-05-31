@@ -222,6 +222,7 @@ namespace C64Emulator.Core
         private bool _cpuBusBlockedThisCycle;
         private bool _isBadLine;
         private bool _badLineConditionThisCycle;
+        private int _badLineConditionStartCycle;
 #pragma warning disable 0414
         // Kept for savestate compatibility with builds that serialized a per-line guard.
         private bool _rasterIrqTriggeredThisLine;
@@ -235,6 +236,9 @@ namespace C64Emulator.Core
         private int _videoPatternPixelRow;
         private bool _videoPatternBitmapMode;
         private bool _graphicsDisplayState;
+        private bool _pendingGraphicsDisplayState;
+        private int _pendingGraphicsDisplayStateCycle;
+        private int _pendingGraphicsDisplayStateVideoCounterOffset;
         private int _graphicsVc;
         private int _graphicsVcBase;
         private int _graphicsVmli;
@@ -375,6 +379,7 @@ namespace C64Emulator.Core
             ApplyGraphicsBusOverrides();
             _cpuBusBlockedThisCycle = _currentBusSlot.BlocksCpu;
             ExecuteFetchAction(_currentBusSlot.Phi1Action);
+            ApplyPendingGraphicsDisplayStateAfterPhi1();
             UpdateEarlySpriteDmaEndForCurrentCycle();
         }
 
@@ -595,6 +600,10 @@ namespace C64Emulator.Core
             return new VicPipelineState
             {
                 GraphicsDisplayState = _graphicsDisplayState,
+                PendingGraphicsDisplayState = _pendingGraphicsDisplayState,
+                PendingGraphicsDisplayStateCycle = _pendingGraphicsDisplayStateCycle,
+                BadLineConditionThisCycle = _badLineConditionThisCycle,
+                BadLineConditionStartCycle = _badLineConditionStartCycle,
                 MatrixFetchStartedThisLine = _matrixFetchStartedThisLine,
                 MatrixFetchRequestStartCycle = _matrixFetchRequestStartCycle,
                 MatrixFetchStartCycle = _matrixFetchStartCycle,
@@ -664,6 +673,7 @@ namespace C64Emulator.Core
             _lightPenY = 0;
             _cpuBusBlockedThisCycle = false;
             _isBadLine = false;
+            _badLineConditionStartCycle = CyclesPerLine + 1;
             _rasterIrqTriggeredThisLine = false;
             _rasterIrqCompareState = false;
             _videoMatrixValid = false;
@@ -674,6 +684,9 @@ namespace C64Emulator.Core
             _videoPatternPixelRow = -1;
             _videoPatternBitmapMode = false;
             _graphicsDisplayState = false;
+            _pendingGraphicsDisplayState = false;
+            _pendingGraphicsDisplayStateCycle = 64;
+            _pendingGraphicsDisplayStateVideoCounterOffset = 0;
             _graphicsVc = 0;
             _graphicsVcBase = 0;
             _graphicsVmli = 0;
@@ -1761,6 +1774,7 @@ namespace C64Emulator.Core
             UpdateVerticalBorderState();
             _isBadLine = false;
             _badLineConditionThisCycle = false;
+            _badLineConditionStartCycle = CyclesPerLine + 1;
             _matrixFetchStartedThisLine = false;
             _matrixFetchRequestStartCycle = CyclesPerLine + 1;
             _matrixFetchStartCycle = CyclesPerLine + 1;
@@ -2482,6 +2496,7 @@ namespace C64Emulator.Core
         private void UpdateGraphicsStateForCurrentCycle()
         {
             int cycle = _cycleInLine + 1;
+            bool clockDisplaySequencer = true;
 
             if (_rasterLine == DenLatchRasterLine && (_registers[0x11] & 0x10) != 0)
             {
@@ -2491,6 +2506,10 @@ namespace C64Emulator.Core
 
             bool badLineCondition = GetBadLineConditionForCurrentCycle();
             _badLineConditionThisCycle = badLineCondition;
+            if (badLineCondition && _badLineConditionStartCycle > CyclesPerLine)
+            {
+                _badLineConditionStartCycle = cycle;
+            }
 
             if (cycle == 14)
             {
@@ -2505,7 +2524,7 @@ namespace C64Emulator.Core
                     _matrixFetchStartedThisLine = true;
                     _matrixFetchRequestStartCycle = 12;
                     _matrixFetchStartCycle = 15;
-                    _matrixFetchCpuBlockStartCycle = 15;
+                    _matrixFetchCpuBlockStartCycle = GetInitialBadLineCpuBlockStartCycle();
                 }
 
                 UpdateGraphicsLineAddressState();
@@ -2522,14 +2541,15 @@ namespace C64Emulator.Core
                 cycle <= 53)
             {
                 _isBadLine = true;
-                _graphicsDisplayState = true;
+                _pendingGraphicsDisplayState = true;
+                _pendingGraphicsDisplayStateCycle = cycle;
+                _pendingGraphicsDisplayStateVideoCounterOffset = 0;
                 _matrixFetchStartedThisLine = true;
-                _displaySequencer.RestartFetchColumns();
-                SynchronizeLegacyDisplaySequencerFields();
                 _matrixFetchRequestStartCycle = cycle;
                 _matrixFetchStartCycle = cycle;
                 _matrixFetchCpuBlockStartCycle = cycle + 3;
                 BeginVideoMatrixFetchSequence();
+                clockDisplaySequencer = false;
             }
 
             if (cycle == 58)
@@ -2551,7 +2571,40 @@ namespace C64Emulator.Core
                 }
             }
 
+            if (clockDisplaySequencer)
+            {
+                _displaySequencer.ClockVmli(cycle, _graphicsDisplayState);
+            }
+        }
+
+        /// <summary>
+        /// Applies a late display-state switch after the current Phi1 graphics fetch.
+        /// </summary>
+        private void ApplyPendingGraphicsDisplayStateAfterPhi1()
+        {
+            if (!_pendingGraphicsDisplayState)
+            {
+                return;
+            }
+
+            int cycle = _pendingGraphicsDisplayStateCycle;
+            _graphicsDisplayState = true;
+            _displaySequencer.RestartFetchColumns(_pendingGraphicsDisplayStateVideoCounterOffset);
+            SynchronizeLegacyDisplaySequencerFields();
             _displaySequencer.ClockVmli(cycle, _graphicsDisplayState);
+            _pendingGraphicsDisplayState = false;
+            _pendingGraphicsDisplayStateCycle = 64;
+            _pendingGraphicsDisplayStateVideoCounterOffset = 0;
+        }
+
+        /// <summary>
+        /// Returns the earliest cycle where the badline BA request can begin for this line.
+        /// </summary>
+        private int GetInitialBadLineCpuBlockStartCycle()
+        {
+            return _badLineConditionStartCycle <= 13
+                ? 15
+                : _badLineConditionStartCycle + 3;
         }
 
         /// <summary>

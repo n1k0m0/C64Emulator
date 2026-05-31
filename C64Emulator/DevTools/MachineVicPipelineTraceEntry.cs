@@ -22,6 +22,14 @@ namespace C64Emulator.Core
     {
         public bool GraphicsDisplayState { get; set; }
 
+        public bool PendingGraphicsDisplayState { get; set; }
+
+        public int PendingGraphicsDisplayStateCycle { get; set; }
+
+        public bool BadLineConditionThisCycle { get; set; }
+
+        public int BadLineConditionStartCycle { get; set; }
+
         public bool MatrixFetchStartedThisLine { get; set; }
 
         public int MatrixFetchRequestStartCycle { get; set; }

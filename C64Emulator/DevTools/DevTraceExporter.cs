@@ -229,7 +229,9 @@ namespace C64Emulator.Core
                                 entry.YBefore,
                                 entry.YAfter,
                                 entry.SrBefore,
-                                entry.SrAfter).AppendLine();
+                                entry.SrAfter);
+                            AppendVicPipelineSummary(log, system);
+                            log.AppendLine();
                             detailedTraceLogCount++;
                         }
 
@@ -252,7 +254,9 @@ namespace C64Emulator.Core
                             writeTiming.CycleInLine,
                             entry.LastOpcodeAddress,
                             entry.Address,
-                            entry.Value).AppendLine();
+                            entry.Value);
+                        AppendVicPipelineSummary(log, system);
+                        log.AppendLine();
                         vicWriteLogCount++;
                     };
 
@@ -336,6 +340,52 @@ namespace C64Emulator.Core
             return address >= 0x0100 && address <= 0x01FF &&
                 (entry.StateBefore == CpuState.InterruptSequence ||
                     entry.StateAfter == CpuState.InterruptSequence);
+        }
+
+        /// <summary>
+        /// Appends the compact VIC-II graphics pipeline state used by PRG timing traces.
+        /// </summary>
+        private static void AppendVicPipelineSummary(StringBuilder log, C64System system)
+        {
+            VicPipelineState state = system.VicPipeline;
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                " vicDisplay:{0} badCond:{1}:{2} vc:{3:X3} vcBase:{4:X3} rc:{5} vmli:{6} mcol:{7} pcol:{8} vco:{9} mask:{10:X10}",
+                state.GraphicsDisplayState ? 1 : 0,
+                state.BadLineConditionThisCycle ? 1 : 0,
+                state.BadLineConditionStartCycle,
+                state.GraphicsVc,
+                state.GraphicsVcBase,
+                state.GraphicsRc,
+                state.GraphicsVmli,
+                state.GraphicsMatrixFetchColumn,
+                state.GraphicsPatternFetchColumn,
+                state.GraphicsVideoCounterOffset,
+                state.GraphicsVmliShiftRegister);
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                " matrixFetch:{0}:{1}/{2}/{3} line:{4}/{5} matrixValid:{6}:{7} patternValid:{8}:{9}/{10} modes:{11}{12}{13}",
+                state.MatrixFetchStartedThisLine ? 1 : 0,
+                state.MatrixFetchRequestStartCycle,
+                state.MatrixFetchStartCycle,
+                state.MatrixFetchCpuBlockStartCycle,
+                state.GraphicsLineCellY,
+                state.GraphicsLinePixelRow,
+                state.VideoMatrixValid ? 1 : 0,
+                state.VideoMatrixCellY,
+                state.VideoPatternValid ? 1 : 0,
+                state.VideoPatternCellY,
+                state.VideoPatternPixelRow,
+                state.LineBitmapMode ? "B" : "b",
+                state.LineExtendedColorMode ? "E" : "e",
+                state.LineMulticolorMode ? "M" : "m");
+            if (state.PendingGraphicsDisplayState)
+            {
+                log.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    " pendingDisplay:{0}",
+                    state.PendingGraphicsDisplayStateCycle);
+            }
         }
 
         /// <summary>
@@ -533,6 +583,10 @@ namespace C64Emulator.Core
             return new MachineVicPipelineTraceEntry
             {
                 GraphicsDisplayState = state.GraphicsDisplayState,
+                PendingGraphicsDisplayState = state.PendingGraphicsDisplayState,
+                PendingGraphicsDisplayStateCycle = state.PendingGraphicsDisplayStateCycle,
+                BadLineConditionThisCycle = state.BadLineConditionThisCycle,
+                BadLineConditionStartCycle = state.BadLineConditionStartCycle,
                 MatrixFetchStartedThisLine = state.MatrixFetchStartedThisLine,
                 MatrixFetchRequestStartCycle = state.MatrixFetchRequestStartCycle,
                 MatrixFetchStartCycle = state.MatrixFetchStartCycle,

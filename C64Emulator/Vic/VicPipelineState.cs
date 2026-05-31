@@ -21,6 +21,10 @@ namespace C64Emulator.Core
     public struct VicPipelineState
     {
         public bool GraphicsDisplayState;
+        public bool PendingGraphicsDisplayState;
+        public int PendingGraphicsDisplayStateCycle;
+        public bool BadLineConditionThisCycle;
+        public int BadLineConditionStartCycle;
         public bool MatrixFetchStartedThisLine;
         public int MatrixFetchRequestStartCycle;
         public int MatrixFetchStartCycle;
