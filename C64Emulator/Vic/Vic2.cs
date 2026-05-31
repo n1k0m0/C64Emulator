@@ -1179,6 +1179,14 @@ namespace C64Emulator.Core
                 return false;
             }
 
+            // D015/D017/D01D are visible to the sprite output stage at pixel time.
+            // Keep position and DMA line data latched, but let split effects use
+            // the render-phased register copy.
+            if (((_pixelRegisters[0x15] >> spriteIndex) & 0x01) == 0)
+            {
+                return false;
+            }
+
             int spriteX = _spriteLineX[spriteIndex];
             int spriteY = _spriteLineY[spriteIndex];
 
@@ -1188,8 +1196,8 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            bool xExpanded = _spriteLineXExpanded[spriteIndex];
-            bool yExpanded = _spriteLineYExpanded[spriteIndex];
+            bool xExpanded = ((_pixelRegisters[0x1D] >> spriteIndex) & 0x01) != 0;
+            bool yExpanded = ((_pixelRegisters[0x17] >> spriteIndex) & 0x01) != 0;
             int localY = frameY - GetSpriteFrameTop(spriteY);
             if (localY < 0)
             {
@@ -2462,7 +2470,7 @@ namespace C64Emulator.Core
         private void UpdateLatchedSpriteLineState(int spriteIndex, bool preserveCurrentLine)
         {
             int latchedY = _spriteLatchedY[spriteIndex];
-            bool latchedYExpanded = _spriteLatchedYExpanded[spriteIndex];
+            bool latchedYExpanded = IsSpriteYExpansionEnabled(spriteIndex);
             int spriteStart = GetSpriteVisibleStartRasterLine(latchedY, _spriteLatchedX[spriteIndex]);
             int visibleLines = latchedYExpanded ? 42 : 21;
             int visibleDelta = _rasterLine - spriteStart;
@@ -2514,7 +2522,7 @@ namespace C64Emulator.Core
             _spriteLineX[spriteIndex] = _spriteLatchedX[spriteIndex];
             _spriteLineY[spriteIndex] = _spriteLatchedY[spriteIndex];
             _spriteLineXExpanded[spriteIndex] = _spriteLatchedXExpanded[spriteIndex];
-            _spriteLineYExpanded[spriteIndex] = _spriteLatchedYExpanded[spriteIndex];
+            _spriteLineYExpanded[spriteIndex] = IsSpriteYExpansionEnabled(spriteIndex);
             _spriteLineMulticolor[spriteIndex] = _spriteLatchedMulticolor[spriteIndex];
             _spriteLineColor[spriteIndex] = _spriteLatchedColor[spriteIndex];
             CaptureSpriteLineData(spriteIndex);
@@ -2573,6 +2581,14 @@ namespace C64Emulator.Core
             }
 
             return row;
+        }
+
+        /// <summary>
+        /// Returns whether the current VIC register state enables Y expansion for a sprite.
+        /// </summary>
+        private bool IsSpriteYExpansionEnabled(int spriteIndex)
+        {
+            return ((_registers[0x17] >> spriteIndex) & 0x01) != 0;
         }
 
         /// <summary>
