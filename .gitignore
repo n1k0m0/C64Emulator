@@ -28,6 +28,7 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 GTK3VICE-*/
+vice_VICII_tests/
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt

@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.5](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.5), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.6](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.6), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -235,7 +235,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.5`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.6`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -285,6 +285,13 @@ C64Emulator\bin\x64\Release\C64Emulator.exe --benchmark 2000000 C64Emulator\bin\
 ```
 
 `--trace-machine` writes structured JSONL samples for cycle-accuracy work, including CPU bus accesses, VIC pipeline state, BA/AEC state, and 1541 scheduler state. `--golden-run` executes an external manifest and writes JSON plus JUnit XML results. `--golden-accept` refreshes manifest expectations from an accepted run, and `--golden-compare` compares two result JSON files. The current cycle-accuracy implementation worklog is in `docs/cycle-accuracy-worklog.md`; the baseline workflow is described in `docs/golden-reference-workflow.md`.
+
+For local VIC-II accuracy work, the helper scripts in `scripts/` can run and compare imported VICE VIC-II reference tests. Keep the upstream `vice_VICII_tests` directory local; it is intentionally ignored by git.
+
+```powershell
+.\scripts\run-vice-vicii-tests.ps1 -IncludeDirectories border,D011Test,dentest,greydot -NoDiff
+.\scripts\compare-vicii-reference.ps1 -ReferenceFrame path\to\reference.png -EmulatorFrame path\to\frame.ppm -AutoAlign
+```
 
 For a single Phase 1 smoke run after a Release build:
 

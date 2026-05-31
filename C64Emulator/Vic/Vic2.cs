@@ -760,7 +760,7 @@ namespace C64Emulator.Core
 
             int sourceFrameX = frameX + GraphicsOutputDelayPixels;
             bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY) &&
-                IsGraphicsSourceActiveForCurrentCycle();
+                IsGraphicsSourceActiveForCurrentCycle(sourceFrameX - activeDisplayLeft);
             PixelResult graphicsPixel = sourceGraphicsVisible
                 ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - activeDisplayTop)
                 : CreateBackgroundPixel(GetBackgroundColor(0));
@@ -796,9 +796,31 @@ namespace C64Emulator.Core
         /// <summary>
         /// Returns whether the current cycle should feed visible graphics into the output delay.
         /// </summary>
-        private bool IsGraphicsSourceActiveForCurrentCycle()
+        private bool IsGraphicsSourceActiveForCurrentCycle(int displayX)
         {
-            return _graphicsDisplayState || ((_cycleInLine + 1) < 16 && _badLineConditionThisCycle);
+            if (_graphicsDisplayState || ((_cycleInLine + 1) < 16 && _badLineConditionThisCycle))
+            {
+                return true;
+            }
+
+            if (!_videoPatternValid)
+            {
+                return false;
+            }
+
+            if (_graphicsLineCellY >= VisibleRows)
+            {
+                return true;
+            }
+
+            int scrolledX = displayX + GetCurrentHorizontalScrollPhase();
+            if (scrolledX < 0 || scrolledX >= InnerDisplayWidth)
+            {
+                return false;
+            }
+
+            int cellX = scrolledX / CharacterWidth;
+            return (uint)cellX < VisibleColumns && _videoPatternIdle[cellX];
         }
 
         /// <summary>
@@ -815,12 +837,15 @@ namespace C64Emulator.Core
 
             int cellX = scrolledX / CharacterWidth;
             int pixelXInCell = scrolledX & 0x07;
+            bool useIdleFallback = !_graphicsDisplayState &&
+                _videoPatternValid &&
+                _graphicsLineCellY >= VisibleRows;
             if (!_graphicsSequencerCellLoaded || _graphicsSequencerCellX != cellX)
             {
                 if (!LoadGraphicsSequencerCell(cellX, displayY))
                 {
                     _graphicsSequencerCellLoaded = false;
-                    return CreateBackgroundPixel(GetBackgroundColor(0));
+                    return CreateIdleOrBackgroundPixel(useIdleFallback);
                 }
             }
 
@@ -1074,6 +1099,19 @@ namespace C64Emulator.Core
             _graphicsSequencerCellLoaded = true;
             _graphicsSequencerCellX = cellX;
             return true;
+        }
+
+        /// <summary>
+        /// Creates the fallback graphics pixel for idle-state display areas.
+        /// </summary>
+        private PixelResult CreateIdleOrBackgroundPixel(bool useIdleFallback)
+        {
+            if (useIdleFallback)
+            {
+                return CreateBackgroundPixel(Palette[0]);
+            }
+
+            return CreateBackgroundPixel(GetBackgroundColor(0));
         }
 
         /// <summary>

@@ -64,6 +64,7 @@ namespace C64Emulator.Core
                 }
 
                 EnqueueOptionalCommand(system, test);
+                StartOptionalAddress(system, test);
                 RunMachine(system, test.MaxCycles);
                 FillObservedState(system, test, context, result);
                 result.ExitReason = "cycles";
@@ -139,6 +140,42 @@ namespace C64Emulator.Core
 
             command = command.Replace("\\r", "\r").Replace("\\n", "\n");
             system.EnqueuePetsciiText(command);
+        }
+
+        private static void StartOptionalAddress(C64System system, GoldenTestDefinition test)
+        {
+            string startAddressText = GetArgument(test, "startAddress");
+            if (string.IsNullOrWhiteSpace(startAddressText))
+            {
+                return;
+            }
+
+            ushort startAddress = ParseAddress(startAddressText);
+            system.Cpu.StartAt(startAddress);
+        }
+
+        private static ushort ParseAddress(string value)
+        {
+            string text = (value ?? string.Empty).Trim();
+            NumberStyles style = NumberStyles.Integer;
+            if (text.StartsWith("$", StringComparison.Ordinal))
+            {
+                text = text.Substring(1);
+                style = NumberStyles.HexNumber;
+            }
+            else if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                text = text.Substring(2);
+                style = NumberStyles.HexNumber;
+            }
+
+            int parsed = int.Parse(text, style, CultureInfo.InvariantCulture);
+            if (parsed < 0 || parsed > 0xFFFF)
+            {
+                throw new ArgumentOutOfRangeException("startAddress", "Start address must be in the 16-bit C64 address range.");
+            }
+
+            return (ushort)parsed;
         }
 
         private static void RunMachine(C64System system, long cycles)
