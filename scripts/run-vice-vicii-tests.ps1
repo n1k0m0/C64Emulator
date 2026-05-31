@@ -50,6 +50,8 @@ param(
 
     [switch]$StopOnD7FF,
 
+    [switch]$NoStopOnD7FF,
+
     [long]$StopAfterWriteCycles = 0
 )
 
@@ -171,7 +173,7 @@ function Invoke-GoldenTest {
         [string]$TestOutputDirectory,
         [long]$Cycles,
         [long]$Warmup,
-        [switch]$StopOnD7FF,
+        [bool]$StopOnD7FF,
         [long]$StopAfterWriteCycles
     )
 
@@ -251,6 +253,7 @@ if ($Build -or -not (Test-Path -LiteralPath $exePath)) {
 $exePath = (Resolve-Path -LiteralPath $exePath).Path
 $outputPath = Join-Path $repoRoot $OutputDirectory
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
+$useD7ffStop = [bool]$StopOnD7FF -or -not [bool]$NoStopOnD7FF
 
 try {
     $candidates = @(Find-TestCandidates -RootPath $resolvedRoot -Directories $IncludeDirectories -Limit $MaxTests)
@@ -281,7 +284,7 @@ for ($index = 0; $index -lt $total; $index++) {
     $reportPath = ""
 
     try {
-        $framePath = Invoke-GoldenTest -ExePath $exePath -Candidate $candidate -TestOutputDirectory $testOutputPath -Cycles $MaxCycles -Warmup $WarmupCycles -StopOnD7FF:$StopOnD7FF -StopAfterWriteCycles $StopAfterWriteCycles
+        $framePath = Invoke-GoldenTest -ExePath $exePath -Candidate $candidate -TestOutputDirectory $testOutputPath -Cycles $MaxCycles -Warmup $WarmupCycles -StopOnD7FF $useD7ffStop -StopAfterWriteCycles $StopAfterWriteCycles
 
         $compareArguments = @(
             "-NoProfile",
