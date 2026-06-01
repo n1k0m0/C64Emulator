@@ -87,6 +87,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
             failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
             failures += RunCase(output, "VIC midline D011 RSEL affects vertical border", TestVicMidlineD011RselAffectsVerticalBorder);
+            failures += RunCase(output, "VIC late D011 RSEL closes bottom border", TestVicLateD011RselClosesBottomBorder);
             failures += RunCase(output, "VIC unused register bits read high", TestVicUnusedRegisterBitsReadHigh);
             failures += RunCase(output, "VIC invalid display modes render black", TestVicInvalidDisplayModesRenderBlack);
             failures += RunCase(output, "VIC invalid display modes keep hidden foreground", TestVicInvalidDisplayModesKeepHiddenForeground);
@@ -771,6 +772,15 @@ namespace C64Emulator.Core
                 !string.Equals(stableNarrowHash, widenedMidframeHash, StringComparison.Ordinal));
         }
 
+        private static void TestVicLateD011RselClosesBottomBorder(AccuracyContext context)
+        {
+            uint normalBottomRowPixel = RenderD011LateRselBottomBorderProbePixel(false);
+            uint closedBottomRowPixel = RenderD011LateRselBottomBorderProbePixel(true);
+
+            context.Equal("normal 25-row bottom line remains visible", 0xFFFFFFFFu, normalBottomRowPixel);
+            context.Equal("late 24-row RSEL pulse closes the bottom border", 0xFF68372Bu, closedBottomRowPixel);
+        }
+
         private static void TestVicInvalidDisplayModesRenderBlack(AccuracyContext context)
         {
             context.Equal("ECM plus multicolor text blanks graphics", 0xFF000000u, RenderInvalidModeProbePixel(0x5B, 0x18));
@@ -1106,6 +1116,58 @@ namespace C64Emulator.Core
             }
 
             return DevTraceExporter.ComputeFrameHash(frameBuffer);
+        }
+
+        private static uint RenderD011LateRselBottomBorderProbePixel(bool closeEarly)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x11, 0x1B);
+            vic.Write(0x16, 0x08);
+            vic.Write(0x18, 0x18);
+            vic.Write(0x20, 0x02);
+            vic.Write(0x21, 0x00);
+
+            const ushort screenBase = 0xC400;
+            const ushort characterBase = 0xE000;
+            for (int row = 0; row < 25; row++)
+            {
+                for (int column = 0; column < 40; column++)
+                {
+                    int matrixIndex = (row * 40) + column;
+                    bus.WriteRam((ushort)(screenBase + matrixIndex), 0x00);
+                    bus.WriteColorRam((ushort)matrixIndex, 0x01);
+                }
+            }
+
+            for (int row = 0; row < 8; row++)
+            {
+                bus.WriteRam((ushort)(characterBase + row), 0xFF);
+            }
+
+            int totalCycles = 248 * C64Model.Pal.CyclesPerLine;
+            for (int cycle = 0; cycle < totalCycles; cycle++)
+            {
+                VicTiming timing = vic.GetTiming();
+                if (closeEarly && timing.RasterLine == 246 && timing.CycleInLine == 58)
+                {
+                    vic.Write(0x11, 0x13);
+                }
+                else if (closeEarly && timing.RasterLine == 246 && timing.CycleInLine == 62)
+                {
+                    vic.Write(0x11, 0x1B);
+                }
+
+                RunVicCycleWithoutCpu(vic, bus);
+            }
+
+            int cropTop = (C64Model.Pal.RasterLines - C64Model.Pal.VisibleHeight) / 2;
+            int frameY = 247 - cropTop;
+            int frameX = 80;
+            return frameBuffer.Pixels[(frameY * frameBuffer.Width) + frameX];
         }
 
         private static void RunVicCycleWithoutCpu(Vic2 vic, SystemBus bus)

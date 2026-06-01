@@ -43,6 +43,8 @@ namespace C64Emulator.Core
         private const int BorderTop = 37;
         private const int NarrowBorderLeft = BorderLeft + 7;
         private const int NarrowBorderTop = BorderTop + 4;
+        private const int NarrowBottomBorderRasterLine = CropTop + NarrowBorderTop + (NarrowVisibleRows * CharacterHeight);
+        private const int NoPendingRasterLine = -1;
         private const int StandardSpriteDisplayLeft = 24;
         private const int StandardSpriteDisplayTop = 51;
         private const int NarrowSpriteDisplayLeft = 31;
@@ -287,6 +289,7 @@ namespace C64Emulator.Core
         private int _lineDisplayTopFrame;
         private int _lineDisplayRightFrame;
         private int _lineDisplayBottomFrame;
+        private int _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
         private bool _verticalBorderActive = true;
         private bool _horizontalBorderActive = true;
         private ushort _displaySourceScreenBaseAbsolute;
@@ -519,6 +522,7 @@ namespace C64Emulator.Core
                     _registers[0x11] = value;
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x00FF) | ((value & 0x80) << 1));
                     TriggerRasterIrqForCurrentLineIfMatched();
+                    TrackVerticalBorderRselWrite(value);
                     break;
                 case 0x12:
                     _registers[0x12] = value;
@@ -812,6 +816,7 @@ namespace C64Emulator.Core
             _lineDisplayTopFrame = BorderTop;
             _lineDisplayRightFrame = _lineDisplayLeftFrame + InnerDisplayWidth;
             _lineDisplayBottomFrame = _lineDisplayTopFrame + InnerDisplayHeight;
+            _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
             _verticalBorderActive = true;
             _horizontalBorderActive = true;
             SynchronizePixelRegisters();
@@ -2764,6 +2769,17 @@ namespace C64Emulator.Core
             if (_rasterLine == 0)
             {
                 _verticalBorderActive = true;
+                _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
+            }
+            else if (_rasterLine == _pendingVerticalBorderCloseRasterLine)
+            {
+                _verticalBorderActive = true;
+                _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
+            }
+            else if (_pendingVerticalBorderCloseRasterLine != NoPendingRasterLine &&
+                _rasterLine > _pendingVerticalBorderCloseRasterLine)
+            {
+                _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
             }
             else if (_lineDisplayEnabled && _rasterLine == top)
             {
@@ -2810,6 +2826,43 @@ namespace C64Emulator.Core
             if (frameX == currentBorderRight)
             {
                 _horizontalBorderActive = true;
+            }
+        }
+
+        /// <summary>
+        /// Tracks late RSEL writes that can still trip the bottom vertical-border flip-flop.
+        /// </summary>
+        private void TrackVerticalBorderRselWrite(byte value)
+        {
+            bool rowSelectCleared = (value & 0x08) == 0;
+            if (!rowSelectCleared || !_displayEnableFrameLatched || _verticalBorderActive)
+            {
+                return;
+            }
+
+            int cycle = _cycleInLine;
+            if (_rasterLine == NarrowBottomBorderRasterLine - 1)
+            {
+                if (cycle >= 58)
+                {
+                    _pendingVerticalBorderCloseRasterLine = NarrowBottomBorderRasterLine;
+                }
+
+                return;
+            }
+
+            if (_rasterLine != NarrowBottomBorderRasterLine)
+            {
+                return;
+            }
+
+            if (cycle <= 13)
+            {
+                _verticalBorderActive = true;
+            }
+            else if (cycle <= 60)
+            {
+                _pendingVerticalBorderCloseRasterLine = NarrowBottomBorderRasterLine + 1;
             }
         }
 
