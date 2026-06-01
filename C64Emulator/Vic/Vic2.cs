@@ -173,6 +173,10 @@ namespace C64Emulator.Core
         private readonly int[] _spriteFetchRow = new int[8];
         private readonly int[] _spriteFetchPhase = new int[8];
         private readonly int[] _spriteDisplayRow = new int[8];
+        private readonly bool[] _spriteRowHistoryActive = new bool[8];
+        private readonly bool[] _spritePreviousLineYExpanded = new bool[8];
+        private readonly bool[] _spriteFetchRowAdjusted = new bool[8];
+        private readonly bool[] _spriteDisplayRowAdjusted = new bool[8];
         private readonly int[] _spriteLatchedX = new int[8];
         private readonly int[] _spriteLatchedY = new int[8];
         private readonly bool[] _spriteLatchedXExpanded = new bool[8];
@@ -190,6 +194,7 @@ namespace C64Emulator.Core
         private readonly byte[] _spriteLineDataByte1 = new byte[8];
         private readonly byte[] _spriteLineDataByte2 = new byte[8];
         private readonly int[] _spriteLineDisplayRow = new int[8];
+        private readonly bool[] _spriteLineDisplayRowAdjusted = new bool[8];
         private readonly bool[] _spriteDataValid = new bool[8];
         private readonly byte[] _spritePointers = new byte[8];
         private readonly byte[] _spriteDataByte0 = new byte[8];
@@ -751,6 +756,10 @@ namespace C64Emulator.Core
             System.Array.Clear(_spriteFetchRow, 0, _spriteFetchRow.Length);
             System.Array.Clear(_spriteFetchPhase, 0, _spriteFetchPhase.Length);
             System.Array.Clear(_spriteDisplayRow, 0, _spriteDisplayRow.Length);
+            System.Array.Clear(_spriteRowHistoryActive, 0, _spriteRowHistoryActive.Length);
+            System.Array.Clear(_spritePreviousLineYExpanded, 0, _spritePreviousLineYExpanded.Length);
+            System.Array.Clear(_spriteFetchRowAdjusted, 0, _spriteFetchRowAdjusted.Length);
+            System.Array.Clear(_spriteDisplayRowAdjusted, 0, _spriteDisplayRowAdjusted.Length);
             System.Array.Clear(_spriteLatchedX, 0, _spriteLatchedX.Length);
             System.Array.Clear(_spriteLatchedY, 0, _spriteLatchedY.Length);
             System.Array.Clear(_spriteLatchedXExpanded, 0, _spriteLatchedXExpanded.Length);
@@ -768,6 +777,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_spriteLineDataByte1, 0, _spriteLineDataByte1.Length);
             System.Array.Clear(_spriteLineDataByte2, 0, _spriteLineDataByte2.Length);
             System.Array.Clear(_spriteLineDisplayRow, 0, _spriteLineDisplayRow.Length);
+            System.Array.Clear(_spriteLineDisplayRowAdjusted, 0, _spriteLineDisplayRowAdjusted.Length);
             System.Array.Clear(_spriteDataValid, 0, _spriteDataValid.Length);
             System.Array.Clear(_spritePointers, 0, _spritePointers.Length);
             System.Array.Clear(_spriteDataByte0, 0, _spriteDataByte0.Length);
@@ -1358,14 +1368,24 @@ namespace C64Emulator.Core
                 localY /= 2;
             }
 
-            if (localX >= 24 || localY >= 21)
+            if (localX >= 24)
             {
                 return false;
             }
 
-            if (!_spriteLineDataValid[spriteIndex] || localY != _spriteLineDisplayRow[spriteIndex])
+            if (!_spriteLineDataValid[spriteIndex] ||
+                _spriteLineDisplayRow[spriteIndex] < 0 ||
+                _spriteLineDisplayRow[spriteIndex] >= 21)
             {
                 return false;
+            }
+
+            if (!_spriteLineDisplayRowAdjusted[spriteIndex])
+            {
+                if (localY >= 21 || localY != _spriteLineDisplayRow[spriteIndex])
+                {
+                    return false;
+                }
             }
 
             byte data0 = _spriteLineDataByte0[spriteIndex];
@@ -1782,8 +1802,6 @@ namespace C64Emulator.Core
         {
             if (_rasterLine == 0)
             {
-                _verticalBorderActive = true;
-                _displayEnableFrameLatched = false;
                 _graphicsDisplayState = false;
                 _graphicsVc = 0;
                 _graphicsVcBase = 0;
@@ -2348,6 +2366,7 @@ namespace C64Emulator.Core
                 default:
                     _spriteDataByte2[spriteIndex] = 0xFF;
                     _spriteDisplayRow[spriteIndex] = _spriteFetchRow[spriteIndex];
+                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex];
                     _spriteDataValid[spriteIndex] = true;
                     CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
@@ -2490,6 +2509,7 @@ namespace C64Emulator.Core
                 default:
                     _spriteDataByte2[spriteIndex] = value;
                     _spriteDisplayRow[spriteIndex] = row;
+                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex];
                     _spriteDataValid[spriteIndex] = true;
                     CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
@@ -2809,12 +2829,18 @@ namespace C64Emulator.Core
                     _spriteDmaLatched[spriteIndex] = false;
                     _spriteDataValid[spriteIndex] = false;
                     _spriteFetchPhase[spriteIndex] = 0;
+                    _spriteRowHistoryActive[spriteIndex] = false;
+                    _spritePreviousLineYExpanded[spriteIndex] = false;
+                    _spriteFetchRowAdjusted[spriteIndex] = false;
+                    _spriteDisplayRowAdjusted[spriteIndex] = false;
+                    _spriteLineDisplayRowAdjusted[spriteIndex] = false;
                     continue;
                 }
 
                 if (!_spriteDmaLatched[spriteIndex])
                 {
                     _spriteLineVisible[spriteIndex] = false;
+                    _spriteLineDisplayRowAdjusted[spriteIndex] = false;
                     _spriteDmaActive[spriteIndex] = false;
                     continue;
                 }
@@ -2890,6 +2916,10 @@ namespace C64Emulator.Core
                 _spriteDmaLatched[spriteIndex] = false;
                 _spriteFetchPhase[spriteIndex] = 0;
                 _spriteDataValid[spriteIndex] = false;
+                _spriteRowHistoryActive[spriteIndex] = false;
+                _spritePreviousLineYExpanded[spriteIndex] = false;
+                _spriteFetchRowAdjusted[spriteIndex] = false;
+                _spriteDisplayRowAdjusted[spriteIndex] = false;
             }
         }
 
@@ -2915,6 +2945,10 @@ namespace C64Emulator.Core
             _spriteExpandFlipFlop[spriteIndex] = !yExpanded;
             _spriteDataValid[spriteIndex] = false;
             _spriteFetchPhase[spriteIndex] = 0;
+            _spriteRowHistoryActive[spriteIndex] = false;
+            _spritePreviousLineYExpanded[spriteIndex] = yExpanded;
+            _spriteFetchRowAdjusted[spriteIndex] = false;
+            _spriteDisplayRowAdjusted[spriteIndex] = false;
         }
 
         /// <summary>
@@ -2925,10 +2959,16 @@ namespace C64Emulator.Core
             int latchedY = _spriteLatchedY[spriteIndex];
             bool latchedYExpanded = IsSpriteYExpansionEnabled(spriteIndex);
             int spriteStart = GetSpriteVisibleStartRasterLine(latchedY, _spriteLatchedX[spriteIndex]);
-            int visibleLines = latchedYExpanded ? 42 : 21;
             int visibleDelta = _rasterLine - spriteStart;
+            int fetchDelta = spriteIndex <= 2 ? (_rasterLine - latchedY) : visibleDelta;
+            int fetchRow = ComputeSpriteFetchRowForCurrentLine(spriteIndex, fetchDelta, latchedYExpanded);
+            bool spriteDmaContinues = IsSpriteDmaContinuing(fetchDelta, fetchRow, latchedYExpanded);
+            int visibleLines = latchedYExpanded ? 42 : 21;
+            bool spriteLineVisible = spriteIndex <= 2
+                ? (visibleDelta >= 0 && visibleDelta < visibleLines)
+                : (visibleDelta >= 0 && spriteDmaContinues);
 
-            if (visibleDelta >= 0 && visibleDelta < visibleLines)
+            if (spriteLineVisible)
             {
                 LatchSpriteRenderLine(spriteIndex);
                 if (latchedYExpanded)
@@ -2942,28 +2982,32 @@ namespace C64Emulator.Core
                 }
                 else
                 {
-                    _spriteCurrentRow[spriteIndex] = visibleDelta;
+                    _spriteCurrentRow[spriteIndex] = fetchRow;
                 }
             }
             else if (!preserveCurrentLine)
             {
                 _spriteLineVisible[spriteIndex] = false;
                 _spriteLineDataValid[spriteIndex] = false;
+                _spriteLineDisplayRowAdjusted[spriteIndex] = false;
             }
 
-            int fetchDelta = spriteIndex <= 2 ? (_rasterLine - latchedY) : visibleDelta;
-            if (fetchDelta >= visibleLines)
+            if (fetchDelta >= 0 && !spriteDmaContinues)
             {
                 _spriteDmaActive[spriteIndex] = false;
                 _spriteDmaLatched[spriteIndex] = false;
                 _spriteFetchRow[spriteIndex] = 20;
                 _spriteFetchPhase[spriteIndex] = 0;
                 _spriteDataValid[spriteIndex] = false;
+                _spriteRowHistoryActive[spriteIndex] = false;
+                _spritePreviousLineYExpanded[spriteIndex] = false;
+                _spriteFetchRowAdjusted[spriteIndex] = false;
+                _spriteDisplayRowAdjusted[spriteIndex] = false;
                 return;
             }
 
             _spriteDmaActive[spriteIndex] = fetchDelta >= 0;
-            _spriteFetchRow[spriteIndex] = ComputeSpriteFetchRow(fetchDelta, latchedYExpanded);
+            _spriteFetchRow[spriteIndex] = fetchRow;
         }
 
         /// <summary>
@@ -2989,6 +3033,7 @@ namespace C64Emulator.Core
             if (!_spriteDataValid[spriteIndex])
             {
                 _spriteLineDataValid[spriteIndex] = false;
+                _spriteLineDisplayRowAdjusted[spriteIndex] = false;
                 return;
             }
 
@@ -2996,6 +3041,7 @@ namespace C64Emulator.Core
             _spriteLineDataByte1[spriteIndex] = _spriteDataByte1[spriteIndex];
             _spriteLineDataByte2[spriteIndex] = _spriteDataByte2[spriteIndex];
             _spriteLineDisplayRow[spriteIndex] = _spriteDisplayRow[spriteIndex];
+            _spriteLineDisplayRowAdjusted[spriteIndex] = _spriteDisplayRowAdjusted[spriteIndex];
             _spriteLineDataValid[spriteIndex] = true;
         }
 
@@ -3034,6 +3080,60 @@ namespace C64Emulator.Core
             }
 
             return row;
+        }
+
+        /// <summary>
+        /// Computes the sprite row for the current DMA fetch without losing expansion phase history.
+        /// </summary>
+        private int ComputeSpriteFetchRowForCurrentLine(int spriteIndex, int fetchDelta, bool yExpanded)
+        {
+            _spriteFetchRowAdjusted[spriteIndex] = false;
+            bool wasYExpanded = _spritePreviousLineYExpanded[spriteIndex];
+            _spritePreviousLineYExpanded[spriteIndex] = yExpanded;
+            int row = yExpanded
+                ? ComputeSpriteFetchRow(fetchDelta, true)
+                : (fetchDelta < 0 ? 0 : fetchDelta);
+            if (yExpanded || !_spriteDataValid[spriteIndex])
+            {
+                _spriteRowHistoryActive[spriteIndex] = false;
+                return row > 21 ? 21 : row;
+            }
+
+            // Sprites 0-2 fetch their data at the end of the raster line, so their
+            // Y-expansion transition needs a separate late-fetch model. Keep the
+            // historical row correction on the early-fetch sprites for now.
+            if (spriteIndex <= 2 || (!wasYExpanded && !_spriteRowHistoryActive[spriteIndex]))
+            {
+                return row > 21 ? 21 : row;
+            }
+
+            int nextSequentialRow = _spriteDisplayRow[spriteIndex] + 1;
+            if (nextSequentialRow < row)
+            {
+                _spriteRowHistoryActive[spriteIndex] = true;
+                _spriteFetchRowAdjusted[spriteIndex] = true;
+                return nextSequentialRow;
+            }
+
+            return row > 21 ? 21 : row;
+        }
+
+        /// <summary>
+        /// Returns whether sprite DMA should remain active for the current raster line.
+        /// </summary>
+        private static bool IsSpriteDmaContinuing(int fetchDelta, int fetchRow, bool yExpanded)
+        {
+            if (fetchDelta < 0)
+            {
+                return false;
+            }
+
+            if (yExpanded)
+            {
+                return fetchDelta < 42;
+            }
+
+            return fetchRow < 21;
         }
 
         /// <summary>
