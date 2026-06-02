@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -1409,12 +1409,12 @@ namespace C64Emulator.Core
             int currentDisplayRight = currentDisplayLeft + GetCurrentDisplayWidth();
             int currentDisplayTop = GetCurrentDisplayTopFrame();
             int currentDisplayBottom = currentDisplayTop + GetCurrentDisplayHeight();
-            return _lineDisplayEnabled &&
-                !_verticalBorderActive &&
+            bool insideDisplayY = frameY >= currentDisplayTop && frameY < currentDisplayBottom;
+            bool openVerticalBorderLine = IsOpenVerticalBorderLine(frameY, currentDisplayTop, currentDisplayBottom);
+            return !_verticalBorderActive &&
                 frameX >= currentDisplayLeft &&
                 frameX < currentDisplayRight &&
-                frameY >= currentDisplayTop &&
-                frameY < currentDisplayBottom;
+                (openVerticalBorderLine || (_lineDisplayEnabled && insideDisplayY));
         }
 
         /// <summary>
@@ -1649,8 +1649,8 @@ namespace C64Emulator.Core
         private bool LoadGraphicsSequencerCell(int cellX, int displayY)
         {
             bool hasLatchedPattern = _videoPatternValid &&
-                _videoPatternPixelRow >= 0 &&
-                _videoPatternFetched[cellX];
+                _videoPatternFetched[cellX] &&
+                (_videoPatternPixelRow >= 0 || _videoPatternIdle[cellX]);
             if (hasLatchedPattern && _videoPatternIdle[cellX])
             {
                 _graphicsSequencerScreenCode = 0;
@@ -1767,6 +1767,13 @@ namespace C64Emulator.Core
         private void ApplySprites(ref PixelResult result, int frameX, int frameY)
         {
             bool insideActiveDisplayArea = IsInsideActiveDisplayArea(frameX, frameY);
+            int currentBorderTop = GetCurrentBorderTopFrame();
+            int currentBorderBottom = currentBorderTop + GetCurrentBorderHeight();
+            bool insideOpenVerticalWindow = !_verticalBorderActive &&
+                frameY >= currentBorderTop &&
+                frameY < currentBorderBottom;
+            bool spriteOutputVisible = insideActiveDisplayArea ||
+                (insideOpenVerticalWindow && !_horizontalBorderActive);
             byte opaqueSpriteMask = 0;
             bool spriteVisible = false;
 
@@ -1781,13 +1788,14 @@ namespace C64Emulator.Core
                 byte bit = (byte)(1 << spriteIndex);
                 opaqueSpriteMask |= bit;
 
-                if (insideActiveDisplayArea && result.GraphicsForeground)
+                bool graphicsCoversSprite = insideActiveDisplayArea && result.GraphicsForeground;
+                if (graphicsCoversSprite)
                 {
                     _spriteDataCollision |= bit;
                 }
 
                 bool behindGraphics = ((_pixelRegisters[0x1B] >> spriteIndex) & 0x01) != 0;
-                if (insideActiveDisplayArea && !spriteVisible && (!behindGraphics || !result.GraphicsForeground))
+                if (spriteOutputVisible && !spriteVisible && (!behindGraphics || !graphicsCoversSprite))
                 {
                     result.Color = spriteColor;
                     spriteVisible = true;
@@ -3249,12 +3257,19 @@ namespace C64Emulator.Core
         {
             if (!IsGraphicsDisplayLine())
             {
+                int frameY = _rasterLine - CropTop;
+                bool keepOpenBorderPatternPipeline = IsOpenVerticalBorderLine(
+                    frameY,
+                    _lineDisplayTopFrame,
+                    _lineDisplayBottomFrame);
+
                 _graphicsLineMatrixBaseIndex = -1;
                 _graphicsLineCellY = -1;
                 _graphicsLinePixelRow = -1;
-                _videoPatternValid = false;
+                _videoPatternValid = keepOpenBorderPatternPipeline;
                 _videoPatternCellY = -1;
                 _videoPatternPixelRow = -1;
+                _videoPatternBitmapMode = _lineBitmapMode;
                 System.Array.Clear(_videoPatternFetched, 0, _videoPatternFetched.Length);
                 System.Array.Clear(_videoPatternBitmapModes, 0, _videoPatternBitmapModes.Length);
                 System.Array.Clear(_videoPatternExtendedColorModes, 0, _videoPatternExtendedColorModes.Length);
@@ -3896,6 +3911,15 @@ namespace C64Emulator.Core
 
             int frameY = _rasterLine - CropTop;
             return frameY >= _lineDisplayTopFrame && frameY < _lineDisplayBottomFrame;
+        }
+
+        /// <summary>
+        /// Returns whether a vertical-border trick has opened graphics output outside the normal display rows.
+        /// </summary>
+        private bool IsOpenVerticalBorderLine(int frameY, int displayTop, int displayBottom)
+        {
+            return !_verticalBorderActive &&
+                (frameY < displayTop || frameY >= displayBottom);
         }
 
         /// <summary>
