@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ReferenceFrame,
 
@@ -410,12 +410,13 @@ public static class ViciiReferenceComparer
         }
 
         using (var source = new Bitmap(fullPath))
-        using (var bitmap = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb))
-        using (Graphics graphics = Graphics.FromImage(bitmap))
         {
-            graphics.DrawImageUnscaled(source, 0, 0);
-            int[] pixels = ReadBitmapPixels(bitmap);
-            return new FrameImage { Path = fullPath, Width = bitmap.Width, Height = bitmap.Height, Pixels = pixels };
+            // Some PNG references from the VICE suite are copied incorrectly by
+            // Graphics.DrawImageUnscaled on System.Drawing/GDI+ for Windows. Read
+            // the loaded bitmap directly so the comparer sees the same pixels as
+            // Bitmap.GetPixel and external image tools.
+            int[] pixels = ReadBitmapPixels(source);
+            return new FrameImage { Path = fullPath, Width = source.Width, Height = source.Height, Pixels = pixels };
         }
     }
 
@@ -498,8 +499,19 @@ public static class ViciiReferenceComparer
 
     private static int[] ReadBitmapPixels(Bitmap bitmap)
     {
+        if (bitmap.PixelFormat != PixelFormat.Format32bppArgb &&
+            bitmap.PixelFormat != PixelFormat.Format32bppPArgb &&
+            bitmap.PixelFormat != PixelFormat.Format32bppRgb &&
+            bitmap.PixelFormat != PixelFormat.Format24bppRgb)
+        {
+            return ReadBitmapPixelsSlow(bitmap);
+        }
+
         Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-        BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        PixelFormat lockFormat = bitmap.PixelFormat == PixelFormat.Format24bppRgb
+            ? PixelFormat.Format24bppRgb
+            : PixelFormat.Format32bppArgb;
+        BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, lockFormat);
         try
         {
             int stride = data.Stride;
@@ -507,12 +519,15 @@ public static class ViciiReferenceComparer
             byte[] bytes = new byte[byteCount];
             System.Runtime.InteropServices.Marshal.Copy(data.Scan0, bytes, 0, byteCount);
             int[] pixels = new int[bitmap.Width * bitmap.Height];
+            int bytesPerPixel = lockFormat == PixelFormat.Format24bppRgb ? 3 : 4;
             for (int y = 0; y < bitmap.Height; y++)
             {
-                int row = y * stride;
+                int row = stride < 0
+                    ? (bitmap.Height - 1 - y) * Math.Abs(stride)
+                    : y * stride;
                 for (int x = 0; x < bitmap.Width; x++)
                 {
-                    int offset = row + x * 4;
+                    int offset = row + x * bytesPerPixel;
                     int b = bytes[offset];
                     int g = bytes[offset + 1];
                     int r = bytes[offset + 2];
@@ -526,6 +541,21 @@ public static class ViciiReferenceComparer
         {
             bitmap.UnlockBits(data);
         }
+    }
+
+    private static int[] ReadBitmapPixelsSlow(Bitmap bitmap)
+    {
+        int[] pixels = new int[bitmap.Width * bitmap.Height];
+        for (int y = 0; y < bitmap.Height; y++)
+        {
+            for (int x = 0; x < bitmap.Width; x++)
+            {
+                Color color = bitmap.GetPixel(x, y);
+                pixels[y * bitmap.Width + x] = (color.R << 16) | (color.G << 8) | color.B;
+            }
+        }
+
+        return pixels;
     }
 
     private static void SaveRgbBitmap(string path, int width, int height, int[] pixels)

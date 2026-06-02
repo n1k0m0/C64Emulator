@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,8 +36,8 @@ namespace C64Emulator.Core
         private const int GraphicsOutputDelayPixels = 0;
         private const int CpuWriteVisibleDot = 0;
         private const int ModeWriteVisibleDot = 0;
-        private const int D011ModeWriteBackfillPixels = 17;
-        private const int D016ModeWriteBackfillPixels = 16;
+        private const int D011ModeWriteBackfillPixels = 25;
+        private const int D016ModeWriteBackfillPixels = 24;
         private const int InnerDisplayWidth = VisibleColumns * CharacterWidth;
         private const int InnerDisplayHeight = VisibleRows * CharacterHeight;
         private const int CropLeft = (TotalRasterWidth - 403) / 2;
@@ -191,6 +191,7 @@ namespace C64Emulator.Core
         private readonly bool[] _spriteLatchedYExpanded = new bool[8];
         private readonly bool[] _spriteLatchedMulticolor = new bool[8];
         private readonly byte[] _spriteLatchedColor = new byte[8];
+        private readonly int[] _spriteRenderY = new int[8];
         private readonly int[] _spriteLineX = new int[8];
         private readonly int[] _spriteLineY = new int[8];
         private readonly bool[] _spriteLineXExpanded = new bool[8];
@@ -603,6 +604,10 @@ namespace C64Emulator.Core
             {
                 ApplySpriteYExpansionWrite(previousValue, _registers[0x17]);
             }
+            else if ((address & 0x01) != 0 && address <= 0x0F)
+            {
+                TrackSpriteYRenderLatchWrite(address, _registers[address]);
+            }
             else if (address == 0x16)
             {
                 TrackHorizontalBorderCselWrite(previousValue, _registers[0x16]);
@@ -635,6 +640,33 @@ namespace C64Emulator.Core
                     _spriteExpandFlipFlop[spriteIndex] = true;
                 }
             }
+        }
+
+        /// <summary>
+        /// Captures late sprite-Y writes that affect the current early-fetch sprite output instance.
+        /// </summary>
+        private void TrackSpriteYRenderLatchWrite(ushort address, byte value)
+        {
+            if (!_cyclePrepared)
+            {
+                return;
+            }
+
+            int spriteIndex = address >> 1;
+            if (spriteIndex < 3 || spriteIndex >= 8)
+            {
+                return;
+            }
+
+            int cycle = _cycleInLine + 1;
+            if (cycle < 55 ||
+                !_spriteDmaLatched[spriteIndex] ||
+                _rasterLine != _spriteLatchedY[spriteIndex])
+            {
+                return;
+            }
+
+            _spriteRenderY[spriteIndex] = value;
         }
 
         /// <summary>
@@ -1077,13 +1109,25 @@ namespace C64Emulator.Core
                 Sprite3DmaActive = _spriteDmaActive[3],
                 Sprite3DmaLatched = _spriteDmaLatched[3],
                 Sprite3ExpandFlipFlop = _spriteExpandFlipFlop[3],
+                Sprite3LatchedYExpanded = _spriteLatchedYExpanded[3],
+                Sprite3LineYExpanded = _spriteLineYExpanded[3],
                 Sprite3Mc = _spriteMc[3],
                 Sprite3McBase = _spriteMcBase[3],
+                Sprite3FetchPhase = _spriteFetchPhase[3],
+                Sprite3FetchStartMc = _spriteFetchStartMc[3],
                 Sprite3FetchRow = _spriteFetchRow[3],
                 Sprite3DisplayRow = _spriteDisplayRow[3],
+                Sprite3FetchRowAdjusted = _spriteFetchRowAdjusted[3],
+                Sprite3DisplayRowAdjusted = _spriteDisplayRowAdjusted[3],
                 Sprite3LineVisible = _spriteLineVisible[3],
                 Sprite3LineDataValid = _spriteLineDataValid[3],
-                Sprite3LineDisplayRow = _spriteLineDisplayRow[3]
+                Sprite3LineDisplayRow = _spriteLineDisplayRow[3],
+                Sprite3LineDisplayRowAdjusted = _spriteLineDisplayRowAdjusted[3],
+                Sprite3LineDataByte0 = _spriteLineDataByte0[3],
+                Sprite3LineDataByte1 = _spriteLineDataByte1[3],
+                Sprite3LineDataByte2 = _spriteLineDataByte2[3],
+                Sprite3RegisterD017 = _registers[0x17],
+                Sprite3PixelD017 = _pixelRegisters[0x17]
             };
         }
 
@@ -1180,6 +1224,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_spriteLatchedYExpanded, 0, _spriteLatchedYExpanded.Length);
             System.Array.Clear(_spriteLatchedMulticolor, 0, _spriteLatchedMulticolor.Length);
             System.Array.Clear(_spriteLatchedColor, 0, _spriteLatchedColor.Length);
+            System.Array.Clear(_spriteRenderY, 0, _spriteRenderY.Length);
             System.Array.Clear(_spriteLineX, 0, _spriteLineX.Length);
             System.Array.Clear(_spriteLineY, 0, _spriteLineY.Length);
             System.Array.Clear(_spriteLineXExpanded, 0, _spriteLineXExpanded.Length);
@@ -1334,12 +1379,8 @@ namespace C64Emulator.Core
 
             int activeDisplayLeft = GetCurrentDisplayLeftFrame();
             int activeDisplayTop = GetCurrentDisplayTopFrame();
-            int activeDisplayBottom = activeDisplayTop + GetCurrentDisplayHeight();
-            bool currentGraphicsVisible = _lineDisplayEnabled &&
-                !_horizontalBorderActive &&
-                !_verticalBorderActive &&
-                frameY >= activeDisplayTop &&
-                frameY < activeDisplayBottom;
+            bool currentGraphicsVisible = !_horizontalBorderActive &&
+                !_verticalBorderActive;
 
             int sourceFrameX = frameX + GraphicsOutputDelayPixels;
             bool sourceGraphicsVisible = IsGraphicsSourceVisible(sourceFrameX, frameY) &&
@@ -2963,7 +3004,7 @@ namespace C64Emulator.Core
                 _displayEnableFrameLatched = true;
             }
 
-            if (_rasterLine == (CropTop + BorderTop - 1) && cycle == 61)
+            if (_rasterLine == (CropTop + BorderTop - 1) && cycle == 60)
             {
                 _displayWindowFrameLatched = denEnabled;
             }
@@ -3103,7 +3144,7 @@ namespace C64Emulator.Core
                 badLineCondition &&
                 !_graphicsDisplayState &&
                 cycle >= 15 &&
-                cycle <= 53)
+                cycle <= 55)
             {
                 _isBadLine = true;
                 if (!_graphicsDisplayState)
@@ -3276,12 +3317,7 @@ namespace C64Emulator.Core
             int top = GetCurrentBorderTopFrame() + CropTop;
             int bottom = top + GetCurrentBorderHeight();
 
-            if (_rasterLine == 0)
-            {
-                _verticalBorderActive = true;
-                _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
-            }
-            else if (_rasterLine == _pendingVerticalBorderCloseRasterLine)
+            if (_rasterLine == _pendingVerticalBorderCloseRasterLine)
             {
                 _verticalBorderActive = true;
                 _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
@@ -3310,7 +3346,7 @@ namespace C64Emulator.Core
             int currentBorderBottom = currentBorderTop + GetCurrentBorderHeight();
             if (frameY < currentBorderTop)
             {
-                _horizontalBorderActive = true;
+                _horizontalBorderActive = _verticalBorderActive;
                 return;
             }
 
@@ -3565,6 +3601,7 @@ namespace C64Emulator.Core
             _spriteDmaLatched[spriteIndex] = true;
             _spriteLatchedX[spriteIndex] = spriteX;
             _spriteLatchedY[spriteIndex] = _registers[(spriteIndex * 2) + 1];
+            _spriteRenderY[spriteIndex] = _spriteLatchedY[spriteIndex];
             _spriteLatchedXExpanded[spriteIndex] = ((_registers[0x1D] >> spriteIndex) & 0x01) != 0;
             _spriteLatchedYExpanded[spriteIndex] = yExpanded;
             _spriteLatchedMulticolor[spriteIndex] = ((_registers[0x1C] >> spriteIndex) & 0x01) != 0;
@@ -3683,12 +3720,13 @@ namespace C64Emulator.Core
         {
             _spriteLineVisible[spriteIndex] = true;
             _spriteLineX[spriteIndex] = _spriteLatchedX[spriteIndex];
-            _spriteLineY[spriteIndex] = _spriteLatchedY[spriteIndex];
+            _spriteLineY[spriteIndex] = GetSpriteLineRenderY(spriteIndex);
             _spriteLineXExpanded[spriteIndex] = _spriteLatchedXExpanded[spriteIndex];
             _spriteLineYExpanded[spriteIndex] = IsSpriteYExpansionEnabled(spriteIndex);
             _spriteLineMulticolor[spriteIndex] = _spriteLatchedMulticolor[spriteIndex];
             _spriteLineColor[spriteIndex] = _spriteLatchedColor[spriteIndex];
             CaptureSpriteLineData(spriteIndex);
+            ApplyLateSpriteYMoveToLineData(spriteIndex);
         }
 
         /// <summary>
@@ -3716,12 +3754,48 @@ namespace C64Emulator.Core
         /// </summary>
         private void CaptureSpriteLineDataForCurrentDma(int spriteIndex)
         {
-            if (!_spriteLineVisible[spriteIndex] || _spriteLineY[spriteIndex] != _spriteLatchedY[spriteIndex])
+            if (!_spriteLineVisible[spriteIndex])
+            {
+                return;
+            }
+
+            if (spriteIndex <= 2 && _spriteLineY[spriteIndex] != _spriteLatchedY[spriteIndex])
             {
                 return;
             }
 
             CaptureSpriteLineData(spriteIndex);
+            ApplyLateSpriteYMoveToLineData(spriteIndex);
+        }
+
+        /// <summary>
+        /// Gets the Y position observed by the sprite output stage for this raster line.
+        /// </summary>
+        private int GetSpriteLineRenderY(int spriteIndex)
+        {
+            if (spriteIndex < 3)
+            {
+                return _spriteLatchedY[spriteIndex];
+            }
+
+            return _spriteRenderY[spriteIndex];
+        }
+
+        /// <summary>
+        /// Applies the early-sprite output quirk where a post-compare Y increment skips the first visible row.
+        /// </summary>
+        private void ApplyLateSpriteYMoveToLineData(int spriteIndex)
+        {
+            if (spriteIndex < 3 || !_spriteLineDataValid[spriteIndex])
+            {
+                return;
+            }
+
+            int currentY = _spriteRenderY[spriteIndex];
+            if (currentY > _spriteLatchedY[spriteIndex])
+            {
+                _spriteLineDisplayRowAdjusted[spriteIndex] = true;
+            }
         }
 
         /// <summary>

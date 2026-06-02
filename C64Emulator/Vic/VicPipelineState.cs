@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,12 +67,24 @@ namespace C64Emulator.Core
         public bool Sprite3DmaActive;
         public bool Sprite3DmaLatched;
         public bool Sprite3ExpandFlipFlop;
+        public bool Sprite3LatchedYExpanded;
+        public bool Sprite3LineYExpanded;
         public int Sprite3Mc;
         public int Sprite3McBase;
+        public int Sprite3FetchPhase;
+        public int Sprite3FetchStartMc;
         public int Sprite3FetchRow;
         public int Sprite3DisplayRow;
+        public bool Sprite3FetchRowAdjusted;
+        public bool Sprite3DisplayRowAdjusted;
         public bool Sprite3LineVisible;
         public bool Sprite3LineDataValid;
         public int Sprite3LineDisplayRow;
+        public bool Sprite3LineDisplayRowAdjusted;
+        public byte Sprite3LineDataByte0;
+        public byte Sprite3LineDataByte1;
+        public byte Sprite3LineDataByte2;
+        public byte Sprite3RegisterD017;
+        public byte Sprite3PixelD017;
     }
 }

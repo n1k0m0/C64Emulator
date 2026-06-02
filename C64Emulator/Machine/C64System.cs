@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,7 @@ namespace C64Emulator.Core
         private readonly IecDrive1541 _drive11;
         private readonly IecKernalBridge _iecKernalBridge;
         private readonly MediaManager _mediaManager;
+        private const ushort KernalCursorBlinkSwitchAddress = 0x00CC;
         private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
         private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
         private readonly Queue<byte> _queuedPetsciiInput = new Queue<byte>();
@@ -338,6 +339,23 @@ namespace C64Emulator.Core
                 {
                     _sid.LocalAudioEnabled = value;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Disables the KERNAL text cursor so headless direct-SYS runs cannot modify the test screen.
+        /// </summary>
+        /// <remarks>
+        /// The C64 KERNAL periodically writes the blinking cursor character through the screen
+        /// editor IRQ path. VICE VIC-II reference programs are compared as pure graphics tests,
+        /// so the headless harness suppresses that unrelated screen RAM write before entering
+        /// the test program.
+        /// </remarks>
+        public void DisableKernalTextCursor()
+        {
+            lock (_syncRoot)
+            {
+                _bus.WriteRam(KernalCursorBlinkSwitchAddress, 0x01);
             }
         }
 

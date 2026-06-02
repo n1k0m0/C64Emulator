@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -402,17 +402,29 @@ namespace C64Emulator.Core
                 state.VerticalBorderActive ? "V" : "v");
             log.AppendFormat(
                 CultureInfo.InvariantCulture,
-                " spr3:dma{0}{1} flip:{2} mc:{3}/{4} row:{5}/{6} line:{7}{8}:{9}",
+                " spr3:dma{0}{1} flip:{2} y:{3}{4} d017:{5:X2}/{6:X2} mc:{7}/{8} ph:{9} start:{10} row:{11}{12}/{13}{14} line:{15}{16}:{17}{18} data:{19:X2}{20:X2}{21:X2}",
                 state.Sprite3DmaActive ? 1 : 0,
                 state.Sprite3DmaLatched ? 1 : 0,
                 state.Sprite3ExpandFlipFlop ? 1 : 0,
+                state.Sprite3LatchedYExpanded ? 1 : 0,
+                state.Sprite3LineYExpanded ? 1 : 0,
+                state.Sprite3RegisterD017,
+                state.Sprite3PixelD017,
                 state.Sprite3Mc,
                 state.Sprite3McBase,
+                state.Sprite3FetchPhase,
+                state.Sprite3FetchStartMc,
                 state.Sprite3FetchRow,
+                state.Sprite3FetchRowAdjusted ? "*" : string.Empty,
                 state.Sprite3DisplayRow,
+                state.Sprite3DisplayRowAdjusted ? "*" : string.Empty,
                 state.Sprite3LineVisible ? 1 : 0,
                 state.Sprite3LineDataValid ? 1 : 0,
-                state.Sprite3LineDisplayRow);
+                state.Sprite3LineDisplayRow,
+                state.Sprite3LineDisplayRowAdjusted ? "*" : string.Empty,
+                state.Sprite3LineDataByte0,
+                state.Sprite3LineDataByte1,
+                state.Sprite3LineDataByte2);
             if (state.PendingGraphicsDisplayState)
             {
                 log.AppendFormat(

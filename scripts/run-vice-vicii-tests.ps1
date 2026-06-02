@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$TestRoot = "vice_VICII_tests",
 
     [string]$OutputDirectory = "artifacts\vice-vicii-tests",
@@ -203,6 +203,10 @@ function Invoke-GoldenTest {
                 }
             }
         )
+    }
+
+    if ($Candidate.Directory -eq "videomode") {
+        $manifest.tests[0].arguments["disableKernalCursor"] = "true"
     }
 
     if ($StopOnD7FF) {

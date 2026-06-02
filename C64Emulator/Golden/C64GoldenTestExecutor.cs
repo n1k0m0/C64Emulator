@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +74,7 @@ namespace C64Emulator.Core
                     MountMediaInputs(system, test, context, result);
                 }
 
+                ApplyOptionalHeadlessTestState(system, test);
                 EnqueueOptionalCommand(system, test);
                 StartOptionalAddress(system, test);
                 string exitReason = RunMachineForTest(system, test, result);
@@ -132,6 +133,14 @@ namespace C64Emulator.Core
                 string message = system.MountMedia(mediaPath, ResolveDriveNumber(test));
                 result.ActualProperties["mediaMount"] = message;
                 result.Artifacts["media"] = Path.GetFullPath(mediaPath);
+            }
+        }
+
+        private static void ApplyOptionalHeadlessTestState(C64System system, GoldenTestDefinition test)
+        {
+            if (GetBoolArgument(test, "disableKernalCursor", false))
+            {
+                system.DisableKernalTextCursor();
             }
         }
 
