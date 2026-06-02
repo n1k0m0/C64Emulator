@@ -55,6 +55,26 @@ namespace C64Emulator.Core
             }
         }
 
+        private sealed class SerializerShortReadonlyArrayState
+        {
+            private readonly byte[] _values = { 0x11, 0x22, 0x33 };
+
+            public byte[] Values
+            {
+                get { return _values; }
+            }
+        }
+
+        private sealed class SerializerLongReadonlyArrayState
+        {
+            private readonly byte[] _values = { 0x41, 0x42, 0x43, 0x44, 0x45 };
+
+            public byte[] Values
+            {
+                get { return _values; }
+            }
+        }
+
         /// <summary>
         /// Runs all built-in accuracy checks.
         /// </summary>
@@ -84,6 +104,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC display sequencer tracks VMLI token", TestVicDisplaySequencerTracksVmliToken);
             failures += RunCase(output, "VIC FLI can create consecutive badlines", TestVicFliCanCreateConsecutiveBadlines);
             failures += RunCase(output, "VIC register writes are phased through render registers", TestVicRegisterWritesUseRenderRegisterPhase);
+            failures += RunCase(output, "VIC background color resolves after graphics delay", TestVicBackgroundColorResolvesAfterGraphicsDelay);
             failures += RunCase(output, "VIC midline D016 scroll affects current display source", TestVicMidlineD016ScrollAffectsCurrentDisplaySource);
             failures += RunCase(output, "VIC midline D016 CSEL affects horizontal border", TestVicMidlineD016CselAffectsHorizontalBorder);
             failures += RunCase(output, "VIC midline D011 RSEL affects vertical border", TestVicMidlineD011RselAffectsVerticalBorder);
@@ -96,6 +117,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
+            failures += RunCase(output, "State serializer tolerates resized readonly arrays", TestStateSerializerToleratesResizedReadonlyArrays);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
             failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
             failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
@@ -742,6 +764,31 @@ namespace C64Emulator.Core
             context.Equal("last rendered dot keeps phased border color", 0xFF68372Bu, frameBuffer.Pixels[(frameY * frameBuffer.Width) + frameX + 7]);
         }
 
+        private static void TestVicBackgroundColorResolvesAfterGraphicsDelay(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var frameBuffer = new FrameBuffer(C64Model.Pal.VisibleWidth, C64Model.Pal.VisibleHeight);
+            var vic = new Vic2(bus, frameBuffer, C64Model.Pal);
+
+            vic.Write(0x21, 0x06);
+            RunVicUntil(vic, bus, 60, 20);
+
+            vic.PrepareCycle();
+            VicTiming timing = vic.GetTiming();
+            int cropLeft = ((C64Model.Pal.CyclesPerLine * 8) - C64Model.Pal.VisibleWidth) / 2;
+            int cropTop = (C64Model.Pal.RasterLines - C64Model.Pal.VisibleHeight) / 2;
+            int frameX = timing.BeamX - cropLeft;
+            int frameY = timing.RasterLine - cropTop;
+            vic.Write(0x21, 0x00);
+            FinishPreparedVicCycleWithoutCpu(vic, bus);
+
+            context.Equal(
+                "delayed background pixel sees the output-phase D021 value",
+                0xFF000000u,
+                frameBuffer.Pixels[(frameY * frameBuffer.Width) + frameX]);
+        }
+
         private static void TestVicMidlineD016ScrollAffectsCurrentDisplaySource(AccuracyContext context)
         {
             string stableFrameHash = RenderD016SplitProbeFrame(false);
@@ -1310,6 +1357,51 @@ namespace C64Emulator.Core
             context.Equal("TOD remains at zero before PAL tenth", 0x00, cia.Read(0x08));
             cia.Tick();
             context.Equal("TOD increments at PAL tenth", 0x01, cia.Read(0x08));
+        }
+
+        private static void TestStateSerializerToleratesResizedReadonlyArrays(AccuracyContext context)
+        {
+            using (var stream = new MemoryStream())
+            {
+                var longState = new SerializerLongReadonlyArrayState();
+                using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
+                {
+                    StateSerializer.WriteObjectFields(writer, longState);
+                }
+
+                stream.Position = 0;
+                var shortTarget = new SerializerShortReadonlyArrayState();
+                using (var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, true))
+                {
+                    StateSerializer.ReadObjectFields(reader, shortTarget);
+                }
+
+                context.Equal("long source copies first byte", (byte)0x41, shortTarget.Values[0]);
+                context.Equal("long source copies second byte", (byte)0x42, shortTarget.Values[1]);
+                context.Equal("long source copies third byte", (byte)0x43, shortTarget.Values[2]);
+            }
+
+            using (var stream = new MemoryStream())
+            {
+                var shortState = new SerializerShortReadonlyArrayState();
+                using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
+                {
+                    StateSerializer.WriteObjectFields(writer, shortState);
+                }
+
+                stream.Position = 0;
+                var longTarget = new SerializerLongReadonlyArrayState();
+                using (var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, true))
+                {
+                    StateSerializer.ReadObjectFields(reader, longTarget);
+                }
+
+                context.Equal("short source copies first byte", (byte)0x11, longTarget.Values[0]);
+                context.Equal("short source copies second byte", (byte)0x22, longTarget.Values[1]);
+                context.Equal("short source copies third byte", (byte)0x33, longTarget.Values[2]);
+                context.Equal("short source keeps fourth default", (byte)0x44, longTarget.Values[3]);
+                context.Equal("short source keeps fifth default", (byte)0x45, longTarget.Values[4]);
+            }
         }
 
         private static void TestSidEnvelopeGateAttackRelease(AccuracyContext context)

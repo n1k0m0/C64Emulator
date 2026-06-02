@@ -312,6 +312,10 @@ namespace C64Emulator.Core
             }
 
             _ram[address] = value;
+            if (_vic != null)
+            {
+                _vic.NotifyCpuMemoryWrite(address, value);
+            }
         }
 
         /// <summary>

@@ -410,9 +410,10 @@ namespace C64Emulator.Core
             object existing = field.GetValue(instance);
             if (field.IsInitOnly && existing is Array existingArray && value is Array valueArray)
             {
-                if (existingArray.Rank == valueArray.Rank && existingArray.Length == valueArray.Length)
+                if (existingArray.Rank == valueArray.Rank)
                 {
-                    Array.Copy(valueArray, existingArray, valueArray.Length);
+                    int copyLength = Math.Min(existingArray.Length, valueArray.Length);
+                    Array.Copy(valueArray, existingArray, copyLength);
                     return;
                 }
             }

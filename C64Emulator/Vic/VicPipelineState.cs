@@ -56,5 +56,23 @@ namespace C64Emulator.Core
         public ushort DisplaySourceScreenBase;
         public ushort DisplaySourceCharacterBase;
         public ushort DisplaySourceBitmapBase;
+        public byte RegisterD011;
+        public byte RegisterD016;
+        public byte PixelD011;
+        public byte PixelD016;
+        public bool Line40Column;
+        public bool Line25Row;
+        public bool HorizontalBorderActive;
+        public bool VerticalBorderActive;
+        public bool Sprite3DmaActive;
+        public bool Sprite3DmaLatched;
+        public bool Sprite3ExpandFlipFlop;
+        public int Sprite3Mc;
+        public int Sprite3McBase;
+        public int Sprite3FetchRow;
+        public int Sprite3DisplayRow;
+        public bool Sprite3LineVisible;
+        public bool Sprite3LineDataValid;
+        public int Sprite3LineDisplayRow;
     }
 }

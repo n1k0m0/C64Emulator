@@ -317,6 +317,16 @@ namespace C64Emulator.Core
             }
 
             ushort address = entry.Address;
+            if (address == 0xD7FF)
+            {
+                return true;
+            }
+
+            if (address >= 0x2001 && address <= 0x2007)
+            {
+                return true;
+            }
+
             if (address >= 0xD000 && address <= 0xD02E)
             {
                 return true;
@@ -379,6 +389,30 @@ namespace C64Emulator.Core
                 state.LineBitmapMode ? "B" : "b",
                 state.LineExtendedColorMode ? "E" : "e",
                 state.LineMulticolorMode ? "M" : "m");
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                " regs:d011={0:X2}/{1:X2} d016={2:X2}/{3:X2} line:{4}{5} border:{6}{7}",
+                state.RegisterD011,
+                state.PixelD011,
+                state.RegisterD016,
+                state.PixelD016,
+                state.Line40Column ? "40" : "38",
+                state.Line25Row ? "x25" : "x24",
+                state.HorizontalBorderActive ? "H" : "h",
+                state.VerticalBorderActive ? "V" : "v");
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                " spr3:dma{0}{1} flip:{2} mc:{3}/{4} row:{5}/{6} line:{7}{8}:{9}",
+                state.Sprite3DmaActive ? 1 : 0,
+                state.Sprite3DmaLatched ? 1 : 0,
+                state.Sprite3ExpandFlipFlop ? 1 : 0,
+                state.Sprite3Mc,
+                state.Sprite3McBase,
+                state.Sprite3FetchRow,
+                state.Sprite3DisplayRow,
+                state.Sprite3LineVisible ? 1 : 0,
+                state.Sprite3LineDataValid ? 1 : 0,
+                state.Sprite3LineDisplayRow);
             if (state.PendingGraphicsDisplayState)
             {
                 log.AppendFormat(
@@ -386,6 +420,7 @@ namespace C64Emulator.Core
                     " pendingDisplay:{0}",
                     state.PendingGraphicsDisplayStateCycle);
             }
+
         }
 
         /// <summary>

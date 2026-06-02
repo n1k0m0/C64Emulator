@@ -33,8 +33,11 @@ namespace C64Emulator.Core
         private const int CharacterWidth = 8;
         private const int CharacterHeight = 8;
         private const int DenLatchRasterLine = 0x30;
-        private const int GraphicsOutputDelayPixels = 12;
+        private const int GraphicsOutputDelayPixels = 0;
         private const int CpuWriteVisibleDot = 0;
+        private const int ModeWriteVisibleDot = 0;
+        private const int D011ModeWriteBackfillPixels = 17;
+        private const int D016ModeWriteBackfillPixels = 16;
         private const int InnerDisplayWidth = VisibleColumns * CharacterWidth;
         private const int InnerDisplayHeight = VisibleRows * CharacterHeight;
         private const int CropLeft = (TotalRasterWidth - 403) / 2;
@@ -175,6 +178,9 @@ namespace C64Emulator.Core
         private readonly int[] _spriteFetchRow = new int[8];
         private readonly int[] _spriteFetchPhase = new int[8];
         private readonly int[] _spriteDisplayRow = new int[8];
+        private readonly int[] _spriteMc = new int[8];
+        private readonly int[] _spriteMcBase = new int[8];
+        private readonly int[] _spriteFetchStartMc = new int[8];
         private readonly bool[] _spriteRowHistoryActive = new bool[8];
         private readonly bool[] _spritePreviousLineYExpanded = new bool[8];
         private readonly bool[] _spriteFetchRowAdjusted = new bool[8];
@@ -198,6 +204,7 @@ namespace C64Emulator.Core
         private readonly int[] _spriteLineDisplayRow = new int[8];
         private readonly bool[] _spriteLineDisplayRowAdjusted = new bool[8];
         private readonly bool[] _spriteDataValid = new bool[8];
+        private byte _spriteCycle55ExpansionMask;
         private readonly byte[] _spritePointers = new byte[8];
         private readonly byte[] _spriteDataByte0 = new byte[8];
         private readonly byte[] _spriteDataByte1 = new byte[8];
@@ -230,6 +237,7 @@ namespace C64Emulator.Core
         private bool _isBadLine;
         private bool _badLineConditionThisCycle;
         private int _badLineConditionStartCycle;
+        private bool _earlyD011BadLinePulseBeforeCycle14;
 #pragma warning disable 0414
         // Kept for savestate compatibility with builds that serialized a per-line guard.
         private bool _rasterIrqTriggeredThisLine;
@@ -274,6 +282,7 @@ namespace C64Emulator.Core
 #pragma warning restore 0414
         private VicBusSlot _currentBusSlot;
         private bool _displayEnableFrameLatched;
+        private bool _displayWindowFrameLatched;
         private bool _lineDisplayEnabled;
         private bool _line40Column;
         private bool _line25Row;
@@ -292,6 +301,7 @@ namespace C64Emulator.Core
         private int _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
         private bool _verticalBorderActive = true;
         private bool _horizontalBorderActive = true;
+        private bool _horizontalSideBorderCarryOpen;
         private ushort _displaySourceScreenBaseAbsolute;
         private ushort _displaySourceCharacterBaseAbsolute;
         private ushort _displaySourceBitmapBaseAbsolute;
@@ -308,9 +318,13 @@ namespace C64Emulator.Core
         private byte _graphicsSequencerScreenCode;
         private byte _graphicsSequencerColorNibble;
         private byte _graphicsSequencerPattern;
+#pragma warning disable 0414
+        // Kept so savestates written by builds with explicit sequencer mode latches
+        // continue to deserialize while raw pixels now resolve modes at output time.
         private bool _graphicsSequencerBitmapMode;
         private bool _graphicsSequencerExtendedColorMode;
         private bool _graphicsSequencerMulticolorMode;
+#pragma warning restore 0414
 
         /// <summary>
         /// Initializes a new Vic2 instance.
@@ -383,7 +397,10 @@ namespace C64Emulator.Core
             }
 
             UpdateGraphicsStateForCurrentCycle();
+            CaptureSpriteExpansionFlipFlopMaskForCurrentCycle();
             UpdateSpriteDmaStartForCurrentCycle();
+            LoadSpriteDataCountersForCurrentCycle();
+            UpdateSpriteMcBaseForCurrentCycle();
             ApplyGraphicsBusOverrides();
             _cpuBusBlockedThisCycle = _currentBusSlot.BlocksCpu;
             ExecuteFetchAction(_currentBusSlot.Phi1Action);
@@ -396,6 +413,8 @@ namespace C64Emulator.Core
         /// </summary>
         public void FinishCycle()
         {
+            UpdateDisplayEnableLatchesAfterCpuAccess();
+            UpdateSpriteExpansionFlipFlopsForCurrentCycle();
             ExecutePhi2FetchAction();
             RenderCurrentCyclePixels();
 
@@ -516,6 +535,7 @@ namespace C64Emulator.Core
         public void Write(ushort address, byte value)
         {
             address &= 0x3F;
+            byte previousValue = _registers[address];
             switch (address)
             {
                 case 0x11:
@@ -523,6 +543,7 @@ namespace C64Emulator.Core
                     _rasterIrqLine = (ushort)((_rasterIrqLine & 0x00FF) | ((value & 0x80) << 1));
                     TriggerRasterIrqForCurrentLineIfMatched();
                     TrackVerticalBorderRselWrite(value);
+                    TrackEarlyD011BadLinePulse(previousValue, value);
                     break;
                 case 0x12:
                     _registers[0x12] = value;
@@ -578,8 +599,129 @@ namespace C64Emulator.Core
                     break;
             }
 
+            if (address == 0x17)
+            {
+                ApplySpriteYExpansionWrite(previousValue, _registers[0x17]);
+            }
+            else if (address == 0x16)
+            {
+                TrackHorizontalBorderCselWrite(previousValue, _registers[0x16]);
+            }
+
             BackfillCroppedLeftBorderColor(address, _registers[address]);
+            BackfillCroppedLeftBackgroundColor(address, _registers[address]);
+            BackfillModeRegisterWrite(address, _registers[address]);
             QueuePixelRegisterWrite(address, _registers[address]);
+        }
+
+        /// <summary>
+        /// Lets the VIC react to CPU writes that race the character-pattern fetch on the current scanline.
+        /// </summary>
+        public void NotifyCpuMemoryWrite(ushort address, byte value)
+        {
+            BackfillCharacterPatternWrite(address, value);
+        }
+
+        /// <summary>
+        /// Applies the asynchronous part of the sprite Y-expansion register.
+        /// </summary>
+        private void ApplySpriteYExpansionWrite(byte previousValue, byte value)
+        {
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                int mask = 1 << spriteIndex;
+                if ((previousValue & mask) != 0 && (value & mask) == 0)
+                {
+                    _spriteExpandFlipFlop[spriteIndex] = true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Remembers a short pre-cycle-14 D011/Y-scroll pulse that is enough to start the next badline.
+        /// </summary>
+        private void TrackEarlyD011BadLinePulse(byte previousValue, byte value)
+        {
+            if (!_cyclePrepared || _cycleInLine >= 14)
+            {
+                return;
+            }
+
+            bool denStaysEnabled = (previousValue & value & 0x10) != 0;
+            bool onlyYScrollChanged = ((previousValue ^ value) & 0x78) == 0 &&
+                ((previousValue ^ value) & 0x07) != 0;
+            bool newYScrollMatchesRaster = _rasterLine >= 0x30 &&
+                _rasterLine <= 0xF7 &&
+                ((_rasterLine & 0x07) == (value & 0x07));
+            bool previousYScrollMissedRaster = (_rasterLine & 0x07) != (previousValue & 0x07);
+            if (!denStaysEnabled ||
+                !onlyYScrollChanged ||
+                !_displayEnableFrameLatched ||
+                !newYScrollMatchesRaster ||
+                !previousYScrollMissedRaster)
+            {
+                return;
+            }
+
+            _earlyD011BadLinePulseBeforeCycle14 = true;
+            if (_badLineConditionStartCycle > _cycleInLine)
+            {
+                _badLineConditionStartCycle = _cycleInLine;
+            }
+        }
+
+        /// Tracks late CSEL writes that can skip the right horizontal-border compare and open the side border.
+        /// </summary>
+        private void TrackHorizontalBorderCselWrite(byte previousValue, byte value)
+        {
+            bool clearedColumnSelect = (previousValue & 0x08) != 0 && (value & 0x08) == 0;
+            if (!clearedColumnSelect ||
+                !_cyclePrepared ||
+                !_lineDisplayEnabled ||
+                _verticalBorderActive ||
+                !_horizontalBorderActive ||
+                _cycleInLine < 52)
+            {
+                return;
+            }
+
+            _horizontalBorderActive = false;
+            _horizontalSideBorderCarryOpen = true;
+            BackfillLateOpenedRightBorder();
+        }
+
+        /// <summary>
+        /// Repaints pixels that were emitted as border before a late CSEL write opened the side border.
+        /// </summary>
+        private void BackfillLateOpenedRightBorder()
+        {
+            int frameY = _rasterLine - CropTop;
+            if ((uint)frameY >= (uint)_model.VisibleHeight)
+            {
+                return;
+            }
+
+            int oldRight = ((_pixelRegisters[0x16] & 0x08) != 0)
+                ? BorderLeft + (VisibleColumns * CharacterWidth)
+                : NarrowBorderLeft + (NarrowVisibleColumns * CharacterWidth);
+            int frameXLimit = (_cycleInLine * PixelsPerCycle) + CpuWriteVisibleDot - CropLeft;
+            if (frameXLimit <= oldRight)
+            {
+                return;
+            }
+
+            uint oldBorderColor = Palette[_pixelRegisters[0x20] & 0x0F];
+            uint backgroundColor = Palette[_pixelRegisters[0x21] & 0x0F];
+            int rowOffset = frameY * _frameBuffer.Width;
+            int right = frameXLimit > _frameBuffer.Width ? _frameBuffer.Width : frameXLimit;
+            for (int frameX = oldRight; frameX < right; frameX++)
+            {
+                int pixelIndex = rowOffset + frameX;
+                if (_frameBuffer.Pixels[pixelIndex] == oldBorderColor)
+                {
+                    _frameBuffer.SetPixelUnchecked(frameX, frameY, backgroundColor);
+                }
+            }
         }
 
         /// <summary>
@@ -613,6 +755,252 @@ namespace C64Emulator.Core
                     _frameBuffer.SetPixelUnchecked(frameX, frameY, color);
                 }
             }
+        }
+
+        /// <summary>
+        /// Backfills early background-color writes that land before the delayed graphics output catches up.
+        /// </summary>
+        private void BackfillCroppedLeftBackgroundColor(ushort address, byte value)
+        {
+            if (address != 0x21 || !_cyclePrepared)
+            {
+                return;
+            }
+
+            int frameY = _rasterLine - CropTop;
+            if ((uint)frameY >= (uint)_model.VisibleHeight || !IsGraphicsDisplayLine())
+            {
+                return;
+            }
+
+            int activeLeft = GetCurrentDisplayLeftFrame();
+            int activeRight = activeLeft + GetCurrentDisplayWidth();
+            int frameXLimit = (_cycleInLine * PixelsPerCycle) + CpuWriteVisibleDot - CropLeft;
+            if (frameXLimit <= activeLeft ||
+                frameXLimit > activeRight ||
+                frameXLimit > activeLeft + (CharacterWidth * 4))
+            {
+                return;
+            }
+
+            uint oldColor = Palette[_pixelRegisters[0x21] & 0x0F];
+            uint color = Palette[value & 0x0F];
+            int rowOffset = frameY * _frameBuffer.Width;
+            for (int frameX = activeLeft; frameX < frameXLimit; frameX++)
+            {
+                int pixelIndex = rowOffset + frameX;
+                if (_frameBuffer.Pixels[pixelIndex] == oldColor)
+                {
+                    _frameBuffer.SetPixelUnchecked(frameX, frameY, color);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Repaints text pixels affected by an in-flight CPU write to the active character generator.
+        /// </summary>
+        private void BackfillCharacterPatternWrite(ushort address, byte value)
+        {
+            if (!_cyclePrepared ||
+                _lineBitmapMode ||
+                !_lineDisplayEnabled ||
+                _verticalBorderActive ||
+                _graphicsLinePixelRow < 0)
+            {
+                return;
+            }
+
+            int characterOffset = address - _displaySourceCharacterBaseAbsolute;
+            if (characterOffset < 0 || characterOffset >= 0x0800)
+            {
+                return;
+            }
+
+            int pixelRow = characterOffset & 0x07;
+            if (pixelRow != _graphicsLinePixelRow)
+            {
+                return;
+            }
+
+            int characterCode = (characterOffset >> 3) & 0xFF;
+            int firstCell = _cycleInLine - 13;
+            for (int cellX = firstCell; cellX < firstCell + 2; cellX++)
+            {
+                BackfillCharacterPatternCell(cellX, characterCode, value);
+            }
+        }
+
+        /// <summary>
+        /// Repaints one character cell on the current scanline after a racing character-pattern write.
+        /// </summary>
+        private void BackfillCharacterPatternCell(int cellX, int characterCode, byte pattern)
+        {
+            if ((uint)cellX >= VisibleColumns)
+            {
+                return;
+            }
+
+            int frameY = _rasterLine - CropTop;
+            if ((uint)frameY >= (uint)_model.VisibleHeight)
+            {
+                return;
+            }
+
+            int frameXStart = GetCurrentDisplayLeftFrame() + (cellX * CharacterWidth);
+            int frameXEnd = frameXStart + CharacterWidth;
+            if (frameXEnd <= 0 || frameXStart >= _frameBuffer.Width)
+            {
+                return;
+            }
+
+            byte screenCode;
+            byte colorNibble;
+            if (!TryGetCurrentTextCell(cellX, out screenCode, out colorNibble))
+            {
+                return;
+            }
+
+            int effectiveCharacterCode = _displaySourceExtendedColorMode ? (screenCode & 0x3F) : screenCode;
+            if (effectiveCharacterCode != characterCode)
+            {
+                return;
+            }
+
+            int left = frameXStart < 0 ? 0 : frameXStart;
+            int right = frameXEnd > _frameBuffer.Width ? _frameBuffer.Width : frameXEnd;
+            for (int frameX = left; frameX < right; frameX++)
+            {
+                int pixelXInCell = frameX - frameXStart;
+                PixelResult pixel = ComputeCharacterPixel(
+                    pixelXInCell,
+                    screenCode,
+                    colorNibble,
+                    pattern,
+                    _displaySourceExtendedColorMode,
+                    _displaySourceMulticolorMode);
+                pixel = ResolveOutputPixel(pixel);
+                ApplySprites(ref pixel, frameX, frameY);
+                _frameBuffer.SetPixelUnchecked(frameX, frameY, pixel.Color);
+            }
+
+            _videoPatternBytes[cellX] = pattern;
+            _videoPatternFetched[cellX] = true;
+            _videoPatternBitmapModes[cellX] = false;
+            _videoPatternExtendedColorModes[cellX] = _displaySourceExtendedColorMode;
+            _videoPatternMulticolorModes[cellX] = _displaySourceMulticolorMode;
+            _videoPatternIdle[cellX] = false;
+            if (_graphicsSequencerCellLoaded && _graphicsSequencerCellX == cellX)
+            {
+                _graphicsSequencerPattern = pattern;
+            }
+        }
+
+        /// <summary>
+        /// Repaints the already emitted part of a raster-line mode split.
+        /// </summary>
+        private void BackfillModeRegisterWrite(ushort address, byte value)
+        {
+            if (!IsModePixelRegister(address) ||
+                !_cyclePrepared ||
+                !_lineDisplayEnabled)
+            {
+                return;
+            }
+
+            int frameY = _rasterLine - CropTop;
+            if ((uint)frameY >= (uint)_model.VisibleHeight)
+            {
+                return;
+            }
+
+            int activeTop = GetCurrentDisplayTopFrame();
+            int activeBottom = activeTop + GetCurrentDisplayHeight();
+            if (_verticalBorderActive ||
+                frameY < activeTop ||
+                frameY >= activeBottom)
+            {
+                return;
+            }
+
+            int backfillPixels = address == 0x11
+                ? D011ModeWriteBackfillPixels
+                : D016ModeWriteBackfillPixels;
+            int frameXEnd = (_cycleInLine * PixelsPerCycle) + ModeWriteVisibleDot - CropLeft;
+            int frameXStart = frameXEnd - backfillPixels;
+            if (frameXEnd <= 0 || frameXStart >= _frameBuffer.Width)
+            {
+                return;
+            }
+
+            int left = frameXStart < 0 ? 0 : frameXStart;
+            int right = frameXEnd > _frameBuffer.Width ? _frameBuffer.Width : frameXEnd;
+            int activeLeft = GetCurrentDisplayLeftFrame();
+            int activeRight = activeLeft + GetCurrentDisplayWidth();
+            int displayY = frameY - activeTop;
+            byte oldPixelRegister = _pixelRegisters[address];
+            bool oldCellLoaded = _graphicsSequencerCellLoaded;
+            int oldCellX = _graphicsSequencerCellX;
+            byte oldScreenCode = _graphicsSequencerScreenCode;
+            byte oldColorNibble = _graphicsSequencerColorNibble;
+            byte oldPattern = _graphicsSequencerPattern;
+            bool oldBitmapMode = _graphicsSequencerBitmapMode;
+            bool oldExtendedColorMode = _graphicsSequencerExtendedColorMode;
+            bool oldMulticolorMode = _graphicsSequencerMulticolorMode;
+
+            _pixelRegisters[address] = value;
+            for (int frameX = left; frameX < right; frameX++)
+            {
+                if (frameX < activeLeft || frameX >= activeRight)
+                {
+                    continue;
+                }
+
+                if (!IsGraphicsSourceVisible(frameX, frameY) ||
+                    !IsGraphicsSourceActiveForCurrentCycle(frameX - activeLeft))
+                {
+                    continue;
+                }
+
+                PixelResult pixel = ComputeGraphicsPixel(frameX - activeLeft, displayY);
+                pixel = ResolveOutputPixel(pixel);
+                ApplySprites(ref pixel, frameX, frameY);
+                _frameBuffer.SetPixelUnchecked(frameX, frameY, pixel.Color);
+            }
+
+            _pixelRegisters[address] = oldPixelRegister;
+            _graphicsSequencerCellLoaded = oldCellLoaded;
+            _graphicsSequencerCellX = oldCellX;
+            _graphicsSequencerScreenCode = oldScreenCode;
+            _graphicsSequencerColorNibble = oldColorNibble;
+            _graphicsSequencerPattern = oldPattern;
+            _graphicsSequencerBitmapMode = oldBitmapMode;
+            _graphicsSequencerExtendedColorMode = oldExtendedColorMode;
+            _graphicsSequencerMulticolorMode = oldMulticolorMode;
+        }
+
+        /// <summary>
+        /// Reads the current text cell from the latched matrix when possible, otherwise from VIC memory.
+        /// </summary>
+        private bool TryGetCurrentTextCell(int cellX, out byte screenCode, out byte colorNibble)
+        {
+            if (CanUseLatchedMatrixCell(cellX))
+            {
+                screenCode = _videoMatrixScreenCodes[cellX];
+                colorNibble = _videoMatrixColorNibbles[cellX];
+                return true;
+            }
+
+            if (_graphicsLineCellY < 0 || _graphicsLineCellY >= VisibleRows)
+            {
+                screenCode = 0;
+                colorNibble = 0;
+                return false;
+            }
+
+            int matrixIndex = NormalizeVideoMatrixIndex((_graphicsLineCellY * VisibleColumns) + cellX);
+            screenCode = ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
+            colorNibble = _bus.ReadColorRam((ushort)matrixIndex);
+            return true;
         }
 
         /// <summary>
@@ -677,7 +1065,25 @@ namespace C64Emulator.Core
                 LineYScroll = _lineYScroll,
                 DisplaySourceScreenBase = _displaySourceScreenBaseAbsolute,
                 DisplaySourceCharacterBase = _displaySourceCharacterBaseAbsolute,
-                DisplaySourceBitmapBase = _displaySourceBitmapBaseAbsolute
+                DisplaySourceBitmapBase = _displaySourceBitmapBaseAbsolute,
+                RegisterD011 = _registers[0x11],
+                RegisterD016 = _registers[0x16],
+                PixelD011 = _pixelRegisters[0x11],
+                PixelD016 = _pixelRegisters[0x16],
+                Line40Column = _line40Column,
+                Line25Row = _line25Row,
+                HorizontalBorderActive = _horizontalBorderActive,
+                VerticalBorderActive = _verticalBorderActive,
+                Sprite3DmaActive = _spriteDmaActive[3],
+                Sprite3DmaLatched = _spriteDmaLatched[3],
+                Sprite3ExpandFlipFlop = _spriteExpandFlipFlop[3],
+                Sprite3Mc = _spriteMc[3],
+                Sprite3McBase = _spriteMcBase[3],
+                Sprite3FetchRow = _spriteFetchRow[3],
+                Sprite3DisplayRow = _spriteDisplayRow[3],
+                Sprite3LineVisible = _spriteLineVisible[3],
+                Sprite3LineDataValid = _spriteLineDataValid[3],
+                Sprite3LineDisplayRow = _spriteLineDisplayRow[3]
             };
         }
 
@@ -717,6 +1123,7 @@ namespace C64Emulator.Core
             _cpuBusBlockedThisCycle = false;
             _isBadLine = false;
             _badLineConditionStartCycle = CyclesPerLine + 1;
+            _earlyD011BadLinePulseBeforeCycle14 = false;
             _rasterIrqTriggeredThisLine = false;
             _rasterIrqCompareState = false;
             _videoMatrixValid = false;
@@ -760,6 +1167,9 @@ namespace C64Emulator.Core
             System.Array.Clear(_spriteFetchRow, 0, _spriteFetchRow.Length);
             System.Array.Clear(_spriteFetchPhase, 0, _spriteFetchPhase.Length);
             System.Array.Clear(_spriteDisplayRow, 0, _spriteDisplayRow.Length);
+            System.Array.Clear(_spriteMc, 0, _spriteMc.Length);
+            System.Array.Clear(_spriteMcBase, 0, _spriteMcBase.Length);
+            System.Array.Clear(_spriteFetchStartMc, 0, _spriteFetchStartMc.Length);
             System.Array.Clear(_spriteRowHistoryActive, 0, _spriteRowHistoryActive.Length);
             System.Array.Clear(_spritePreviousLineYExpanded, 0, _spritePreviousLineYExpanded.Length);
             System.Array.Clear(_spriteFetchRowAdjusted, 0, _spriteFetchRowAdjusted.Length);
@@ -783,6 +1193,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_spriteLineDisplayRow, 0, _spriteLineDisplayRow.Length);
             System.Array.Clear(_spriteLineDisplayRowAdjusted, 0, _spriteLineDisplayRowAdjusted.Length);
             System.Array.Clear(_spriteDataValid, 0, _spriteDataValid.Length);
+            _spriteCycle55ExpansionMask = 0;
             System.Array.Clear(_spritePointers, 0, _spritePointers.Length);
             System.Array.Clear(_spriteDataByte0, 0, _spriteDataByte0.Length);
             System.Array.Clear(_spriteDataByte1, 0, _spriteDataByte1.Length);
@@ -801,6 +1212,7 @@ namespace C64Emulator.Core
             System.Array.Clear(_videoPatternIdle, 0, _videoPatternIdle.Length);
             _currentBusSlot = default(VicBusSlot);
             _displayEnableFrameLatched = false;
+            _displayWindowFrameLatched = false;
             _lineDisplayEnabled = true;
             _line40Column = true;
             _line25Row = true;
@@ -819,6 +1231,7 @@ namespace C64Emulator.Core
             _pendingVerticalBorderCloseRasterLine = NoPendingRasterLine;
             _verticalBorderActive = true;
             _horizontalBorderActive = true;
+            _horizontalSideBorderCarryOpen = false;
             SynchronizePixelRegisters();
             LatchDisplaySourceFromLineState();
             _frameBuffer.Clear(Palette[_registers[0x20] & 0x0F]);
@@ -843,7 +1256,7 @@ namespace C64Emulator.Core
         /// <summary>
         /// Applies all CPU writes that become visible at the current pixel phase.
         /// </summary>
-        private void ApplyPendingPixelRegisterWrites()
+        private void ApplyPendingPixelRegisterWrites(int dot)
         {
             for (int index = 0; index < _pendingPixelRegisterWrites.Length; index++)
             {
@@ -852,9 +1265,23 @@ namespace C64Emulator.Core
                     continue;
                 }
 
+                int visibleDot = IsModePixelRegister(index) ? ModeWriteVisibleDot : CpuWriteVisibleDot;
+                if (dot != visibleDot)
+                {
+                    continue;
+                }
+
                 _pixelRegisters[index] = _pendingPixelRegisterValues[index];
                 _pendingPixelRegisterWrites[index] = false;
             }
+        }
+
+        /// <summary>
+        /// Returns whether the register carries VIC display mode bits with their own output phase.
+        /// </summary>
+        private static bool IsModePixelRegister(int index)
+        {
+            return index == 0x11 || index == 0x16;
         }
 
         /// <summary>
@@ -877,10 +1304,7 @@ namespace C64Emulator.Core
 
             for (int dot = 0; dot < PixelsPerCycle; dot++)
             {
-                if (dot == CpuWriteVisibleDot)
-                {
-                    ApplyPendingPixelRegisterWrites();
-                }
+                ApplyPendingPixelRegisterWrites(dot);
 
                 int beamX = beamXStart + dot;
                 int frameX = beamX - CropLeft;
@@ -922,9 +1346,9 @@ namespace C64Emulator.Core
                 IsGraphicsSourceActiveForCurrentCycle(sourceFrameX - activeDisplayLeft);
             PixelResult graphicsPixel = sourceGraphicsVisible
                 ? ComputeGraphicsPixel(sourceFrameX - activeDisplayLeft, frameY - activeDisplayTop)
-                : CreateBackgroundPixel(GetBackgroundColor(0));
+                : CreateBackgroundRegisterPixel(0, false);
             PixelResult delayedGraphicsPixel = DelayGraphicsPixel(graphicsPixel);
-            PixelResult result = currentGraphicsVisible ? delayedGraphicsPixel : borderPixel;
+            PixelResult result = currentGraphicsVisible ? ResolveOutputPixel(delayedGraphicsPixel) : borderPixel;
 
             if (!sourceGraphicsVisible)
             {
@@ -991,7 +1415,7 @@ namespace C64Emulator.Core
             if (scrolledX < 0 || scrolledX >= InnerDisplayWidth)
             {
                 _graphicsSequencerCellLoaded = false;
-                return CreateBackgroundPixel(GetBackgroundColor(0));
+                return CreateBackgroundRegisterPixel(0, false);
             }
 
             int cellX = scrolledX / CharacterWidth;
@@ -1008,43 +1432,58 @@ namespace C64Emulator.Core
                 }
             }
 
-            if (_graphicsSequencerBitmapMode)
+            return CreateRawGraphicsPixel(
+                pixelXInCell,
+                _graphicsSequencerScreenCode,
+                _graphicsSequencerColorNibble,
+                _graphicsSequencerPattern);
+        }
+
+        /// <summary>
+        /// Resolves a delayed raw graphics pixel through the currently visible VIC mode bits.
+        /// </summary>
+        private PixelResult ResolveRawGraphicsPixel(PixelResult rawPixel)
+        {
+            bool bitmapMode = (_pixelRegisters[0x11] & 0x20) != 0;
+            bool extendedColorMode = (_pixelRegisters[0x11] & 0x40) != 0;
+            bool multicolorMode = (_pixelRegisters[0x16] & 0x10) != 0;
+            if (bitmapMode)
             {
                 // ECM combined with bitmap selects an illegal VIC-II mode; the chip
                 // blanks the graphics output while the hidden sequencer still produces
                 // foreground/background bits for sprite priority and collisions.
-                if (_graphicsSequencerExtendedColorMode)
+                if (extendedColorMode)
                 {
                     return ComputeInvalidBitmapPixel(
-                        pixelXInCell,
-                        _graphicsSequencerPattern,
-                        _graphicsSequencerMulticolorMode);
+                        rawPixel.RawPixelXInCell,
+                        rawPixel.RawPattern,
+                        multicolorMode);
                 }
 
                 return ComputeBitmapPixel(
-                    pixelXInCell,
-                    _graphicsSequencerScreenCode,
-                    _graphicsSequencerColorNibble,
-                    _graphicsSequencerPattern,
-                    _graphicsSequencerMulticolorMode && !_graphicsSequencerExtendedColorMode);
+                    rawPixel.RawPixelXInCell,
+                    rawPixel.RawScreenCode,
+                    rawPixel.RawColorNibble,
+                    rawPixel.RawPattern,
+                    multicolorMode && !extendedColorMode);
             }
 
             // ECM combined with multicolor text is illegal as well and must blank.
-            if (_graphicsSequencerExtendedColorMode && _graphicsSequencerMulticolorMode)
+            if (extendedColorMode && multicolorMode)
             {
                 return ComputeInvalidCharacterPixel(
-                    pixelXInCell,
-                    _graphicsSequencerColorNibble,
-                    _graphicsSequencerPattern);
+                    rawPixel.RawPixelXInCell,
+                    rawPixel.RawColorNibble,
+                    rawPixel.RawPattern);
             }
 
             return ComputeCharacterPixel(
-                pixelXInCell,
-                _graphicsSequencerScreenCode,
-                _graphicsSequencerColorNibble,
-                _graphicsSequencerPattern,
-                _graphicsSequencerExtendedColorMode,
-                _graphicsSequencerMulticolorMode);
+                rawPixel.RawPixelXInCell,
+                rawPixel.RawScreenCode,
+                rawPixel.RawColorNibble,
+                rawPixel.RawPattern,
+                extendedColorMode,
+                multicolorMode);
         }
 
         /// <summary>
@@ -1066,11 +1505,11 @@ namespace C64Emulator.Core
                 switch (pair)
                 {
                     case 0:
-                        return CreateBackgroundPixel(GetBackgroundColor(0));
+                        return CreateBackgroundRegisterPixel(0, false);
                     case 1:
-                        return CreateBackgroundPixel(GetBackgroundColor(1));
+                        return CreateBackgroundRegisterPixel(1, false);
                     case 2:
-                        return CreateForegroundPixel(GetBackgroundColor(2));
+                        return CreateBackgroundRegisterPixel(2, true);
                     default:
                         return CreateForegroundPixel(Palette[colorNibble & 0x07]);
                 }
@@ -1081,10 +1520,10 @@ namespace C64Emulator.Core
             {
                 if (extendedColorMode)
                 {
-                    return CreateBackgroundPixel(GetBackgroundColor((screenCode >> 6) & 0x03));
+                    return CreateBackgroundRegisterPixel((screenCode >> 6) & 0x03, false);
                 }
 
-                return CreateBackgroundPixel(GetBackgroundColor(0));
+                return CreateBackgroundRegisterPixel(0, false);
             }
 
             return CreateForegroundPixel(Palette[colorNibble & 0x0F]);
@@ -1106,7 +1545,7 @@ namespace C64Emulator.Core
                 switch (pair)
                 {
                     case 0:
-                        return CreateBackgroundPixel(GetBackgroundColor(0));
+                        return CreateBackgroundRegisterPixel(0, false);
                     case 1:
                         return CreateBackgroundPixel(Palette[(screenCode >> 4) & 0x0F]);
                     case 2:
@@ -1173,7 +1612,15 @@ namespace C64Emulator.Core
                 _videoPatternFetched[cellX];
             if (hasLatchedPattern && _videoPatternIdle[cellX])
             {
-                return false;
+                _graphicsSequencerScreenCode = 0;
+                _graphicsSequencerColorNibble = 0;
+                _graphicsSequencerPattern = _videoPatternBytes[cellX];
+                _graphicsSequencerBitmapMode = false;
+                _graphicsSequencerExtendedColorMode = _videoPatternExtendedColorModes[cellX];
+                _graphicsSequencerMulticolorMode = false;
+                _graphicsSequencerCellLoaded = true;
+                _graphicsSequencerCellX = cellX;
+                return true;
             }
 
             bool hasLatchedMatrix = CanUseLatchedMatrixCell(cellX);
@@ -1270,7 +1717,7 @@ namespace C64Emulator.Core
                 return CreateBackgroundPixel(Palette[0]);
             }
 
-            return CreateBackgroundPixel(GetBackgroundColor(0));
+            return CreateBackgroundRegisterPixel(0, false);
         }
 
         /// <summary>
@@ -1576,14 +2023,6 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Gets the background color value.
-        /// </summary>
-        private uint GetBackgroundColor(int index)
-        {
-            return Palette[_pixelRegisters[0x21 + (index & 0x03)] & 0x0F];
-        }
-
-        /// <summary>
         /// Gets the vic bank base value.
         /// </summary>
         private ushort GetVicBankBase()
@@ -1807,6 +2246,7 @@ namespace C64Emulator.Core
         {
             if (_rasterLine == 0)
             {
+                _displayWindowFrameLatched = false;
                 _graphicsDisplayState = false;
                 _graphicsVc = 0;
                 _graphicsVcBase = 0;
@@ -1832,6 +2272,7 @@ namespace C64Emulator.Core
             _isBadLine = false;
             _badLineConditionThisCycle = false;
             _badLineConditionStartCycle = CyclesPerLine + 1;
+            _earlyD011BadLinePulseBeforeCycle14 = false;
             _matrixFetchStartedThisLine = false;
             _matrixFetchRequestStartCycle = CyclesPerLine + 1;
             _matrixFetchStartCycle = CyclesPerLine + 1;
@@ -1933,6 +2374,11 @@ namespace C64Emulator.Core
         /// </summary>
         private PixelResult DelayGraphicsPixel(PixelResult graphicsPixel)
         {
+            if (_graphicsOutputDelay.Length == 0)
+            {
+                return graphicsPixel;
+            }
+
             PixelResult delayedPixel = _graphicsOutputDelay[_graphicsOutputDelayIndex];
             _graphicsOutputDelay[_graphicsOutputDelayIndex] = graphicsPixel;
             _graphicsOutputDelayIndex++;
@@ -1945,11 +2391,30 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Resolves pixels whose color comes from a live background register at the final output phase.
+        /// </summary>
+        private PixelResult ResolveOutputPixel(PixelResult pixel)
+        {
+            if (pixel.UsesRawGraphics)
+            {
+                pixel = ResolveRawGraphicsPixel(pixel);
+            }
+
+            if (!pixel.UsesBackgroundRegister)
+            {
+                return pixel;
+            }
+
+            pixel.Color = Palette[_pixelRegisters[0x21 + (pixel.BackgroundRegisterIndex & 0x03)] & 0x0F];
+            return pixel;
+        }
+
+        /// <summary>
         /// Handles the latch current line state operation.
         /// </summary>
         private void LatchCurrentLineState()
         {
-            _lineDisplayEnabled = _displayEnableFrameLatched;
+            _lineDisplayEnabled = _displayWindowFrameLatched;
             _line40Column = (_registers[0x16] & 0x08) != 0;
             _line25Row = (_registers[0x11] & 0x08) != 0;
             _lineBitmapMode = (_registers[0x11] & 0x20) != 0;
@@ -1964,7 +2429,8 @@ namespace C64Emulator.Core
             _lineDisplayTopFrame = GetActiveDisplayTopFrame();
             _lineDisplayRightFrame = _lineDisplayLeftFrame + GetActiveDisplayWidth();
             _lineDisplayBottomFrame = _lineDisplayTopFrame + GetActiveDisplayHeight();
-            _horizontalBorderActive = true;
+            _horizontalBorderActive = !_horizontalSideBorderCarryOpen;
+            _horizontalSideBorderCarryOpen = false;
         }
 
         /// <summary>
@@ -2360,6 +2826,11 @@ namespace C64Emulator.Core
                 return;
             }
 
+            if (fetchPhase == 0)
+            {
+                _spriteFetchStartMc[spriteIndex] = _spriteMc[spriteIndex] & 0x3F;
+            }
+
             switch (fetchPhase)
             {
                 case 0:
@@ -2370,13 +2841,15 @@ namespace C64Emulator.Core
                     break;
                 default:
                     _spriteDataByte2[spriteIndex] = 0xFF;
-                    _spriteDisplayRow[spriteIndex] = _spriteFetchRow[spriteIndex];
-                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex];
+                    _spriteDisplayRow[spriteIndex] = (_spriteFetchStartMc[spriteIndex] & 0x3F) / 3;
+                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex] ||
+                        ((_spriteFetchStartMc[spriteIndex] & 0x3F) != ((_spriteFetchRow[spriteIndex] * 3) & 0x3F));
                     _spriteDataValid[spriteIndex] = true;
                     CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
             }
 
+            _spriteMc[spriteIndex] = (_spriteMc[spriteIndex] + 1) & 0x3F;
             _spriteFetchPhase[spriteIndex] = fetchPhase + 1;
         }
 
@@ -2415,7 +2888,17 @@ namespace C64Emulator.Core
                     out sequencerBitmapMode,
                     out sequencerExtendedColorMode,
                     out sequencerMulticolorMode);
-                if (_displaySourceBitmapMode)
+                bool patternBitmapMode = hasSequencerMatrixCell
+                    ? sequencerBitmapMode
+                    : _displaySourceBitmapMode;
+                bool patternExtendedColorMode = hasSequencerMatrixCell
+                    ? sequencerExtendedColorMode
+                    : _displaySourceExtendedColorMode;
+                bool patternMulticolorMode = hasSequencerMatrixCell
+                    ? sequencerMulticolorMode
+                    : _displaySourceMulticolorMode;
+
+                if (patternBitmapMode)
                 {
                     _videoPatternBytes[cellX] = ReadDisplaySourceBitmapPattern(matrixIndex, pixelRow);
                 }
@@ -2425,21 +2908,19 @@ namespace C64Emulator.Core
                         ? sequencerScreenCode
                         : ReadVicAbsolute((ushort)(_displaySourceScreenBaseAbsolute + matrixIndex));
 
-                    _videoPatternBytes[cellX] = ReadDisplaySourceCharacterPattern(pixelRow, screenCode);
+                    _videoPatternBytes[cellX] = ReadCharacterPatternFromSource(
+                        _displaySourceCharacterBaseAbsolute,
+                        patternExtendedColorMode,
+                        pixelRow,
+                        screenCode);
                 }
 
                 _videoPatternFetched[cellX] = true;
-                _videoPatternBitmapModes[cellX] = hasSequencerMatrixCell
-                    ? sequencerBitmapMode
-                    : _displaySourceBitmapMode;
-                _videoPatternExtendedColorModes[cellX] = hasSequencerMatrixCell
-                    ? sequencerExtendedColorMode
-                    : _displaySourceExtendedColorMode;
-                _videoPatternMulticolorModes[cellX] = hasSequencerMatrixCell
-                    ? sequencerMulticolorMode
-                    : _displaySourceMulticolorMode;
+                _videoPatternBitmapModes[cellX] = patternBitmapMode;
+                _videoPatternExtendedColorModes[cellX] = patternExtendedColorMode;
+                _videoPatternMulticolorModes[cellX] = patternMulticolorMode;
                 _videoPatternIdle[cellX] = false;
-                _videoPatternBitmapMode = _displaySourceBitmapMode;
+                _videoPatternBitmapMode = patternBitmapMode;
                 _displaySequencer.AdvancePatternFetch();
                 SynchronizeLegacyDisplaySequencerFields();
                 return;
@@ -2463,6 +2944,29 @@ namespace C64Emulator.Core
             _videoPatternMulticolorModes[idleCellX] = _displaySourceMulticolorMode;
             _videoPatternIdle[idleCellX] = true;
             _videoPatternBitmapMode = _displaySourceBitmapMode;
+        }
+
+        /// <summary>
+        /// Samples DEN phases that are visible only after the CPU side has had its write slot.
+        /// </summary>
+        private void UpdateDisplayEnableLatchesAfterCpuAccess()
+        {
+            int cycle = _cycleInLine;
+            bool denEnabled = (_registers[0x11] & 0x10) != 0;
+            if (_rasterLine == DenLatchRasterLine - 1 && cycle == 60)
+            {
+                _displayEnableFrameLatched = denEnabled;
+            }
+
+            if (_rasterLine == DenLatchRasterLine && cycle <= 61 && denEnabled)
+            {
+                _displayEnableFrameLatched = true;
+            }
+
+            if (_rasterLine == (CropTop + BorderTop - 1) && cycle == 61)
+            {
+                _displayWindowFrameLatched = denEnabled;
+            }
         }
 
         /// <summary>
@@ -2495,13 +2999,13 @@ namespace C64Emulator.Core
                 return;
             }
 
-            int row = _spriteFetchRow[spriteIndex];
-            if ((uint)row >= 21)
+            if (fetchPhase == 0)
             {
-                return;
+                _spriteFetchStartMc[spriteIndex] = _spriteMc[spriteIndex] & 0x3F;
             }
 
-            ushort spriteAddress = (ushort)(GetVicBankBase() + (_spritePointers[spriteIndex] * 64) + (row * 3) + fetchPhase);
+            int mc = _spriteMc[spriteIndex] & 0x3F;
+            ushort spriteAddress = (ushort)(GetVicBankBase() + (_spritePointers[spriteIndex] * 64) + mc);
             byte value = ReadVicAbsolute(spriteAddress);
             switch (fetchPhase)
             {
@@ -2513,13 +3017,15 @@ namespace C64Emulator.Core
                     break;
                 default:
                     _spriteDataByte2[spriteIndex] = value;
-                    _spriteDisplayRow[spriteIndex] = row;
-                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex];
+                    _spriteDisplayRow[spriteIndex] = (_spriteFetchStartMc[spriteIndex] & 0x3F) / 3;
+                    _spriteDisplayRowAdjusted[spriteIndex] = _spriteFetchRowAdjusted[spriteIndex] ||
+                        ((_spriteFetchStartMc[spriteIndex] & 0x3F) != ((_spriteFetchRow[spriteIndex] * 3) & 0x3F));
                     _spriteDataValid[spriteIndex] = true;
                     CaptureSpriteLineDataForCurrentDma(spriteIndex);
                     break;
             }
 
+            _spriteMc[spriteIndex] = (_spriteMc[spriteIndex] + 1) & 0x3F;
             _spriteFetchPhase[spriteIndex] = fetchPhase + 1;
         }
 
@@ -2557,10 +3063,9 @@ namespace C64Emulator.Core
             int cycle = _cycleInLine + 1;
             bool clockDisplaySequencer = true;
 
-            if (_rasterLine == DenLatchRasterLine && (_registers[0x11] & 0x10) != 0)
+            if (_rasterLine == DenLatchRasterLine && cycle <= 61 && (_registers[0x11] & 0x10) != 0)
             {
                 _displayEnableFrameLatched = true;
-                _lineDisplayEnabled = true;
             }
 
             bool badLineCondition = GetBadLineConditionForCurrentCycle();
@@ -2575,7 +3080,7 @@ namespace C64Emulator.Core
                 _graphicsVc = NormalizeVideoMatrixIndex(_graphicsVcBase);
                 _graphicsVmli = 0;
                 _displaySequencer.RestartFetchColumns();
-                if (badLineCondition)
+                if (badLineCondition || _earlyD011BadLinePulseBeforeCycle14)
                 {
                     _isBadLine = true;
                     _graphicsRc = 0;
@@ -2586,6 +3091,7 @@ namespace C64Emulator.Core
                     _matrixFetchCpuBlockStartCycle = GetInitialBadLineCpuBlockStartCycle();
                 }
 
+                _earlyD011BadLinePulseBeforeCycle14 = false;
                 UpdateGraphicsLineAddressState();
                 if (_matrixFetchStartedThisLine)
                 {
@@ -2600,15 +3106,19 @@ namespace C64Emulator.Core
                 cycle <= 53)
             {
                 _isBadLine = true;
-                _pendingGraphicsDisplayState = true;
-                _pendingGraphicsDisplayStateCycle = cycle;
-                _pendingGraphicsDisplayStateVideoCounterOffset = 0;
+                if (!_graphicsDisplayState)
+                {
+                    _pendingGraphicsDisplayState = true;
+                    _pendingGraphicsDisplayStateCycle = cycle;
+                    _pendingGraphicsDisplayStateVideoCounterOffset = 0;
+                    clockDisplaySequencer = false;
+                }
+
                 _matrixFetchStartedThisLine = true;
                 _matrixFetchRequestStartCycle = cycle;
                 _matrixFetchStartCycle = cycle;
                 _matrixFetchCpuBlockStartCycle = cycle + 3;
                 BeginVideoMatrixFetchSequence();
-                clockDisplaySequencer = false;
             }
 
             if (cycle == 58)
@@ -2882,6 +3392,9 @@ namespace C64Emulator.Core
                     _spriteDmaLatched[spriteIndex] = false;
                     _spriteDataValid[spriteIndex] = false;
                     _spriteFetchPhase[spriteIndex] = 0;
+                    _spriteMc[spriteIndex] = 0;
+                    _spriteMcBase[spriteIndex] = 0;
+                    _spriteFetchStartMc[spriteIndex] = 0;
                     _spriteRowHistoryActive[spriteIndex] = false;
                     _spritePreviousLineYExpanded[spriteIndex] = false;
                     _spriteFetchRowAdjusted[spriteIndex] = false;
@@ -2895,6 +3408,9 @@ namespace C64Emulator.Core
                     _spriteLineVisible[spriteIndex] = false;
                     _spriteLineDisplayRowAdjusted[spriteIndex] = false;
                     _spriteDmaActive[spriteIndex] = false;
+                    _spriteMc[spriteIndex] = 0;
+                    _spriteMcBase[spriteIndex] = 0;
+                    _spriteFetchStartMc[spriteIndex] = 0;
                     continue;
                 }
 
@@ -2908,7 +3424,8 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateSpriteDmaStartForCurrentCycle()
         {
-            if (_cycleInLine + 1 != 55)
+            int cycle = _cycleInLine + 1;
+            if (cycle != 55)
             {
                 return;
             }
@@ -2941,6 +3458,60 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Loads each sprite data counter from its current MCBASE latch at the VIC-II cycle-58 point.
+        /// </summary>
+        private void LoadSpriteDataCountersForCurrentCycle()
+        {
+            if (_cycleInLine + 1 != 58)
+            {
+                return;
+            }
+
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                _spriteMc[spriteIndex] = _spriteMcBase[spriteIndex] & 0x3F;
+            }
+        }
+
+        /// <summary>
+        /// Advances sprite MCBASE from the Y-expansion flip-flop at the cycle-15/16 points.
+        /// </summary>
+        private void UpdateSpriteMcBaseForCurrentCycle()
+        {
+            int cycle = _cycleInLine + 1;
+            if (cycle != 15 && cycle != 16)
+            {
+                return;
+            }
+
+            int increment = cycle == 15 ? 2 : 1;
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                if (!_spriteDmaLatched[spriteIndex] && !_spriteDmaActive[spriteIndex])
+                {
+                    continue;
+                }
+
+                if (_spriteExpandFlipFlop[spriteIndex])
+                {
+                    _spriteMcBase[spriteIndex] = (_spriteMcBase[spriteIndex] + increment) & 0x3F;
+                }
+
+                if (cycle == 16 && _spriteMcBase[spriteIndex] == 63)
+                {
+                    _spriteDmaActive[spriteIndex] = false;
+                    _spriteDmaLatched[spriteIndex] = false;
+                    _spriteFetchPhase[spriteIndex] = 0;
+                    _spriteDataValid[spriteIndex] = false;
+                    _spriteRowHistoryActive[spriteIndex] = false;
+                    _spritePreviousLineYExpanded[spriteIndex] = false;
+                    _spriteFetchRowAdjusted[spriteIndex] = false;
+                    _spriteDisplayRowAdjusted[spriteIndex] = false;
+                }
+            }
+        }
+
+        /// <summary>
         /// Releases early-line sprite DMA after the final sprite row has been fetched.
         /// </summary>
         private void UpdateEarlySpriteDmaEndForCurrentCycle()
@@ -2969,6 +3540,9 @@ namespace C64Emulator.Core
                 _spriteDmaLatched[spriteIndex] = false;
                 _spriteFetchPhase[spriteIndex] = 0;
                 _spriteDataValid[spriteIndex] = false;
+                _spriteMc[spriteIndex] = 0;
+                _spriteMcBase[spriteIndex] = 0;
+                _spriteFetchStartMc[spriteIndex] = 0;
                 _spriteRowHistoryActive[spriteIndex] = false;
                 _spritePreviousLineYExpanded[spriteIndex] = false;
                 _spriteFetchRowAdjusted[spriteIndex] = false;
@@ -2996,6 +3570,9 @@ namespace C64Emulator.Core
             _spriteLatchedMulticolor[spriteIndex] = ((_registers[0x1C] >> spriteIndex) & 0x01) != 0;
             _spriteLatchedColor[spriteIndex] = _registers[0x27 + spriteIndex];
             _spriteExpandFlipFlop[spriteIndex] = !yExpanded;
+            _spriteMc[spriteIndex] = 0;
+            _spriteMcBase[spriteIndex] = 0;
+            _spriteFetchStartMc[spriteIndex] = 0;
             _spriteDataValid[spriteIndex] = false;
             _spriteFetchPhase[spriteIndex] = 0;
             _spriteRowHistoryActive[spriteIndex] = false;
@@ -3015,7 +3592,7 @@ namespace C64Emulator.Core
             int visibleDelta = _rasterLine - spriteStart;
             int fetchDelta = spriteIndex <= 2 ? (_rasterLine - latchedY) : visibleDelta;
             int fetchRow = ComputeSpriteFetchRowForCurrentLine(spriteIndex, fetchDelta, latchedYExpanded);
-            bool spriteDmaContinues = IsSpriteDmaContinuing(fetchDelta, fetchRow, latchedYExpanded);
+            bool spriteDmaContinues = fetchDelta >= 0 && (_spriteDmaLatched[spriteIndex] || _spriteDmaActive[spriteIndex]);
             int visibleLines = latchedYExpanded ? 42 : 21;
             bool spriteLineVisible = spriteIndex <= 2
                 ? (visibleDelta >= 0 && visibleDelta < visibleLines)
@@ -3026,11 +3603,6 @@ namespace C64Emulator.Core
                 LatchSpriteRenderLine(spriteIndex);
                 if (latchedYExpanded)
                 {
-                    if (visibleDelta > 0)
-                    {
-                        _spriteExpandFlipFlop[spriteIndex] = !_spriteExpandFlipFlop[spriteIndex];
-                    }
-
                     _spriteCurrentRow[spriteIndex] = visibleDelta / 2;
                 }
                 else
@@ -3045,22 +3617,63 @@ namespace C64Emulator.Core
                 _spriteLineDisplayRowAdjusted[spriteIndex] = false;
             }
 
-            if (fetchDelta >= 0 && !spriteDmaContinues)
+            _spriteDmaActive[spriteIndex] = fetchDelta >= 0;
+            _spriteFetchRow[spriteIndex] = fetchRow;
+        }
+
+        /// <summary>
+        /// Captures the sprites whose Y-expansion flip-flops are eligible for the VIC-II cycle-55 update.
+        /// </summary>
+        private void CaptureSpriteExpansionFlipFlopMaskForCurrentCycle()
+        {
+            if (_cycleInLine + 1 != 55)
             {
-                _spriteDmaActive[spriteIndex] = false;
-                _spriteDmaLatched[spriteIndex] = false;
-                _spriteFetchRow[spriteIndex] = 20;
-                _spriteFetchPhase[spriteIndex] = 0;
-                _spriteDataValid[spriteIndex] = false;
-                _spriteRowHistoryActive[spriteIndex] = false;
-                _spritePreviousLineYExpanded[spriteIndex] = false;
-                _spriteFetchRowAdjusted[spriteIndex] = false;
-                _spriteDisplayRowAdjusted[spriteIndex] = false;
+                _spriteCycle55ExpansionMask = 0;
                 return;
             }
 
-            _spriteDmaActive[spriteIndex] = fetchDelta >= 0;
-            _spriteFetchRow[spriteIndex] = fetchRow;
+            byte spriteMask = 0;
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                if (_spriteDmaLatched[spriteIndex] || _spriteDmaActive[spriteIndex])
+                {
+                    spriteMask |= (byte)(1 << spriteIndex);
+                }
+            }
+
+            _spriteCycle55ExpansionMask = spriteMask;
+        }
+
+        /// <summary>
+        /// Inverts each enabled sprite Y-expansion flip-flop at the VIC-II cycle-55 phase.
+        /// </summary>
+        private void UpdateSpriteExpansionFlipFlopsForCurrentCycle()
+        {
+            if (_cycleInLine + 1 != 55 || _spriteCycle55ExpansionMask == 0)
+            {
+                return;
+            }
+
+            byte yExpansion = _registers[0x17];
+            byte activeMask = _spriteCycle55ExpansionMask;
+            _spriteCycle55ExpansionMask = 0;
+            for (int spriteIndex = 0; spriteIndex < 8; spriteIndex++)
+            {
+                int mask = 1 << spriteIndex;
+                if ((activeMask & mask) == 0)
+                {
+                    continue;
+                }
+
+                if ((yExpansion & mask) != 0)
+                {
+                    _spriteExpandFlipFlop[spriteIndex] = !_spriteExpandFlipFlop[spriteIndex];
+                }
+                else
+                {
+                    _spriteExpandFlipFlop[spriteIndex] = true;
+                }
+            }
         }
 
         /// <summary>
@@ -3385,12 +3998,49 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Creates a pixel whose visible color is selected from one of the live VIC background registers.
+        /// </summary>
+        private static PixelResult CreateBackgroundRegisterPixel(int index, bool graphicsForeground)
+        {
+            return new PixelResult
+            {
+                Color = 0,
+                GraphicsForeground = graphicsForeground,
+                UsesBackgroundRegister = true,
+                BackgroundRegisterIndex = (byte)(index & 0x03)
+            };
+        }
+
+        /// <summary>
+        /// Creates a raw graphics pixel that is resolved after the VIC graphics output delay.
+        /// </summary>
+        private static PixelResult CreateRawGraphicsPixel(int pixelXInCell, byte screenCode, byte colorNibble, byte pattern)
+        {
+            return new PixelResult
+            {
+                GraphicsForeground = false,
+                UsesRawGraphics = true,
+                RawPixelXInCell = (byte)(pixelXInCell & 0x07),
+                RawScreenCode = screenCode,
+                RawColorNibble = (byte)(colorNibble & 0x0F),
+                RawPattern = pattern
+            };
+        }
+
+        /// <summary>
         /// Stores pixel result state.
         /// </summary>
         private struct PixelResult
         {
             public uint Color;
             public bool GraphicsForeground;
+            public bool UsesBackgroundRegister;
+            public byte BackgroundRegisterIndex;
+            public bool UsesRawGraphics;
+            public byte RawPixelXInCell;
+            public byte RawScreenCode;
+            public byte RawColorNibble;
+            public byte RawPattern;
         }
     }
 }
