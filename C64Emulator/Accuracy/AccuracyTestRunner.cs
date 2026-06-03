@@ -1355,6 +1355,24 @@ namespace C64Emulator.Core
             context.True("timer B IRQ after second timer A underflow", cia.IsIrqAsserted());
             byte icr = cia.Read(0x0D);
             context.True("timer B ICR bit set", (icr & 0x82) == 0x82);
+
+            cia.Reset();
+            cia.Write(0x04, 0x01);
+            cia.Write(0x05, 0x00);
+            cia.Write(0x06, 0x01);
+            cia.Write(0x07, 0x00);
+            cia.Write(0x0D, 0x82);
+            cia.Write(0x0F, 0x49);
+            cia.Write(0x0E, 0x01);
+
+            cia.Tick();
+            cia.Tick();
+            cia.Tick();
+            context.True("one-shot timer B stays quiet at terminal zero", !cia.IsIrqAsserted());
+            context.Equal("one-shot timer B exposes terminal zero", 0x00, cia.Read(0x06));
+            cia.Tick();
+            cia.Tick();
+            context.True("one-shot timer B IRQ after terminal zero pulse", cia.IsIrqAsserted());
         }
 
         private static void TestCiaTodTenthIncrement(AccuracyContext context)

@@ -118,13 +118,27 @@ namespace C64Emulator.Core
                 return true;
             }
 
+            bool isOneShot = (controlRegister & 0x08) != 0;
+            if (exposeTerminalZero && isOneShot && counter == 0)
+            {
+                counter = ReloadAfterUnderflow(latch);
+                reloadHold = !isOneShot;
+                stopOneShot = isOneShot;
+                return true;
+            }
+
             if (counter > 1)
             {
                 counter--;
                 return false;
             }
 
-            bool isOneShot = (controlRegister & 0x08) != 0;
+            if (exposeTerminalZero && isOneShot)
+            {
+                counter = 0;
+                return false;
+            }
+
             counter = exposeTerminalZero ? (ushort)0 : ReloadAfterUnderflow(latch);
             reloadHold = !isOneShot;
             stopOneShot = isOneShot;
