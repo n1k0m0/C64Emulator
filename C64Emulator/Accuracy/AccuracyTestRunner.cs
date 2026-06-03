@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -1285,6 +1285,10 @@ namespace C64Emulator.Core
             cia.Tick();
             context.True("timer A IRQ is quiet before terminal count", !cia.IsIrqAsserted());
             cia.Tick();
+            context.True("timer A IRQ remains quiet during start delay", !cia.IsIrqAsserted());
+            cia.Tick();
+            context.True("timer A IRQ is quiet at visible terminal count", !cia.IsIrqAsserted());
+            cia.Tick();
             context.True("timer A IRQ is asserted at terminal count", cia.IsIrqAsserted());
             context.Equal("timer A ICR bit", 0x81, cia.Read(0x0D));
             context.True("timer A ICR read clears IRQ", !cia.IsIrqAsserted());
@@ -1293,6 +1297,8 @@ namespace C64Emulator.Core
             cia.Write(0x04, 0x02);
             cia.Write(0x05, 0x00);
             cia.Write(0x0E, 0x09);
+            cia.Tick();
+            cia.Tick();
             cia.Tick();
             cia.Tick();
             context.Equal("timer A one-shot stops", 0x08, cia.Read(0x0E));
@@ -1323,8 +1329,8 @@ namespace C64Emulator.Core
             cia2.Tick();
             context.True("CIA1 latch-zero timer does not underflow immediately after start", !cia1.IsIrqAsserted());
             context.True("CIA2 latch-zero timer does not underflow immediately after start", !cia2.IsNmiAsserted());
-            context.Equal("CIA1 latch-zero first tick low", 0xFE, cia1.Read(0x04));
-            context.Equal("CIA2 latch-zero first tick low", 0xFE, cia2.Read(0x04));
+            context.Equal("CIA1 latch-zero first tick low", 0x00, cia1.Read(0x04));
+            context.Equal("CIA2 latch-zero first tick low", 0x00, cia2.Read(0x04));
         }
 
         private static void TestCiaTimerBCountsTimerA(AccuracyContext context)
@@ -1339,7 +1345,12 @@ namespace C64Emulator.Core
             cia.Write(0x0E, 0x01);
 
             cia.Tick();
+            cia.Tick();
+            context.True("timer B quiet before first timer A underflow", !cia.IsIrqAsserted());
+            cia.Tick();
             context.True("timer B quiet after first timer A underflow", !cia.IsIrqAsserted());
+            cia.Tick();
+            context.True("timer B quiet while timer A reload is held", !cia.IsIrqAsserted());
             cia.Tick();
             context.True("timer B IRQ after second timer A underflow", cia.IsIrqAsserted());
             byte icr = cia.Read(0x0D);

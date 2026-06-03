@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +44,68 @@ namespace C64Emulator.Core
         {
             int source = (controlRegisterB >> 5) & 0x03;
             return source == 0 || ((source == 2 || source == 3) && timerAUnderflow);
+        }
+
+        public static bool Tick(
+            ref ushort counter,
+            ushort latch,
+            ref byte startDelay,
+            ref bool reloadHold,
+            byte controlRegister,
+            bool countPulse,
+            out bool stopOneShot)
+        {
+            stopOneShot = false;
+            if ((controlRegister & 0x01) == 0)
+            {
+                return false;
+            }
+
+            if (startDelay > 0)
+            {
+                startDelay--;
+                return false;
+            }
+
+            if (!countPulse)
+            {
+                return false;
+            }
+
+            if (reloadHold)
+            {
+                reloadHold = false;
+                return false;
+            }
+
+            if (latch == 0)
+            {
+                if (counter == 0)
+                {
+                    counter = 0xFFFF;
+                }
+
+                counter--;
+                if (counter != 0)
+                {
+                    return false;
+                }
+
+                counter = ReloadAfterUnderflow(latch);
+                stopOneShot = (controlRegister & 0x08) != 0;
+                return true;
+            }
+
+            if (counter > 1)
+            {
+                counter--;
+                return false;
+            }
+
+            counter = ReloadAfterUnderflow(latch);
+            reloadHold = true;
+            stopOneShot = (controlRegister & 0x08) != 0;
+            return true;
         }
     }
 }

@@ -39,6 +39,12 @@ namespace C64Emulator.Core
         private ushort _timerBCounter;
         private byte _timerAStartDelay;
         private byte _timerBStartDelay;
+        private bool _timerAReloadHold;
+        private bool _timerBReloadHold;
+        private bool _timerAOutputHigh;
+        private bool _timerBOutputHigh;
+        private byte _timerAOutputPulseCycles;
+        private byte _timerBOutputPulseCycles;
         private byte _interruptMask;
         private byte _interruptFlags;
         private byte _serialDataRegister;
@@ -75,6 +81,12 @@ namespace C64Emulator.Core
             _timerBCounter = 0;
             _timerAStartDelay = 0;
             _timerBStartDelay = 0;
+            _timerAReloadHold = false;
+            _timerBReloadHold = false;
+            _timerAOutputHigh = false;
+            _timerBOutputHigh = false;
+            _timerAOutputPulseCycles = 0;
+            _timerBOutputPulseCycles = 0;
             _interruptMask = 0;
             _interruptFlags = 0;
             _serialDataRegister = 0;
@@ -91,6 +103,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void Tick()
         {
+            TickTimerOutputPulses();
             bool timerAUnderflow = TickTimerA();
             TickTimerB(timerAUnderflow);
             TickTod();
@@ -106,7 +119,7 @@ namespace C64Emulator.Core
                 case 0x00:
                     return ReadPortA();
                 case 0x01:
-                    return ReadPort(_registers[0x01], _registers[0x03], 0xFF);
+                    return ApplyTimerPortBOutputs(ReadPort(_registers[0x01], _registers[0x03], 0xFF));
                 case 0x04:
                     return (byte)(_timerACounter & 0xFF);
                 case 0x05:
@@ -157,6 +170,7 @@ namespace C64Emulator.Core
                     if ((_registers[0x0E] & 0x01) == 0)
                     {
                         _timerACounter = _timerALatch;
+                        _timerAReloadHold = false;
                     }
                     break;
                 case 0x06:
@@ -167,6 +181,7 @@ namespace C64Emulator.Core
                     if ((_registers[0x0F] & 0x01) == 0)
                     {
                         _timerBCounter = _timerBLatch;
+                        _timerBReloadHold = false;
                     }
                     break;
                 case 0x08:
@@ -188,26 +203,28 @@ namespace C64Emulator.Core
                     _interruptMask = Cia6526TimerRules.ApplyInterruptMaskWrite(_interruptMask, value);
                     break;
                 case 0x0E:
-                    if ((previousValue & 0x01) == 0 && (value & 0x11) == 0x11)
+                    if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerAStartDelay = TimerStartDelayCycles;
+                        _timerAStartDelay = (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
                     }
 
                     if ((value & 0x10) != 0)
                     {
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
+                        _timerAReloadHold = false;
                         _registers[0x0E] &= 0xEF;
                     }
                     break;
                 case 0x0F:
-                    if ((previousValue & 0x01) == 0 && (value & 0x11) == 0x11)
+                    if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerBStartDelay = TimerStartDelayCycles;
+                        _timerBStartDelay = (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
                     }
 
                     if ((value & 0x10) != 0)
                     {
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
+                        _timerBReloadHold = false;
                         _registers[0x0F] &= 0xEF;
                     }
                     break;
@@ -275,38 +292,26 @@ namespace C64Emulator.Core
         /// </summary>
         private bool TickTimerA()
         {
-            if ((_registers[0x0E] & 0x01) == 0)
-            {
-                return false;
-            }
-
-            if (_timerAStartDelay > 0)
-            {
-                _timerAStartDelay--;
-                return false;
-            }
-
-            if (_timerACounter == 0)
-            {
-                _timerACounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerALatch);
-            }
-
-            _timerACounter--;
-            if (_timerACounter != 0)
+            bool underflow = Cia6526TimerRules.Tick(
+                ref _timerACounter,
+                _timerALatch,
+                ref _timerAStartDelay,
+                ref _timerAReloadHold,
+                _registers[0x0E],
+                true,
+                out bool stopOneShot);
+            if (!underflow)
             {
                 return false;
             }
 
             _interruptFlags |= 0x01;
-            if ((_registers[0x0E] & 0x08) == 0)
-            {
-                _timerACounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerALatch);
-            }
-            else
+            if (stopOneShot)
             {
                 _registers[0x0E] &= 0xFE;
             }
 
+            ApplyTimerOutputUnderflow(_registers[0x0E], ref _timerAOutputHigh, ref _timerAOutputPulseCycles);
             return true;
         }
 
@@ -315,42 +320,91 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickTimerB(bool timerAUnderflow)
         {
-            if ((_registers[0x0F] & 0x01) == 0)
-            {
-                return;
-            }
-
-            if (!Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow))
-            {
-                return;
-            }
-
-            if (_timerBStartDelay > 0)
-            {
-                _timerBStartDelay--;
-                return;
-            }
-
-            if (_timerBCounter == 0)
-            {
-                _timerBCounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerBLatch);
-            }
-
-            _timerBCounter--;
-            if (_timerBCounter != 0)
+            bool underflow = Cia6526TimerRules.Tick(
+                ref _timerBCounter,
+                _timerBLatch,
+                ref _timerBStartDelay,
+                ref _timerBReloadHold,
+                _registers[0x0F],
+                Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow),
+                out bool stopOneShot);
+            if (!underflow)
             {
                 return;
             }
 
             _interruptFlags |= 0x02;
-            if ((_registers[0x0F] & 0x08) == 0)
-            {
-                _timerBCounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerBLatch);
-            }
-            else
+            if (stopOneShot)
             {
                 _registers[0x0F] &= 0xFE;
             }
+
+            ApplyTimerOutputUnderflow(_registers[0x0F], ref _timerBOutputHigh, ref _timerBOutputPulseCycles);
+        }
+
+        /// <summary>
+        /// Advances one-cycle timer output pulses on port B.
+        /// </summary>
+        private void TickTimerOutputPulses()
+        {
+            TickTimerOutputPulse(ref _timerAOutputHigh, ref _timerAOutputPulseCycles);
+            TickTimerOutputPulse(ref _timerBOutputHigh, ref _timerBOutputPulseCycles);
+        }
+
+        /// <summary>
+        /// Advances a single timer output pulse flip-flop.
+        /// </summary>
+        private static void TickTimerOutputPulse(ref bool outputHigh, ref byte pulseCycles)
+        {
+            if (pulseCycles == 0)
+            {
+                return;
+            }
+
+            pulseCycles--;
+            if (pulseCycles == 0)
+            {
+                outputHigh = false;
+            }
+        }
+
+        /// <summary>
+        /// Applies the PB6/PB7 timer-output side effect produced by a timer underflow.
+        /// </summary>
+        private static void ApplyTimerOutputUnderflow(byte controlRegister, ref bool outputHigh, ref byte pulseCycles)
+        {
+            if ((controlRegister & 0x02) == 0)
+            {
+                return;
+            }
+
+            if ((controlRegister & 0x04) != 0)
+            {
+                outputHigh = !outputHigh;
+                pulseCycles = 0;
+                return;
+            }
+
+            outputHigh = true;
+            pulseCycles = 1;
+        }
+
+        /// <summary>
+        /// Overlays CIA timer output bits PB6/PB7 onto the value read from port B.
+        /// </summary>
+        private byte ApplyTimerPortBOutputs(byte value)
+        {
+            if ((_registers[0x0E] & 0x02) != 0)
+            {
+                value = _timerAOutputHigh ? (byte)(value | 0x40) : (byte)(value & 0xBF);
+            }
+
+            if ((_registers[0x0F] & 0x02) != 0)
+            {
+                value = _timerBOutputHigh ? (byte)(value | 0x80) : (byte)(value & 0x7F);
+            }
+
+            return value;
         }
 
         /// <summary>
