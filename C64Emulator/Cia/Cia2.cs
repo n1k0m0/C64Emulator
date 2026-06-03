@@ -50,10 +50,13 @@ namespace C64Emulator.Core
         private bool _timerBForceLoadedZero;
         private byte _timerAReadSubtract;
         private byte _timerBReadSubtract;
+        private bool _timerAReadSubtractSticky;
+        private bool _timerBReadSubtractSticky;
         private byte _timerASourceSwitchDelay;
         private bool _timerASourceSwitchTargetCounts;
         private byte _timerBSourceSwitchDelay;
         private byte _timerBSourceSwitchPreviousControl;
+        private bool _timerAUnderflowPendingForTimerB;
         private bool _timerAOutputHigh;
         private bool _timerBOutputHigh;
         private byte _timerAOutputPulseCycles;
@@ -114,10 +117,13 @@ namespace C64Emulator.Core
             _timerBForceLoadedZero = false;
             _timerAReadSubtract = 0;
             _timerBReadSubtract = 0;
+            _timerAReadSubtractSticky = false;
+            _timerBReadSubtractSticky = false;
             _timerASourceSwitchDelay = 0;
             _timerASourceSwitchTargetCounts = false;
             _timerBSourceSwitchDelay = 0;
             _timerBSourceSwitchPreviousControl = 0;
+            _timerAUnderflowPendingForTimerB = false;
             _timerAOutputHigh = false;
             _timerBOutputHigh = false;
             _timerAOutputPulseCycles = 0;
@@ -147,7 +153,15 @@ namespace C64Emulator.Core
             TickTimerOutputPulses();
             ApplyPendingTimerOutputEvents();
             bool timerAUnderflow = TickTimerA();
-            TickTimerB(timerAUnderflow);
+            bool suppressTimerBInterrupt = false;
+            if (_timerAUnderflowPendingForTimerB)
+            {
+                timerAUnderflow = true;
+                _timerAUnderflowPendingForTimerB = false;
+                suppressTimerBInterrupt = true;
+            }
+
+            TickTimerB(timerAUnderflow, suppressTimerBInterrupt);
             TickTod();
             AdvanceInterruptReadHazardWindow();
         }
@@ -166,11 +180,11 @@ namespace C64Emulator.Core
                 case 0x04:
                     return ReadVisibleTimerLow(_timerACounter, _timerAReadSubtract);
                 case 0x05:
-                    return (byte)((_timerACounter >> 8) & 0xFF);
+                    return ReadVisibleTimerHigh(_timerACounter, _timerAReadSubtract);
                 case 0x06:
                     return ReadVisibleTimerLow(_timerBCounter, _timerBReadSubtract);
                 case 0x07:
-                    return (byte)((_timerBCounter >> 8) & 0xFF);
+                    return ReadVisibleTimerHigh(_timerBCounter, _timerBReadSubtract);
                 case 0x08:
                     return _todTenths;
                 case 0x09:
@@ -211,12 +225,14 @@ namespace C64Emulator.Core
                 case 0x04:
                     _timerALatch = (ushort)((_timerALatch & 0xFF00) | value);
                     _timerAReadSubtract = 0;
+                    _timerAReadSubtractSticky = false;
                     ApplyTimerLowWriteToForceLoadedZero(ref _timerACounter, ref _timerAForceLoadedZero, ref _timerAReloadHold, _registers[0x0E], value);
                     break;
                 case 0x05:
                     _timerALatch = (ushort)((_timerALatch & 0x00FF) | (value << 8));
                     _timerAForceLoadedZero = false;
                     _timerAReadSubtract = 0;
+                    _timerAReadSubtractSticky = false;
                     if ((_registers[0x0E] & 0x01) == 0)
                     {
                         _timerACounter = _timerALatch;
@@ -226,12 +242,14 @@ namespace C64Emulator.Core
                 case 0x06:
                     _timerBLatch = (ushort)((_timerBLatch & 0xFF00) | value);
                     _timerBReadSubtract = 0;
+                    _timerBReadSubtractSticky = false;
                     ApplyTimerLowWriteToForceLoadedZero(ref _timerBCounter, ref _timerBForceLoadedZero, ref _timerBReloadHold, _registers[0x0F], value);
                     break;
                 case 0x07:
                     _timerBLatch = (ushort)((_timerBLatch & 0x00FF) | (value << 8));
                     _timerBForceLoadedZero = false;
                     _timerBReadSubtract = 0;
+                    _timerBReadSubtractSticky = false;
                     if ((_registers[0x0F] & 0x01) == 0)
                     {
                         _timerBCounter = _timerBLatch;
@@ -273,8 +291,16 @@ namespace C64Emulator.Core
 
                     if (timerAWasRunning && !timerAStarts && !timerAForceLoad)
                     {
-                        TickTimerA(previousValue);
-                        _timerAReadSubtract = GetTimerStopVisibleReadSubtract(_timerALatch);
+                        if (TickTimerA(previousValue) && HasHighByteOnlyLatch(_timerALatch))
+                        {
+                            _timerAUnderflowPendingForTimerB = true;
+                        }
+
+                        _timerAReadSubtract = GetTimerStopVisibleReadSubtract(_timerALatch, _timerAReadSubtractSticky);
+                        if (_timerAReadSubtract != 0 && ReadVisibleTimerLow(_timerACounter, _timerAReadSubtract) == 0)
+                        {
+                            _timerAReadSubtractSticky = true;
+                        }
                     }
 
                     if (timerAWasRunning &&
@@ -297,7 +323,11 @@ namespace C64Emulator.Core
 
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerAReadSubtract = 0;
+                        if (!_timerAReadSubtractSticky)
+                        {
+                            _timerAReadSubtract = 0;
+                        }
+
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerACounter != _timerALatch;
                         _timerAStartDelay = resumesActiveCounter ? (byte)1 : (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
                         if ((value & 0x10) == 0 && _timerALatch == 0 && _timerACounter == 0)
@@ -311,6 +341,7 @@ namespace C64Emulator.Core
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
                         _timerAForceLoadedZero = (_timerALatch == 0 && (value & 0x01) != 0);
                         _timerAReadSubtract = 0;
+                        _timerAReadSubtractSticky = false;
                         if (_timerAForceLoadedZero)
                         {
                             _interruptFlags |= 0x01;
@@ -338,12 +369,20 @@ namespace C64Emulator.Core
                     if (timerBWasRunning && !timerBStarts && !timerBForceLoad)
                     {
                         TickTimerB(previousValue, Cia6526TimerRules.TimerBCounts(previousValue, false));
-                        _timerBReadSubtract = GetTimerStopVisibleReadSubtract(_timerBLatch);
+                        _timerBReadSubtract = GetTimerStopVisibleReadSubtract(_timerBLatch, _timerBReadSubtractSticky);
+                        if (_timerBReadSubtract != 0 && ReadVisibleTimerLow(_timerBCounter, _timerBReadSubtract) == 0)
+                        {
+                            _timerBReadSubtractSticky = true;
+                        }
                     }
 
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerBReadSubtract = 0;
+                        if (!_timerBReadSubtractSticky)
+                        {
+                            _timerBReadSubtract = 0;
+                        }
+
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerBCounter != _timerBLatch;
                         _timerBStartDelay = resumesActiveCounter ? (byte)1 : (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
                         if ((value & 0x10) == 0 && _timerBLatch == 0 && _timerBCounter == 0)
@@ -357,6 +396,7 @@ namespace C64Emulator.Core
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
                         _timerBForceLoadedZero = (_timerBLatch == 0 && (value & 0x01) != 0);
                         _timerBReadSubtract = 0;
+                        _timerBReadSubtractSticky = false;
                         if (_timerBForceLoadedZero)
                         {
                             _interruptFlags |= 0x02;
@@ -510,12 +550,21 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickTimerB(bool timerAUnderflow)
         {
+            TickTimerB(timerAUnderflow, false);
+        }
+
+        /// <summary>
+        /// Advances the timer b state by one emulated tick with explicit interrupt suppression.
+        /// </summary>
+        private void TickTimerB(bool timerAUnderflow, bool suppressInterruptFlag)
+        {
             byte controlRegister = _registers[0x0F];
             byte sourceControlRegister = GetTimerBSourceControlRegister(controlRegister);
             TickTimerB(
                 controlRegister,
                 Cia6526TimerRules.TimerBCounts(sourceControlRegister, timerAUnderflow),
-                Cia6526TimerRules.TimerBUsesTimerAUnderflows(sourceControlRegister));
+                Cia6526TimerRules.TimerBUsesTimerAUnderflows(sourceControlRegister),
+                suppressInterruptFlag);
         }
 
         /// <summary>
@@ -526,13 +575,22 @@ namespace C64Emulator.Core
             TickTimerB(
                 controlRegister,
                 countPulse,
-                Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister));
+                Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister),
+                false);
         }
 
         /// <summary>
         /// Advances timer B using explicit count and source pipeline state.
         /// </summary>
         private void TickTimerB(byte controlRegister, bool countPulse, bool exposeTerminalZero)
+        {
+            TickTimerB(controlRegister, countPulse, exposeTerminalZero, false);
+        }
+
+        /// <summary>
+        /// Advances timer B using explicit count, source pipeline, and interrupt timing state.
+        /// </summary>
+        private void TickTimerB(byte controlRegister, bool countPulse, bool exposeTerminalZero, bool suppressInterruptFlag)
         {
             if (_timerBForceLoadedZero && (controlRegister & 0x01) != 0)
             {
@@ -554,7 +612,11 @@ namespace C64Emulator.Core
             }
 
             _timerBForceLoadedZero = false;
-            RaiseTimerInterruptFlag(0x02);
+            if (!suppressInterruptFlag)
+            {
+                RaiseTimerInterruptFlag(0x02);
+            }
+
             if (stopOneShot)
             {
                 _registers[0x0F] &= 0xFE;
@@ -674,11 +736,29 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Returns the high byte after the transient visible low-byte phase borrowed from it.
+        /// </summary>
+        private static byte ReadVisibleTimerHigh(ushort counter, byte subtract)
+        {
+            if (subtract != 0 && (counter & 0xFF) < subtract)
+            {
+                return (byte)(((counter - subtract) >> 8) & 0xFF);
+            }
+
+            return (byte)((counter >> 8) & 0xFF);
+        }
+
+        /// <summary>
         /// Gets the transient visible low-byte phase after stopping a high-byte-only timer.
         /// </summary>
-        private static byte GetTimerStopVisibleReadSubtract(ushort latch)
+        private static byte GetTimerStopVisibleReadSubtract(ushort latch, bool sticky)
         {
-            return HasHighByteOnlyLatch(latch) ? (byte)1 : (byte)0;
+            if (!HasHighByteOnlyLatch(latch))
+            {
+                return 0;
+            }
+
+            return sticky ? (byte)2 : (byte)1;
         }
 
         /// <summary>
