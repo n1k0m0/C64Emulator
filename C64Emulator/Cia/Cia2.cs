@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ namespace C64Emulator.Core
     public sealed class Cia2
     {
         private const int TodCyclesPerTenth = 98525;
+        private const byte TimerStartDelayCycles = 4;
         private const byte PortABitAtnOut = 0x08;
         private const byte PortABitClockOut = 0x10;
         private const byte PortABitDataOut = 0x20;
@@ -36,6 +37,8 @@ namespace C64Emulator.Core
         private ushort _timerACounter;
         private ushort _timerBLatch;
         private ushort _timerBCounter;
+        private byte _timerAStartDelay;
+        private byte _timerBStartDelay;
         private byte _interruptMask;
         private byte _interruptFlags;
         private byte _serialDataRegister;
@@ -70,6 +73,8 @@ namespace C64Emulator.Core
             _timerACounter = 0;
             _timerBLatch = 0;
             _timerBCounter = 0;
+            _timerAStartDelay = 0;
+            _timerBStartDelay = 0;
             _interruptMask = 0;
             _interruptFlags = 0;
             _serialDataRegister = 0;
@@ -135,6 +140,7 @@ namespace C64Emulator.Core
         public void Write(ushort address, byte value)
         {
             address &= 0x0F;
+            byte previousValue = _registers[address];
             _registers[address] = value;
 
             switch (address)
@@ -182,6 +188,11 @@ namespace C64Emulator.Core
                     _interruptMask = Cia6526TimerRules.ApplyInterruptMaskWrite(_interruptMask, value);
                     break;
                 case 0x0E:
+                    if ((previousValue & 0x01) == 0 && (value & 0x11) == 0x11)
+                    {
+                        _timerAStartDelay = TimerStartDelayCycles;
+                    }
+
                     if ((value & 0x10) != 0)
                     {
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
@@ -189,6 +200,11 @@ namespace C64Emulator.Core
                     }
                     break;
                 case 0x0F:
+                    if ((previousValue & 0x01) == 0 && (value & 0x11) == 0x11)
+                    {
+                        _timerBStartDelay = TimerStartDelayCycles;
+                    }
+
                     if ((value & 0x10) != 0)
                     {
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
@@ -264,6 +280,12 @@ namespace C64Emulator.Core
                 return false;
             }
 
+            if (_timerAStartDelay > 0)
+            {
+                _timerAStartDelay--;
+                return false;
+            }
+
             if (_timerACounter == 0)
             {
                 _timerACounter = Cia6526TimerRules.ReloadAfterUnderflow(_timerALatch);
@@ -300,6 +322,12 @@ namespace C64Emulator.Core
 
             if (!Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow))
             {
+                return;
+            }
+
+            if (_timerBStartDelay > 0)
+            {
+                _timerBStartDelay--;
                 return;
             }
 

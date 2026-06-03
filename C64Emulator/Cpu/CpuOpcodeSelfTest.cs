@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,7 +153,7 @@ namespace C64Emulator.Core
         /// </summary>
         private static void VerifyUnstableIllegalOpcodes(List<string> failures)
         {
-            VerifyRegisterResult(0x8B, 0xFF, 0x00, 0x00, 0xFF, 0xEE, 0xFF, 0x00, "XAA immediate", failures);
+            VerifyRegisterResult(0x8B, 0xFF, 0x00, 0x00, 0xFF, 0xEF, 0xFF, 0x00, "XAA immediate", failures);
             VerifyRegisterResult(0xAB, 0xFF, 0x00, 0x00, 0xFF, 0xEE, 0xEE, 0x00, "LXA/LAX immediate", failures);
             VerifyMaskedStore(0x93, 0xFF, 0xFF, TestIndex, 0xFD, 0x2084, 0x21, "AHX (zp),Y", failures);
             VerifyMaskedStore(0x9B, 0xF7, 0xDF, TestIndex, 0xFD, 0x2044, 0x01, "TAS abs,Y", failures);

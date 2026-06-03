@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +48,7 @@ namespace C64Emulator.Core
         private bool _externalNmiAsserted;
         private byte _lastCpuBusValue;
         private byte _lastVicBusValue;
+        private byte _processorPortInputLatch;
         private bool _baLow;
         private bool _aecLow;
         private bool _cpuPhi2CanAccess;
@@ -150,6 +151,7 @@ namespace C64Emulator.Core
             _externalNmiAsserted = false;
             _lastCpuBusValue = 0xFF;
             _lastVicBusValue = 0xFF;
+            _processorPortInputLatch = _ram[1];
             _baLow = false;
             _aecLow = false;
             _cpuPhi2CanAccess = true;
@@ -302,6 +304,7 @@ namespace C64Emulator.Core
             if (address == 0 || address == 1)
             {
                 _ram[address] = value;
+                UpdateProcessorPortInputLatch();
                 return;
             }
 
@@ -574,7 +577,18 @@ namespace C64Emulator.Core
         {
             byte dataDirection = _ram[0];
             byte portData = _ram[1];
-            return (byte)((portData & dataDirection) | (~dataDirection & 0x17));
+            byte floatingInputs = (byte)(0x17 | (_processorPortInputLatch & 0xC0));
+            return (byte)((portData & dataDirection) | (floatingInputs & ~dataDirection));
+        }
+
+        /// <summary>
+        /// Remembers the last level driven by CPU-port output bits.
+        /// </summary>
+        private void UpdateProcessorPortInputLatch()
+        {
+            byte dataDirection = _ram[0];
+            byte portData = _ram[1];
+            _processorPortInputLatch = (byte)((_processorPortInputLatch & ~dataDirection) | (portData & dataDirection));
         }
     }
 }

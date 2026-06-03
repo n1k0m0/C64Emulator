@@ -1,4 +1,4 @@
-/*
+﻿/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,6 +82,8 @@ namespace C64Emulator.Core
         private bool _lastNmiLevel;
         private bool _soPending;
         private bool _skipIrqPollOnce;
+        private bool _delayedIrqPending;
+        private bool _rdyStalledDuringInstruction;
         private bool _accessPredictionMode;
         private bool _lastPredictionUsedMicrocycle;
         private CpuTraceAccessType _predictedAccessType;
@@ -153,6 +155,11 @@ namespace C64Emulator.Core
 
             if (!_bus.CpuCanAccess)
             {
+                if (_state == CpuState.ExecuteInstruction)
+                {
+                    _rdyStalledDuringInstruction = true;
+                }
+
                 EndTraceCycle();
                 return;
             }
@@ -167,9 +174,18 @@ namespace C64Emulator.Core
                     _nmiPending = false;
                     BeginInterrupt(0xFFFA, true);
                 }
+                else if (_delayedIrqPending)
+                {
+                    _delayedIrqPending = false;
+                    BeginInterrupt(0xFFFE, false);
+                }
                 else if (!skipIrqPoll && !_sr.HasFlag(0x04) && _bus.IsIrqAsserted())
                 {
                     BeginInterrupt(0xFFFE, false);
+                }
+                else if (skipIrqPoll && !_sr.HasFlag(0x04) && _bus.IsIrqAsserted())
+                {
+                    _delayedIrqPending = true;
                 }
             }
 
@@ -236,6 +252,8 @@ namespace C64Emulator.Core
             bool savedLastNmiLevel = _lastNmiLevel;
             bool savedSoPending = _soPending;
             bool savedSkipIrqPollOnce = _skipIrqPollOnce;
+            bool savedDelayedIrqPending = _delayedIrqPending;
+            bool savedRdyStalledDuringInstruction = _rdyStalledDuringInstruction;
             long savedCpuCycleCount = _cpuCycleCount;
             CpuTraceEntry savedTraceEntry = _currentTraceEntry;
             bool savedTraceEntryActive = _traceEntryActive;
@@ -281,9 +299,18 @@ namespace C64Emulator.Core
                         _nmiPending = false;
                         BeginInterrupt(0xFFFA, true);
                     }
+                    else if (_delayedIrqPending)
+                    {
+                        _delayedIrqPending = false;
+                        BeginInterrupt(0xFFFE, false);
+                    }
                     else if (!skipIrqPoll && !_sr.HasFlag(0x04) && _bus.IsIrqAsserted())
                     {
                         BeginInterrupt(0xFFFE, false);
+                    }
+                    else if (skipIrqPoll && !_sr.HasFlag(0x04) && _bus.IsIrqAsserted())
+                    {
+                        _delayedIrqPending = true;
                     }
                 }
 
@@ -321,6 +348,8 @@ namespace C64Emulator.Core
                 _lastNmiLevel = savedLastNmiLevel;
                 _soPending = savedSoPending;
                 _skipIrqPollOnce = savedSkipIrqPollOnce;
+                _delayedIrqPending = savedDelayedIrqPending;
+                _rdyStalledDuringInstruction = savedRdyStalledDuringInstruction;
                 _cpuCycleCount = savedCpuCycleCount;
                 _currentTraceEntry = savedTraceEntry;
                 _traceEntryActive = savedTraceEntryActive;
@@ -351,6 +380,8 @@ namespace C64Emulator.Core
             _lastNmiLevel = false;
             _soPending = false;
             _skipIrqPollOnce = false;
+            _delayedIrqPending = false;
+            _rdyStalledDuringInstruction = false;
             _cpuCycleCount = 0;
             _traceEntryActive = false;
         }
@@ -399,6 +430,7 @@ namespace C64Emulator.Core
             _lastNmiLevel = reader.ReadBoolean();
             _soPending = reader.ReadBoolean();
             _skipIrqPollOnce = reader.ReadBoolean();
+            _delayedIrqPending = false;
             _cpuCycleCount = reader.ReadInt64();
             _lastIecHookName = BinaryStateIO.ReadString(reader) ?? string.Empty;
             _lastIecHookSuccess = reader.ReadBoolean();
@@ -408,6 +440,7 @@ namespace C64Emulator.Core
             _sp = reader.ReadByte();
             _sr = reader.ReadByte();
             _currentStepper = _state == CpuState.ExecuteInstruction ? InstructionDecoder.Decode(_context.Opcode) : null;
+            _rdyStalledDuringInstruction = false;
             _accessPredictionMode = false;
             _predictedAccessType = CpuTraceAccessType.None;
             _currentTraceEntry = default(CpuTraceEntry);
@@ -489,6 +522,20 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Consumes a pending NMI edge for BRK/NMI collision handling.
+        /// </summary>
+        public bool ConsumePendingNmi()
+        {
+            if (!_nmiPending)
+            {
+                return false;
+            }
+
+            _nmiPending = false;
+            return true;
+        }
+
+        /// <summary>
         /// Handles the jam operation.
         /// </summary>
         public void Jam()
@@ -561,30 +608,33 @@ namespace C64Emulator.Core
             int sum = _a + value + carryIn;
             byte binaryResult = (byte)sum;
 
-            SetFlag(0x40, (~(_a ^ value) & (_a ^ binaryResult) & 0x80) != 0);
-
             if (GetFlag(0x08))
             {
-                int low = (_a & 0x0F) + (value & 0x0F) + carryIn;
-                int high = (_a & 0xF0) + (value & 0xF0);
+                int originalA = _a;
+                int low = (originalA & 0x0F) + (value & 0x0F) + carryIn;
+                int high = (originalA >> 4) + (value >> 4);
 
                 if (low > 0x09)
                 {
                     low += 0x06;
-                    high += 0x10;
+                    high++;
                 }
 
-                if ((high & 0x1F0) > 0x90)
+                SetFlag(0x02, binaryResult == 0);
+                SetFlag(0x80, (high & 0x08) != 0);
+                SetFlag(0x40, ((((high << 4) ^ originalA) & 0x80) != 0) && (((originalA ^ value) & 0x80) == 0));
+
+                if (high > 0x09)
                 {
-                    high += 0x60;
+                    high += 0x06;
                 }
 
-                SetFlag(0x01, high > 0xF0);
-                _a = (byte)((high & 0xF0) | (low & 0x0F));
-                SetNZ(_a);
+                SetFlag(0x01, high > 0x0F);
+                _a = (byte)(((high << 4) & 0xF0) | (low & 0x0F));
                 return;
             }
 
+            SetFlag(0x40, (~(_a ^ value) & (_a ^ binaryResult) & 0x80) != 0);
             SetFlag(0x01, sum > 0xFF);
             _a = binaryResult;
             SetNZ(_a);
@@ -619,7 +669,7 @@ namespace C64Emulator.Core
 
                 SetFlag(0x01, difference >= 0);
                 _a = (byte)(((high << 4) & 0xF0) | (low & 0x0F));
-                SetNZ(_a);
+                SetNZ(binaryResult);
                 return;
             }
 
@@ -810,6 +860,11 @@ namespace C64Emulator.Core
             get { return _cpuCycleCount; }
         }
 
+        public bool RdyStalledDuringCurrentInstruction
+        {
+            get { return _rdyStalledDuringInstruction; }
+        }
+
         public bool LastPredictionUsedMicrocycle
         {
             get { return _lastPredictionUsedMicrocycle; }
@@ -826,6 +881,7 @@ namespace C64Emulator.Core
             _currentStepper = null;
             _context.Reset(0x00);
             _currentInstructionName = string.Empty;
+            _rdyStalledDuringInstruction = false;
             _skipIrqPollOnce = true;
         }
 
@@ -852,6 +908,7 @@ namespace C64Emulator.Core
             _lastOpcodeAddress = _pc;
             var opcode = ReadWithTrace(_pc++, CpuTraceAccessType.OpcodeFetch);
             _context.Reset(opcode);
+            _rdyStalledDuringInstruction = false;
             _currentStepper = InstructionDecoder.Decode(opcode);
             _currentInstructionName = TraceEnabled ? _currentStepper.Method.Name : string.Empty;
             _state = CpuState.ExecuteInstruction;
