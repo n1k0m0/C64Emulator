@@ -30,6 +30,7 @@ namespace C64Emulator.Core
             ForceSoftwareIecTransport = true;
             EnableInputInjection = true;
             RunDriveCpuContinuously = false;
+            CiaRevision = CiaChipRevision.Mos6526A;
         }
 
         public bool EnableLoadHack { get; set; }
@@ -41,6 +42,8 @@ namespace C64Emulator.Core
         public bool EnableInputInjection { get; set; }
 
         public bool RunDriveCpuContinuously { get; set; }
+
+        public CiaChipRevision CiaRevision { get; set; }
 
         /// <summary>
         /// Gets the compatibility profile used by the interactive emulator.
@@ -63,7 +66,8 @@ namespace C64Emulator.Core
                     EnableKernalIecHooks = false,
                     ForceSoftwareIecTransport = false,
                     EnableInputInjection = false,
-                    RunDriveCpuContinuously = true
+                    RunDriveCpuContinuously = true,
+                    CiaRevision = CiaChipRevision.Mos6526A
                 };
             }
         }
@@ -79,7 +83,8 @@ namespace C64Emulator.Core
                 EnableKernalIecHooks = EnableKernalIecHooks,
                 ForceSoftwareIecTransport = ForceSoftwareIecTransport,
                 EnableInputInjection = EnableInputInjection,
-                RunDriveCpuContinuously = RunDriveCpuContinuously
+                RunDriveCpuContinuously = RunDriveCpuContinuously,
+                CiaRevision = CiaRevision
             };
         }
     }

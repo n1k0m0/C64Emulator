@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,12 +87,29 @@ namespace C64Emulator.Core
         private static C64AccuracyOptions ResolveAccuracyOptions(GoldenTestDefinition test)
         {
             string profile = GetArgument(test, "profile");
+            C64AccuracyOptions options;
             if (string.Equals(profile, "compatibility", StringComparison.OrdinalIgnoreCase))
             {
-                return C64AccuracyOptions.Compatibility;
+                options = C64AccuracyOptions.Compatibility;
+            }
+            else
+            {
+                options = C64AccuracyOptions.Accuracy;
             }
 
-            return C64AccuracyOptions.Accuracy;
+            string ciaRevision = GetArgument(test, "ciaRevision");
+            if (string.Equals(ciaRevision, "old", StringComparison.OrdinalIgnoreCase) ||
+                HasMetadataOption(test, "cia-old"))
+            {
+                options.CiaRevision = CiaChipRevision.Mos6526;
+            }
+            else if (string.Equals(ciaRevision, "new", StringComparison.OrdinalIgnoreCase) ||
+                HasMetadataOption(test, "cia-new"))
+            {
+                options.CiaRevision = CiaChipRevision.Mos6526A;
+            }
+
+            return options;
         }
 
         private static C64Model ResolveModel(string modelName)
@@ -553,6 +570,28 @@ namespace C64Emulator.Core
             }
 
             return null;
+        }
+
+        private static bool HasMetadataOption(GoldenTestDefinition test, string option)
+        {
+            string options;
+            if (test.Metadata == null ||
+                !test.Metadata.TryGetValue("options", out options) ||
+                string.IsNullOrWhiteSpace(options))
+            {
+                return false;
+            }
+
+            string[] parts = options.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int index = 0; index < parts.Length; index++)
+            {
+                if (string.Equals(parts[index].Trim(), option, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static long GetLongArgument(GoldenTestDefinition test, string key, long fallback)

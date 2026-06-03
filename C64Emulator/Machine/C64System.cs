@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,8 +84,8 @@ namespace C64Emulator.Core
             _accuracyOptions = (accuracyOptions ?? C64AccuracyOptions.Compatibility).Clone();
             _frameBuffer = new FrameBuffer(model.VisibleWidth, model.VisibleHeight);
             _bus = new SystemBus();
-            _cia1 = new Cia1();
-            _cia2 = new Cia2();
+            _cia1 = new Cia1(_accuracyOptions.CiaRevision);
+            _cia2 = new Cia2(_accuracyOptions.CiaRevision);
             _sid = new Sid();
             _iecBus = new IecBus();
             _iecKernalBridge = new IecKernalBridge();

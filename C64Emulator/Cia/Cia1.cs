@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,11 +26,17 @@ namespace C64Emulator.Core
     {
         private const int TodCyclesPerTenth = 98525;
         private const byte TimerStartDelayCycles = 2;
+        private const byte TimerForceLoadStartDelayCycles = 3;
+        private const byte TimerOutputEventNone = 0;
+        private const byte TimerOutputEventPulse = 1;
+        private const byte TimerOutputEventToggle = 2;
+        private const byte OldCiaTimerBInterruptReadHazardTicks = 0;
         private const byte JoystickUpMask = 0x01;
         private const byte JoystickDownMask = 0x02;
         private const byte JoystickLeftMask = 0x04;
         private const byte JoystickRightMask = 0x08;
         private const byte JoystickFireMask = 0x10;
+        private readonly CiaChipRevision _chipRevision;
         private readonly byte[] _registers = new byte[0x10];
         private readonly bool[,] _keyboardMatrix = new bool[8, 8];
         private readonly bool[,] _networkKeyboardMatrix = new bool[8, 8];
@@ -44,12 +50,19 @@ namespace C64Emulator.Core
         private byte _timerBStartDelay;
         private bool _timerAReloadHold;
         private bool _timerBReloadHold;
+        private bool _timerAForceLoadedZero;
+        private bool _timerBForceLoadedZero;
         private bool _timerAOutputHigh;
         private bool _timerBOutputHigh;
         private byte _timerAOutputPulseCycles;
         private byte _timerBOutputPulseCycles;
+        private byte _timerAOutputPendingEvent;
+        private byte _timerBOutputPendingEvent;
         private byte _interruptMask;
         private byte _interruptFlags;
+        private byte _delayedInterruptLineFlags;
+        private byte _ticksSinceInterruptRead;
+        private bool _interruptSummaryPending;
         private byte _joystickPort1State = 0x1F;
         private byte _joystickPort2State = 0x1F;
         private byte _gamepadJoystickPort1State = 0x1F;
@@ -68,7 +81,16 @@ namespace C64Emulator.Core
         /// Initializes a new Cia1 instance.
         /// </summary>
         public Cia1()
+            : this(CiaChipRevision.Mos6526A)
         {
+        }
+
+        /// <summary>
+        /// Initializes a new Cia1 instance.
+        /// </summary>
+        public Cia1(CiaChipRevision chipRevision)
+        {
+            _chipRevision = chipRevision;
             BuildKeyMap();
             Reset();
         }
@@ -91,12 +113,19 @@ namespace C64Emulator.Core
             _timerBStartDelay = 0;
             _timerAReloadHold = false;
             _timerBReloadHold = false;
+            _timerAForceLoadedZero = false;
+            _timerBForceLoadedZero = false;
             _timerAOutputHigh = false;
             _timerBOutputHigh = false;
             _timerAOutputPulseCycles = 0;
             _timerBOutputPulseCycles = 0;
+            _timerAOutputPendingEvent = TimerOutputEventNone;
+            _timerBOutputPendingEvent = TimerOutputEventNone;
             _interruptMask = 0;
             _interruptFlags = 0;
+            _delayedInterruptLineFlags = 0;
+            _ticksSinceInterruptRead = byte.MaxValue;
+            _interruptSummaryPending = false;
             _joystickPort1State = 0x1F;
             _joystickPort2State = 0x1F;
             _gamepadJoystickPort1State = 0x1F;
@@ -116,10 +145,13 @@ namespace C64Emulator.Core
         /// </summary>
         public void Tick()
         {
+            ReleaseDelayedInterruptLine();
             TickTimerOutputPulses();
+            ApplyPendingTimerOutputEvents();
             bool timerAUnderflow = TickTimerA();
             TickTimerB(timerAUnderflow);
             TickTod();
+            AdvanceInterruptReadHazardWindow();
         }
 
         /// <summary>
@@ -152,8 +184,11 @@ namespace C64Emulator.Core
                 case 0x0C:
                     return _serialDataRegister;
                 case 0x0D:
-                    byte value = (byte)(_interruptFlags | (IsIrqAsserted() ? 0x80 : 0x00));
+                    byte value = ReadInterruptControlRegister();
                     _interruptFlags = 0;
+                    _delayedInterruptLineFlags = 0;
+                    _ticksSinceInterruptRead = 0;
+                    _interruptSummaryPending = false;
                     return value;
                 default:
                     return _registers[address & 0x0F];
@@ -173,9 +208,11 @@ namespace C64Emulator.Core
             {
                 case 0x04:
                     _timerALatch = (ushort)((_timerALatch & 0xFF00) | value);
+                    ApplyTimerLowWriteToForceLoadedZero(ref _timerACounter, ref _timerAForceLoadedZero, ref _timerAReloadHold, _registers[0x0E], value);
                     break;
                 case 0x05:
                     _timerALatch = (ushort)((_timerALatch & 0x00FF) | (value << 8));
+                    _timerAForceLoadedZero = false;
                     if ((_registers[0x0E] & 0x01) == 0)
                     {
                         _timerACounter = _timerALatch;
@@ -184,9 +221,11 @@ namespace C64Emulator.Core
                     break;
                 case 0x06:
                     _timerBLatch = (ushort)((_timerBLatch & 0xFF00) | value);
+                    ApplyTimerLowWriteToForceLoadedZero(ref _timerBCounter, ref _timerBForceLoadedZero, ref _timerBReloadHold, _registers[0x0F], value);
                     break;
                 case 0x07:
                     _timerBLatch = (ushort)((_timerBLatch & 0x00FF) | (value << 8));
+                    _timerBForceLoadedZero = false;
                     if ((_registers[0x0F] & 0x01) == 0)
                     {
                         _timerBCounter = _timerBLatch;
@@ -210,30 +249,92 @@ namespace C64Emulator.Core
                     break;
                 case 0x0D:
                     _interruptMask = Cia6526TimerRules.ApplyInterruptMaskWrite(_interruptMask, value);
+                    if ((value & 0x80) == 0)
+                    {
+                        _interruptSummaryPending = true;
+                    }
+
                     break;
                 case 0x0E:
+                    bool timerAWasRunning = (previousValue & 0x01) != 0;
+                    bool timerAStarts = (value & 0x01) != 0;
+                    bool timerAForceLoad = (value & 0x10) != 0;
+                    if (timerAWasRunning && !timerAStarts && !timerAForceLoad)
+                    {
+                        TickTimerA(previousValue);
+                    }
+
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerAStartDelay = TimerStartDelayCycles;
+                        bool resumesActiveCounter = (value & 0x10) == 0 && _timerACounter != _timerALatch;
+                        _timerAStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
+                        if ((value & 0x10) == 0 && _timerALatch == 0 && _timerACounter == 0)
+                        {
+                            _timerAForceLoadedZero = true;
+                        }
                     }
 
                     if ((value & 0x10) != 0)
                     {
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
+                        _timerAForceLoadedZero = (_timerALatch == 0 && (value & 0x01) != 0);
+                        if (_timerAForceLoadedZero)
+                        {
+                            _interruptFlags |= 0x01;
+                        }
+
                         _timerAReloadHold = false;
+                        if (timerAWasRunning && timerAStarts)
+                        {
+                            _timerAStartDelay = 3;
+                        }
+
                         _registers[0x0E] &= 0xEF;
                     }
                     break;
                 case 0x0F:
+                    bool timerBWasRunning = (previousValue & 0x01) != 0;
+                    bool timerBStarts = (value & 0x01) != 0;
+                    bool timerBForceLoad = (value & 0x10) != 0;
+                    if (timerBWasRunning && !timerBStarts && !timerBForceLoad)
+                    {
+                        TickTimerB(previousValue, Cia6526TimerRules.TimerBCounts(previousValue, false));
+                    }
+
+                    if (timerBWasRunning &&
+                        timerBStarts &&
+                        !timerBForceLoad &&
+                        Cia6526TimerRules.TimerBUsesSystemClock(previousValue) &&
+                        !Cia6526TimerRules.TimerBUsesSystemClock(value))
+                    {
+                        TickTimerB(previousValue, true);
+                    }
+
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
-                        _timerBStartDelay = TimerStartDelayCycles;
+                        bool resumesActiveCounter = (value & 0x10) == 0 && _timerBCounter != _timerBLatch;
+                        _timerBStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
+                        if ((value & 0x10) == 0 && _timerBLatch == 0 && _timerBCounter == 0)
+                        {
+                            _timerBForceLoadedZero = true;
+                        }
                     }
 
                     if ((value & 0x10) != 0)
                     {
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
+                        _timerBForceLoadedZero = (_timerBLatch == 0 && (value & 0x01) != 0);
+                        if (_timerBForceLoadedZero)
+                        {
+                            _interruptFlags |= 0x02;
+                        }
+
                         _timerBReloadHold = false;
+                        if (timerBWasRunning && timerBStarts)
+                        {
+                            _timerBStartDelay = 3;
+                        }
+
                         _registers[0x0F] &= 0xEF;
                     }
                     break;
@@ -271,7 +372,39 @@ namespace C64Emulator.Core
         /// </summary>
         public bool IsIrqAsserted()
         {
-            return (_interruptFlags & _interruptMask & 0x1F) != 0;
+            byte visibleFlags = _chipRevision == CiaChipRevision.Mos6526
+                ? (byte)(_interruptFlags & ~_delayedInterruptLineFlags)
+                : _interruptFlags;
+            return (visibleFlags & _interruptMask & 0x1F) != 0;
+        }
+
+        /// <summary>
+        /// Reads the interrupt-control register with its one-shot summary bit.
+        /// </summary>
+        private byte ReadInterruptControlRegister()
+        {
+            bool hasFlags = (_interruptFlags & 0x1F) != 0;
+            bool showSummary = IsIrqAsserted() || (_interruptSummaryPending && hasFlags);
+            return (byte)(_interruptFlags | (showSummary ? 0x80 : 0x00));
+        }
+
+        /// <summary>
+        /// Releases old-CIA timer interrupt lines after their one-tick visibility delay.
+        /// </summary>
+        private void ReleaseDelayedInterruptLine()
+        {
+            _delayedInterruptLineFlags = 0;
+        }
+
+        /// <summary>
+        /// Ages the old-CIA Timer B interrupt-read hazard window by one CIA tick.
+        /// </summary>
+        private void AdvanceInterruptReadHazardWindow()
+        {
+            if (_ticksSinceInterruptRead < byte.MaxValue)
+            {
+                _ticksSinceInterruptRead++;
+            }
         }
 
         public JoystickPort ActiveJoystickPort
@@ -414,26 +547,40 @@ namespace C64Emulator.Core
         /// </summary>
         private bool TickTimerA()
         {
+            return TickTimerA(_registers[0x0E]);
+        }
+
+        /// <summary>
+        /// Advances timer A using the supplied control-register snapshot.
+        /// </summary>
+        private bool TickTimerA(byte controlRegister)
+        {
+            if (_timerAForceLoadedZero && (controlRegister & 0x01) != 0)
+            {
+                return false;
+            }
+
             bool underflow = Cia6526TimerRules.Tick(
                 ref _timerACounter,
                 _timerALatch,
                 ref _timerAStartDelay,
                 ref _timerAReloadHold,
-                _registers[0x0E],
-                true,
+                controlRegister,
+                Cia6526TimerRules.TimerACounts(controlRegister),
                 out bool stopOneShot);
             if (!underflow)
             {
                 return false;
             }
 
-            _interruptFlags |= 0x01;
+            _timerAForceLoadedZero = false;
+            RaiseTimerInterruptFlag(0x01);
             if (stopOneShot)
             {
                 _registers[0x0E] &= 0xFE;
             }
 
-            ApplyTimerOutputUnderflow(_registers[0x0E], ref _timerAOutputHigh, ref _timerAOutputPulseCycles);
+            QueueTimerOutputUnderflow(_registers[0x0E], ref _timerAOutputPendingEvent);
             return true;
         }
 
@@ -442,26 +589,41 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickTimerB(bool timerAUnderflow)
         {
+            TickTimerB(_registers[0x0F], Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow));
+        }
+
+        /// <summary>
+        /// Advances timer B using the supplied control-register snapshot.
+        /// </summary>
+        private void TickTimerB(byte controlRegister, bool countPulse)
+        {
+            if (_timerBForceLoadedZero && (controlRegister & 0x01) != 0)
+            {
+                return;
+            }
+
             bool underflow = Cia6526TimerRules.Tick(
                 ref _timerBCounter,
                 _timerBLatch,
                 ref _timerBStartDelay,
                 ref _timerBReloadHold,
-                _registers[0x0F],
-                Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow),
-                out bool stopOneShot);
+                controlRegister,
+                countPulse,
+                out bool stopOneShot,
+                Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister));
             if (!underflow)
             {
                 return;
             }
 
-            _interruptFlags |= 0x02;
+            _timerBForceLoadedZero = false;
+            RaiseTimerInterruptFlag(0x02);
             if (stopOneShot)
             {
                 _registers[0x0F] &= 0xFE;
             }
 
-            ApplyTimerOutputUnderflow(_registers[0x0F], ref _timerBOutputHigh, ref _timerBOutputPulseCycles);
+            QueueTimerOutputUnderflow(_registers[0x0F], ref _timerBOutputPendingEvent);
         }
 
         /// <summary>
@@ -471,6 +633,15 @@ namespace C64Emulator.Core
         {
             TickTimerOutputPulse(ref _timerAOutputHigh, ref _timerAOutputPulseCycles);
             TickTimerOutputPulse(ref _timerBOutputHigh, ref _timerBOutputPulseCycles);
+        }
+
+        /// <summary>
+        /// Applies PB6/PB7 timer-output events queued by the previous CIA tick.
+        /// </summary>
+        private void ApplyPendingTimerOutputEvents()
+        {
+            ApplyPendingTimerOutputEvent(ref _timerAOutputHigh, ref _timerAOutputPulseCycles, ref _timerAOutputPendingEvent);
+            ApplyPendingTimerOutputEvent(ref _timerBOutputHigh, ref _timerBOutputPulseCycles, ref _timerBOutputPendingEvent);
         }
 
         /// <summary>
@@ -491,9 +662,51 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Applies the PB6/PB7 timer-output side effect produced by a timer underflow.
+        /// Applies one delayed PB6/PB7 timer-output side effect.
         /// </summary>
-        private static void ApplyTimerOutputUnderflow(byte controlRegister, ref bool outputHigh, ref byte pulseCycles)
+        private static void ApplyPendingTimerOutputEvent(ref bool outputHigh, ref byte pulseCycles, ref byte pendingEvent)
+        {
+            byte eventType = pendingEvent;
+            pendingEvent = TimerOutputEventNone;
+
+            if (eventType == TimerOutputEventToggle)
+            {
+                outputHigh = !outputHigh;
+                pulseCycles = 0;
+                return;
+            }
+
+            if (eventType == TimerOutputEventPulse)
+            {
+                outputHigh = true;
+                pulseCycles = 1;
+            }
+        }
+
+        /// <summary>
+        /// Applies the configured CIA revision's timer-interrupt visibility phase.
+        /// </summary>
+        private void RaiseTimerInterruptFlag(byte flag)
+        {
+            if (flag == 0x02 &&
+                _chipRevision == CiaChipRevision.Mos6526 &&
+                _ticksSinceInterruptRead <= OldCiaTimerBInterruptReadHazardTicks)
+            {
+                return;
+            }
+
+            if (_chipRevision == CiaChipRevision.Mos6526)
+            {
+                _delayedInterruptLineFlags |= flag;
+            }
+
+            _interruptFlags |= flag;
+        }
+
+        /// <summary>
+        /// Queues the delayed PB6/PB7 timer-output side effect produced by a timer underflow.
+        /// </summary>
+        private static void QueueTimerOutputUnderflow(byte controlRegister, ref byte pendingEvent)
         {
             if ((controlRegister & 0x02) == 0)
             {
@@ -502,13 +715,44 @@ namespace C64Emulator.Core
 
             if ((controlRegister & 0x04) != 0)
             {
-                outputHigh = !outputHigh;
-                pulseCycles = 0;
+                pendingEvent = TimerOutputEventToggle;
                 return;
             }
 
-            outputHigh = true;
-            pulseCycles = 1;
+            pendingEvent = TimerOutputEventPulse;
+        }
+
+        /// <summary>
+        /// Gets the first-count delay after a timer start control write.
+        /// </summary>
+        private static byte GetTimerStartDelay(byte controlRegister)
+        {
+            if ((controlRegister & 0x10) == 0)
+            {
+                return TimerStartDelayCycles;
+            }
+
+            return (controlRegister & 0x02) != 0 ? TimerStartDelayCycles : TimerForceLoadStartDelayCycles;
+        }
+
+        /// <summary>
+        /// Handles the 6526 edge case where a running timer was force-loaded with latch zero.
+        /// </summary>
+        private static void ApplyTimerLowWriteToForceLoadedZero(
+            ref ushort counter,
+            ref bool forceLoadedZero,
+            ref bool reloadHold,
+            byte controlRegister,
+            byte lowValue)
+        {
+            if (!forceLoadedZero || (controlRegister & 0x01) == 0)
+            {
+                return;
+            }
+
+            counter = lowValue;
+            reloadHold = false;
+            forceLoadedZero = false;
         }
 
         /// <summary>

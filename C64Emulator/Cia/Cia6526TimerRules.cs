@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,22 @@ namespace C64Emulator.Core
             return source == 0 || ((source == 2 || source == 3) && timerAUnderflow);
         }
 
+        public static bool TimerACounts(byte controlRegisterA)
+        {
+            return (controlRegisterA & 0x20) == 0;
+        }
+
+        public static bool TimerBUsesTimerAUnderflows(byte controlRegisterB)
+        {
+            int source = (controlRegisterB >> 5) & 0x03;
+            return source == 2 || source == 3;
+        }
+
+        public static bool TimerBUsesSystemClock(byte controlRegisterB)
+        {
+            return ((controlRegisterB >> 5) & 0x03) == 0;
+        }
+
         public static bool Tick(
             ref ushort counter,
             ushort latch,
@@ -53,7 +69,8 @@ namespace C64Emulator.Core
             ref bool reloadHold,
             byte controlRegister,
             bool countPulse,
-            out bool stopOneShot)
+            out bool stopOneShot,
+            bool exposeTerminalZero = false)
         {
             stopOneShot = false;
             if ((controlRegister & 0x01) == 0)
@@ -74,6 +91,11 @@ namespace C64Emulator.Core
 
             if (reloadHold)
             {
+                if (exposeTerminalZero)
+                {
+                    counter = ReloadAfterUnderflow(latch);
+                }
+
                 reloadHold = false;
                 return false;
             }
@@ -102,7 +124,7 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            counter = ReloadAfterUnderflow(latch);
+            counter = exposeTerminalZero ? (ushort)0 : ReloadAfterUnderflow(latch);
             reloadHold = true;
             stopOneShot = (controlRegister & 0x08) != 0;
             return true;
