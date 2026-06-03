@@ -52,6 +52,12 @@ namespace C64Emulator.Core
         private bool _timerBReloadHold;
         private bool _timerAForceLoadedZero;
         private bool _timerBForceLoadedZero;
+        private byte _timerAReadSubtract;
+        private byte _timerBReadSubtract;
+        private byte _timerASourceSwitchDelay;
+        private bool _timerASourceSwitchTargetCounts;
+        private byte _timerBSourceSwitchDelay;
+        private byte _timerBSourceSwitchPreviousControl;
         private bool _timerAOutputHigh;
         private bool _timerBOutputHigh;
         private byte _timerAOutputPulseCycles;
@@ -115,6 +121,12 @@ namespace C64Emulator.Core
             _timerBReloadHold = false;
             _timerAForceLoadedZero = false;
             _timerBForceLoadedZero = false;
+            _timerAReadSubtract = 0;
+            _timerBReadSubtract = 0;
+            _timerASourceSwitchDelay = 0;
+            _timerASourceSwitchTargetCounts = false;
+            _timerBSourceSwitchDelay = 0;
+            _timerBSourceSwitchPreviousControl = 0;
             _timerAOutputHigh = false;
             _timerBOutputHigh = false;
             _timerAOutputPulseCycles = 0;
@@ -166,11 +178,11 @@ namespace C64Emulator.Core
                 case 0x01:
                     return ReadPortB();
                 case 0x04:
-                    return (byte)(_timerACounter & 0xFF);
+                    return ReadVisibleTimerLow(_timerACounter, _timerAReadSubtract);
                 case 0x05:
                     return (byte)((_timerACounter >> 8) & 0xFF);
                 case 0x06:
-                    return (byte)(_timerBCounter & 0xFF);
+                    return ReadVisibleTimerLow(_timerBCounter, _timerBReadSubtract);
                 case 0x07:
                     return (byte)((_timerBCounter >> 8) & 0xFF);
                 case 0x08:
@@ -208,11 +220,13 @@ namespace C64Emulator.Core
             {
                 case 0x04:
                     _timerALatch = (ushort)((_timerALatch & 0xFF00) | value);
+                    _timerAReadSubtract = 0;
                     ApplyTimerLowWriteToForceLoadedZero(ref _timerACounter, ref _timerAForceLoadedZero, ref _timerAReloadHold, _registers[0x0E], value);
                     break;
                 case 0x05:
                     _timerALatch = (ushort)((_timerALatch & 0x00FF) | (value << 8));
                     _timerAForceLoadedZero = false;
+                    _timerAReadSubtract = 0;
                     if ((_registers[0x0E] & 0x01) == 0)
                     {
                         _timerACounter = _timerALatch;
@@ -221,11 +235,13 @@ namespace C64Emulator.Core
                     break;
                 case 0x06:
                     _timerBLatch = (ushort)((_timerBLatch & 0xFF00) | value);
+                    _timerBReadSubtract = 0;
                     ApplyTimerLowWriteToForceLoadedZero(ref _timerBCounter, ref _timerBForceLoadedZero, ref _timerBReloadHold, _registers[0x0F], value);
                     break;
                 case 0x07:
                     _timerBLatch = (ushort)((_timerBLatch & 0x00FF) | (value << 8));
                     _timerBForceLoadedZero = false;
+                    _timerBReadSubtract = 0;
                     if ((_registers[0x0F] & 0x01) == 0)
                     {
                         _timerBCounter = _timerBLatch;
@@ -259,13 +275,39 @@ namespace C64Emulator.Core
                     bool timerAWasRunning = (previousValue & 0x01) != 0;
                     bool timerAStarts = (value & 0x01) != 0;
                     bool timerAForceLoad = (value & 0x10) != 0;
+                    if (((previousValue ^ value) & 0x20) != 0)
+                    {
+                        _timerASourceSwitchDelay = 2;
+                        _timerASourceSwitchTargetCounts = Cia6526TimerRules.TimerACounts(value);
+                    }
+
                     if (timerAWasRunning && !timerAStarts && !timerAForceLoad)
                     {
                         TickTimerA(previousValue);
+                        _timerAReadSubtract = GetTimerStopVisibleReadSubtract(_timerALatch);
+                    }
+
+                    if (timerAWasRunning &&
+                        timerAStarts &&
+                        !timerAForceLoad &&
+                        Cia6526TimerRules.TimerACounts(previousValue) &&
+                        !Cia6526TimerRules.TimerACounts(value))
+                    {
+                        _timerAReadSubtract = GetTimerSourceVisibleReadSubtract(_timerALatch);
+                    }
+
+                    if (timerAWasRunning &&
+                        timerAStarts &&
+                        !timerAForceLoad &&
+                        !Cia6526TimerRules.TimerACounts(previousValue) &&
+                        Cia6526TimerRules.TimerACounts(value))
+                    {
+                        _timerAReadSubtract = 0;
                     }
 
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
+                        _timerAReadSubtract = 0;
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerACounter != _timerALatch;
                         _timerAStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
                         if ((value & 0x10) == 0 && _timerALatch == 0 && _timerACounter == 0)
@@ -278,6 +320,7 @@ namespace C64Emulator.Core
                     {
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
                         _timerAForceLoadedZero = (_timerALatch == 0 && (value & 0x01) != 0);
+                        _timerAReadSubtract = 0;
                         if (_timerAForceLoadedZero)
                         {
                             _interruptFlags |= 0x01;
@@ -296,22 +339,21 @@ namespace C64Emulator.Core
                     bool timerBWasRunning = (previousValue & 0x01) != 0;
                     bool timerBStarts = (value & 0x01) != 0;
                     bool timerBForceLoad = (value & 0x10) != 0;
+                    if (((previousValue ^ value) & 0x60) != 0)
+                    {
+                        _timerBSourceSwitchDelay = 2;
+                        _timerBSourceSwitchPreviousControl = previousValue;
+                    }
+
                     if (timerBWasRunning && !timerBStarts && !timerBForceLoad)
                     {
                         TickTimerB(previousValue, Cia6526TimerRules.TimerBCounts(previousValue, false));
-                    }
-
-                    if (timerBWasRunning &&
-                        timerBStarts &&
-                        !timerBForceLoad &&
-                        Cia6526TimerRules.TimerBUsesSystemClock(previousValue) &&
-                        !Cia6526TimerRules.TimerBUsesSystemClock(value))
-                    {
-                        TickTimerB(previousValue, true);
+                        _timerBReadSubtract = GetTimerStopVisibleReadSubtract(_timerBLatch);
                     }
 
                     if ((previousValue & 0x01) == 0 && (value & 0x01) != 0)
                     {
+                        _timerBReadSubtract = 0;
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerBCounter != _timerBLatch;
                         _timerBStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
                         if ((value & 0x10) == 0 && _timerBLatch == 0 && _timerBCounter == 0)
@@ -324,6 +366,7 @@ namespace C64Emulator.Core
                     {
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
                         _timerBForceLoadedZero = (_timerBLatch == 0 && (value & 0x01) != 0);
+                        _timerBReadSubtract = 0;
                         if (_timerBForceLoadedZero)
                         {
                             _interruptFlags |= 0x02;
@@ -560,13 +603,14 @@ namespace C64Emulator.Core
                 return false;
             }
 
+            bool countPulse = GetTimerACountPulse(controlRegister);
             bool underflow = Cia6526TimerRules.Tick(
                 ref _timerACounter,
                 _timerALatch,
                 ref _timerAStartDelay,
                 ref _timerAReloadHold,
                 controlRegister,
-                Cia6526TimerRules.TimerACounts(controlRegister),
+                countPulse,
                 out bool stopOneShot);
             if (!underflow)
             {
@@ -589,13 +633,29 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickTimerB(bool timerAUnderflow)
         {
-            TickTimerB(_registers[0x0F], Cia6526TimerRules.TimerBCounts(_registers[0x0F], timerAUnderflow));
+            byte controlRegister = _registers[0x0F];
+            byte sourceControlRegister = GetTimerBSourceControlRegister(controlRegister);
+            TickTimerB(
+                controlRegister,
+                Cia6526TimerRules.TimerBCounts(sourceControlRegister, timerAUnderflow),
+                Cia6526TimerRules.TimerBUsesTimerAUnderflows(sourceControlRegister));
         }
 
         /// <summary>
         /// Advances timer B using the supplied control-register snapshot.
         /// </summary>
         private void TickTimerB(byte controlRegister, bool countPulse)
+        {
+            TickTimerB(
+                controlRegister,
+                countPulse,
+                Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister));
+        }
+
+        /// <summary>
+        /// Advances timer B using explicit count and source pipeline state.
+        /// </summary>
+        private void TickTimerB(byte controlRegister, bool countPulse, bool exposeTerminalZero)
         {
             if (_timerBForceLoadedZero && (controlRegister & 0x01) != 0)
             {
@@ -610,7 +670,7 @@ namespace C64Emulator.Core
                 controlRegister,
                 countPulse,
                 out bool stopOneShot,
-                Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister));
+                exposeTerminalZero);
             if (!underflow)
             {
                 return;
@@ -733,6 +793,72 @@ namespace C64Emulator.Core
             }
 
             return (controlRegister & 0x02) != 0 ? TimerStartDelayCycles : TimerForceLoadStartDelayCycles;
+        }
+
+        /// <summary>
+        /// Returns the counter value visible to timer register reads.
+        /// </summary>
+        private static byte ReadVisibleTimerLow(ushort counter, byte subtract)
+        {
+            byte low = (byte)(counter & 0xFF);
+            if (low < subtract)
+            {
+                return 0;
+            }
+
+            return (byte)(low - subtract);
+        }
+
+        /// <summary>
+        /// Gets the transient visible low-byte phase after stopping a high-byte-only timer.
+        /// </summary>
+        private static byte GetTimerStopVisibleReadSubtract(ushort latch)
+        {
+            return HasHighByteOnlyLatch(latch) ? (byte)1 : (byte)0;
+        }
+
+        /// <summary>
+        /// Gets the transient visible low-byte phase after switching timer A away from Phi2.
+        /// </summary>
+        private static byte GetTimerSourceVisibleReadSubtract(ushort latch)
+        {
+            return 0;
+        }
+
+        /// <summary>
+        /// Returns whether the timer was loaded through the high byte while the low latch stayed zero.
+        /// </summary>
+        private static bool HasHighByteOnlyLatch(ushort latch)
+        {
+            return (latch & 0xFF00) != 0 && (latch & 0x00FF) == 0;
+        }
+
+        /// <summary>
+        /// Gets timer A's count pulse after applying the delayed Phi2/CNT source switch.
+        /// </summary>
+        private bool GetTimerACountPulse(byte controlRegister)
+        {
+            if (_timerASourceSwitchDelay == 0)
+            {
+                return Cia6526TimerRules.TimerACounts(controlRegister);
+            }
+
+            _timerASourceSwitchDelay--;
+            return !_timerASourceSwitchTargetCounts;
+        }
+
+        /// <summary>
+        /// Gets the Timer B source bits after applying the delayed source switch pipeline.
+        /// </summary>
+        private byte GetTimerBSourceControlRegister(byte controlRegister)
+        {
+            if (_timerBSourceSwitchDelay == 0)
+            {
+                return controlRegister;
+            }
+
+            _timerBSourceSwitchDelay--;
+            return _timerBSourceSwitchPreviousControl;
         }
 
         /// <summary>
