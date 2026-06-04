@@ -348,6 +348,7 @@ namespace C64Emulator.Core
 
                     if ((value & 0x10) != 0)
                     {
+                        ushort timerACounterBeforeForce = _timerACounter;
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
                         _timerAForceLoadedZero = (_timerALatch == 0 && (value & 0x01) != 0);
                         _timerAReadSubtract = 0;
@@ -360,7 +361,8 @@ namespace C64Emulator.Core
                         _timerAReloadHold = false;
                         if (timerAWasRunning && timerAStarts)
                         {
-                            _timerAStartDelay = 3;
+                            AdvanceOldCiaRunningForceLoadPhase(ref _timerACounter);
+                            _timerAStartDelay = GetRunningForceLoadStartDelay(timerACounterBeforeForce);
                         }
 
                         _registers[0x0E] &= 0xEF;
@@ -855,6 +857,36 @@ namespace C64Emulator.Core
             }
 
             return (controlRegister & 0x02) != 0 ? TimerStartDelayCycles : TimerForceLoadStartDelayCycles;
+        }
+
+        /// <summary>
+        /// Returns the restart phase for FORCE LOAD while timer A is already running.
+        /// </summary>
+        private byte GetRunningForceLoadStartDelay(ushort previousCounter)
+        {
+            // CIA-AcountsB reloads CIA1 timer A from the KERNAL warm state, where
+            // the timer is already active. When the old counter is not close to
+            // terminal count, real silicon starts counting from the newly forced
+            // latch on the next CIA tick instead of applying the cold-start delay.
+            if ((previousCounter & 0xFF00) == 0)
+            {
+                return _chipRevision == CiaChipRevision.Mos6526 ? (byte)4 : (byte)3;
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Applies the original 6526 running FORCE LOAD write phase.
+        /// </summary>
+        private void AdvanceOldCiaRunningForceLoadPhase(ref ushort counter)
+        {
+            if (_chipRevision != CiaChipRevision.Mos6526 || counter == 0)
+            {
+                return;
+            }
+
+            counter--;
         }
 
         /// <summary>

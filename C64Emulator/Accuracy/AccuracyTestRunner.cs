@@ -114,6 +114,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC invalid display modes keep hidden foreground", TestVicInvalidDisplayModesKeepHiddenForeground);
             failures += RunCase(output, "VIC matrix fetch does not latch display mode", TestVicMatrixFetchDoesNotLatchDisplayMode);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
+            failures += RunCase(output, "CIA running timer A force-load phase", TestCiaRunningTimerAForceLoadPhase);
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
@@ -1333,6 +1334,39 @@ namespace C64Emulator.Core
             context.Equal("CIA2 latch-zero first tick low", 0x00, cia2.Read(0x04));
         }
 
+        private static void TestCiaRunningTimerAForceLoadPhase(AccuracyContext context)
+        {
+            var newCia = new Cia1(CiaChipRevision.Mos6526A);
+            StartTimerA(newCia);
+            newCia.Write(0x04, 0xFF);
+            newCia.Write(0x05, 0x00);
+            newCia.Write(0x0E, 0xD5);
+            context.Equal("6526A running force-load is visible immediately", 0xFF, newCia.Read(0x04));
+            newCia.Tick();
+            context.Equal("6526A running force-load counts on next tick", 0xFE, newCia.Read(0x04));
+
+            var oldCia = new Cia1(CiaChipRevision.Mos6526);
+            StartTimerA(oldCia);
+            oldCia.Write(0x04, 0xFF);
+            oldCia.Write(0x05, 0x00);
+            oldCia.Write(0x0E, 0xD5);
+            context.Equal("6526 running force-load write consumes first phase", 0xFE, oldCia.Read(0x04));
+            oldCia.Tick();
+            context.Equal("6526 running force-load continues from consumed phase", 0xFD, oldCia.Read(0x04));
+
+            var nearNewCia = new Cia1(CiaChipRevision.Mos6526A);
+            StartNearTerminalTimerA(nearNewCia);
+            nearNewCia.Write(0x04, 0xFF);
+            nearNewCia.Write(0x05, 0x00);
+            nearNewCia.Write(0x0E, 0xD5);
+            nearNewCia.Tick();
+            nearNewCia.Tick();
+            nearNewCia.Tick();
+            context.Equal("6526A near-terminal running force-load keeps transfer phase", 0xFF, nearNewCia.Read(0x04));
+            nearNewCia.Tick();
+            context.Equal("6526A near-terminal running force-load resumes after transfer phase", 0xFE, nearNewCia.Read(0x04));
+        }
+
         private static void TestCiaTimerBCountsTimerA(AccuracyContext context)
         {
             var cia = new Cia1();
@@ -1373,6 +1407,26 @@ namespace C64Emulator.Core
             cia.Tick();
             cia.Tick();
             context.True("one-shot timer B IRQ after terminal zero pulse", cia.IsIrqAsserted());
+        }
+
+        private static void StartTimerA(Cia1 cia)
+        {
+            cia.Write(0x04, 0x00);
+            cia.Write(0x05, 0x20);
+            cia.Write(0x0E, 0x01);
+            cia.Tick();
+            cia.Tick();
+            cia.Tick();
+        }
+
+        private static void StartNearTerminalTimerA(Cia1 cia)
+        {
+            cia.Write(0x04, 0x08);
+            cia.Write(0x05, 0x00);
+            cia.Write(0x0E, 0x01);
+            cia.Tick();
+            cia.Tick();
+            cia.Tick();
         }
 
         private static void TestCiaTodTenthIncrement(AccuracyContext context)
