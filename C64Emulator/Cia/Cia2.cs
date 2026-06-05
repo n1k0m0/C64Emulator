@@ -48,6 +48,8 @@ namespace C64Emulator.Core
         private bool _timerBReloadHold;
         private bool _timerAForceLoadedZero;
         private bool _timerBForceLoadedZero;
+        private byte _timerALoadWriteWindow;
+        private byte _timerBLoadWriteWindow;
         private byte _timerAReadSubtract;
         private byte _timerBReadSubtract;
         private bool _timerAReadSubtractSticky;
@@ -57,6 +59,14 @@ namespace C64Emulator.Core
         private byte _timerBSourceSwitchDelay;
         private byte _timerBSourceSwitchPreviousControl;
         private bool _timerAUnderflowPendingForTimerB;
+        private bool _timerBStartPendingTimerAUnderflow;
+        private bool _timerBCountedStartPendingTimerAUnderflow;
+        private byte _timerBPendingTimerAInterruptDelay;
+        private bool _timerBDelayNextTimerAInterrupt;
+        private bool _timerALastControlForceLoad;
+        private bool _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad;
+        private ushort _timerBTimerAReadHoldCounter;
+        private byte _timerBTimerAReadHoldTicks;
         private bool _timerAOutputHigh;
         private bool _timerBOutputHigh;
         private byte _timerAOutputPulseCycles;
@@ -115,6 +125,8 @@ namespace C64Emulator.Core
             _timerBReloadHold = false;
             _timerAForceLoadedZero = false;
             _timerBForceLoadedZero = false;
+            _timerALoadWriteWindow = 0;
+            _timerBLoadWriteWindow = 0;
             _timerAReadSubtract = 0;
             _timerBReadSubtract = 0;
             _timerAReadSubtractSticky = false;
@@ -124,6 +136,14 @@ namespace C64Emulator.Core
             _timerBSourceSwitchDelay = 0;
             _timerBSourceSwitchPreviousControl = 0;
             _timerAUnderflowPendingForTimerB = false;
+            _timerBStartPendingTimerAUnderflow = false;
+            _timerBCountedStartPendingTimerAUnderflow = false;
+            _timerBPendingTimerAInterruptDelay = 0;
+            _timerBDelayNextTimerAInterrupt = false;
+            _timerALastControlForceLoad = false;
+            _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad = false;
+            _timerBTimerAReadHoldCounter = 0;
+            _timerBTimerAReadHoldTicks = 0;
             _timerAOutputHigh = false;
             _timerBOutputHigh = false;
             _timerAOutputPulseCycles = 0;
@@ -150,6 +170,9 @@ namespace C64Emulator.Core
         public void Tick()
         {
             ReleaseDelayedInterruptLine();
+            AdvancePendingTimerBTimerAInterrupt();
+            AdvanceTimerBTimerAReadHold();
+            AdvanceTimerLoadWriteWindows();
             TickTimerOutputPulses();
             ApplyPendingTimerOutputEvents();
             bool timerAUnderflow = TickTimerA();
@@ -182,9 +205,9 @@ namespace C64Emulator.Core
                 case 0x05:
                     return ReadVisibleTimerHigh(_timerACounter, _timerAReadSubtract);
                 case 0x06:
-                    return ReadVisibleTimerLow(_timerBCounter, _timerBReadSubtract);
+                    return ReadVisibleTimerLow(GetVisibleTimerBCounter(), _timerBReadSubtract);
                 case 0x07:
-                    return ReadVisibleTimerHigh(_timerBCounter, _timerBReadSubtract);
+                    return ReadVisibleTimerHigh(GetVisibleTimerBCounter(), _timerBReadSubtract);
                 case 0x08:
                     return _todTenths;
                 case 0x09:
@@ -233,10 +256,18 @@ namespace C64Emulator.Core
                     _timerAForceLoadedZero = false;
                     _timerAReadSubtract = 0;
                     _timerAReadSubtractSticky = false;
-                    if ((_registers[0x0E] & 0x01) == 0)
+                    bool timerAHighWriteHitsLoadWindow = (_registers[0x0E] & 0x01) != 0 &&
+                        _timerALoadWriteWindow != 0;
+                    if ((_registers[0x0E] & 0x01) == 0 || timerAHighWriteHitsLoadWindow)
                     {
+                        // VICE keeps the timer LOAD phase visible briefly after an
+                        // underflow; a high-byte write during that phase reloads cnt.
                         _timerACounter = _timerALatch;
                         _timerAReloadHold = false;
+                        if (timerAHighWriteHitsLoadWindow)
+                        {
+                            _timerBDelayNextTimerAInterrupt = true;
+                        }
                     }
                     break;
                 case 0x06:
@@ -250,7 +281,7 @@ namespace C64Emulator.Core
                     _timerBForceLoadedZero = false;
                     _timerBReadSubtract = 0;
                     _timerBReadSubtractSticky = false;
-                    if ((_registers[0x0F] & 0x01) == 0)
+                    if ((_registers[0x0F] & 0x01) == 0 || _timerBLoadWriteWindow != 0)
                     {
                         _timerBCounter = _timerBLatch;
                         _timerBReloadHold = false;
@@ -283,6 +314,11 @@ namespace C64Emulator.Core
                     bool timerAWasRunning = (previousValue & 0x01) != 0;
                     bool timerAStarts = (value & 0x01) != 0;
                     bool timerAForceLoad = (value & 0x10) != 0;
+                    if (timerAStarts)
+                    {
+                        _timerALastControlForceLoad = timerAForceLoad;
+                    }
+
                     if (((previousValue ^ value) & 0x20) != 0)
                     {
                         _timerASourceSwitchDelay = 2;
@@ -329,7 +365,7 @@ namespace C64Emulator.Core
                         }
 
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerACounter != _timerALatch;
-                        _timerAStartDelay = resumesActiveCounter ? (byte)1 : (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
+                        _timerAStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
                         if ((value & 0x10) == 0 && _timerALatch == 0 && _timerACounter == 0)
                         {
                             _timerAForceLoadedZero = true;
@@ -339,6 +375,9 @@ namespace C64Emulator.Core
                     if ((value & 0x10) != 0)
                     {
                         _timerACounter = Cia6526TimerRules.ForceLoad(_timerALatch);
+                        _timerALoadWriteWindow = 0;
+                        _timerBDelayNextTimerAInterrupt = false;
+                        _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad = timerAStarts;
                         _timerAForceLoadedZero = (_timerALatch == 0 && (value & 0x01) != 0);
                         _timerAReadSubtract = 0;
                         _timerAReadSubtractSticky = false;
@@ -350,7 +389,7 @@ namespace C64Emulator.Core
                         _timerAReloadHold = false;
                         if (timerAWasRunning && timerAStarts)
                         {
-                            _timerAStartDelay = 3;
+                            _timerAStartDelay = TimerStartDelayCycles;
                         }
 
                         _registers[0x0E] &= 0xEF;
@@ -364,10 +403,18 @@ namespace C64Emulator.Core
                     {
                         _timerBSourceSwitchDelay = 2;
                         _timerBSourceSwitchPreviousControl = previousValue;
+                        _timerBStartPendingTimerAUnderflow = false;
+                        _timerBCountedStartPendingTimerAUnderflow = false;
+                        _timerBPendingTimerAInterruptDelay = 0;
+                        _timerBTimerAReadHoldTicks = 0;
                     }
 
                     if (timerBWasRunning && !timerBStarts && !timerBForceLoad)
                     {
+                        _timerBStartPendingTimerAUnderflow = false;
+                        _timerBCountedStartPendingTimerAUnderflow = false;
+                        _timerBPendingTimerAInterruptDelay = 0;
+                        _timerBTimerAReadHoldTicks = 0;
                         TickTimerB(previousValue, Cia6526TimerRules.TimerBCounts(previousValue, false));
                         _timerBReadSubtract = GetTimerStopVisibleReadSubtract(_timerBLatch, _timerBReadSubtractSticky);
                         if (_timerBReadSubtract != 0 && ReadVisibleTimerLow(_timerBCounter, _timerBReadSubtract) == 0)
@@ -384,7 +431,7 @@ namespace C64Emulator.Core
                         }
 
                         bool resumesActiveCounter = (value & 0x10) == 0 && _timerBCounter != _timerBLatch;
-                        _timerBStartDelay = resumesActiveCounter ? (byte)1 : (byte)((value & 0x10) != 0 ? TimerStartDelayCycles : 2);
+                        _timerBStartDelay = resumesActiveCounter ? (byte)1 : GetTimerStartDelay(value);
                         if ((value & 0x10) == 0 && _timerBLatch == 0 && _timerBCounter == 0)
                         {
                             _timerBForceLoadedZero = true;
@@ -394,6 +441,7 @@ namespace C64Emulator.Core
                     if ((value & 0x10) != 0)
                     {
                         _timerBCounter = Cia6526TimerRules.ForceLoad(_timerBLatch);
+                        _timerBLoadWriteWindow = 0;
                         _timerBForceLoadedZero = (_timerBLatch == 0 && (value & 0x01) != 0);
                         _timerBReadSubtract = 0;
                         _timerBReadSubtractSticky = false;
@@ -402,6 +450,10 @@ namespace C64Emulator.Core
                             _interruptFlags |= 0x02;
                         }
 
+                        _timerBStartPendingTimerAUnderflow = false;
+                        _timerBCountedStartPendingTimerAUnderflow = false;
+                        _timerBPendingTimerAInterruptDelay = 0;
+                        _timerBTimerAReadHoldTicks = 0;
                         _timerBReloadHold = false;
                         if (timerBWasRunning && timerBStarts)
                         {
@@ -535,6 +587,7 @@ namespace C64Emulator.Core
             }
 
             _timerAForceLoadedZero = false;
+            _timerALoadWriteWindow = 3;
             RaiseTimerInterruptFlag(0x01);
             if (stopOneShot)
             {
@@ -560,11 +613,61 @@ namespace C64Emulator.Core
         {
             byte controlRegister = _registers[0x0F];
             byte sourceControlRegister = GetTimerBSourceControlRegister(controlRegister);
+            bool usesTimerAUnderflow = Cia6526TimerRules.TimerBUsesTimerAUnderflows(sourceControlRegister);
+            bool ignoreTimerAUnderflow = usesTimerAUnderflow &&
+                timerAUnderflow &&
+                _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad &&
+                _timerBStartDelay >= 3;
+            if (ignoreTimerAUnderflow)
+            {
+                // Timer B is still too early in its force-load start pipeline to
+                // accept this Timer A pulse; the following interrupt keeps old CIA phase.
+                timerAUnderflow = false;
+                _timerBDelayNextTimerAInterrupt = true;
+                _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad = false;
+            }
+            else if (usesTimerAUnderflow && timerAUnderflow)
+            {
+                _timerBIgnoreEarlyTimerAUnderflowAfterTimerAForceLoad = false;
+            }
+
+            bool hadPendingStartUnderflow = _timerBStartPendingTimerAUnderflow;
+            bool replayPendingStartUnderflow = usesTimerAUnderflow &&
+                _timerBStartDelay == 0 &&
+                _timerBStartPendingTimerAUnderflow;
+            if (replayPendingStartUnderflow)
+            {
+                _timerBStartPendingTimerAUnderflow = false;
+                _timerBCountedStartPendingTimerAUnderflow = true;
+            }
+
+            bool queuedStartUnderflowThisTick = usesTimerAUnderflow && timerAUnderflow && _timerBStartDelay > 0;
+            if (queuedStartUnderflowThisTick)
+            {
+                _timerBStartPendingTimerAUnderflow = true;
+            }
+
+            bool directTimerAStepPulse = Cia6526TimerRules.TimerBCounts(sourceControlRegister, timerAUnderflow);
             TickTimerB(
                 controlRegister,
-                Cia6526TimerRules.TimerBCounts(sourceControlRegister, timerAUnderflow),
-                Cia6526TimerRules.TimerBUsesTimerAUnderflows(sourceControlRegister),
-                suppressInterruptFlag);
+                directTimerAStepPulse || replayPendingStartUnderflow,
+                usesTimerAUnderflow,
+                suppressInterruptFlag,
+                directTimerAStepPulse);
+
+            if (usesTimerAUnderflow &&
+                hadPendingStartUnderflow &&
+                !replayPendingStartUnderflow &&
+                !queuedStartUnderflowThisTick &&
+                _timerBStartPendingTimerAUnderflow &&
+                _timerBStartDelay == 0)
+            {
+                // A Timer A pulse captured on an earlier start-delay tick becomes
+                // effective as soon as the Timer B start pipeline reaches count phase.
+                _timerBStartPendingTimerAUnderflow = false;
+                _timerBCountedStartPendingTimerAUnderflow = true;
+                TickTimerB(controlRegister, true, usesTimerAUnderflow, suppressInterruptFlag, false);
+            }
         }
 
         /// <summary>
@@ -592,11 +695,25 @@ namespace C64Emulator.Core
         /// </summary>
         private void TickTimerB(byte controlRegister, bool countPulse, bool exposeTerminalZero, bool suppressInterruptFlag)
         {
+            TickTimerB(controlRegister, countPulse, exposeTerminalZero, suppressInterruptFlag, false);
+        }
+
+        /// <summary>
+        /// Advances timer B using explicit count, source pipeline, interrupt timing, and read-hold state.
+        /// </summary>
+        private void TickTimerB(
+            byte controlRegister,
+            bool countPulse,
+            bool exposeTerminalZero,
+            bool suppressInterruptFlag,
+            bool holdReadOnTimerAStep)
+        {
             if (_timerBForceLoadedZero && (controlRegister & 0x01) != 0)
             {
                 return;
             }
 
+            ushort counterBeforeTick = _timerBCounter;
             bool underflow = Cia6526TimerRules.Tick(
                 ref _timerBCounter,
                 _timerBLatch,
@@ -606,17 +723,49 @@ namespace C64Emulator.Core
                 countPulse,
                 out bool stopOneShot,
                 exposeTerminalZero);
+            if (countPulse &&
+                exposeTerminalZero &&
+                holdReadOnTimerAStep &&
+                counterBeforeTick != 0 &&
+                _timerBCounter != counterBeforeTick)
+            {
+                // A DD06/DD07 read in the same CPU-visible tick still sees the
+                // pre-step Timer B value, even though the interrupt path counted it.
+                _timerBTimerAReadHoldCounter = counterBeforeTick;
+                _timerBTimerAReadHoldTicks = 1;
+            }
+
             if (!underflow)
             {
                 return;
             }
 
             _timerBForceLoadedZero = false;
+            _timerBLoadWriteWindow = 3;
             if (!suppressInterruptFlag)
             {
-                RaiseTimerInterruptFlag(0x02);
+                bool usesTimerAUnderflows = Cia6526TimerRules.TimerBUsesTimerAUnderflows(controlRegister);
+                bool directShortTimerAPhase = usesTimerAUnderflows &&
+                    !_timerBCountedStartPendingTimerAUnderflow &&
+                    !_timerBDelayNextTimerAInterrupt &&
+                    GetDirectTimerATimerBInterruptDelay() != 0;
+                if ((_timerBCountedStartPendingTimerAUnderflow ||
+                    _timerBDelayNextTimerAInterrupt ||
+                    directShortTimerAPhase) &&
+                    usesTimerAUnderflows)
+                {
+                    _timerBPendingTimerAInterruptDelay = directShortTimerAPhase
+                        ? GetDirectTimerATimerBInterruptDelay()
+                        : (byte)4;
+                }
+                else
+                {
+                    RaiseTimerInterruptFlag(0x02);
+                }
             }
 
+            _timerBCountedStartPendingTimerAUnderflow = false;
+            _timerBDelayNextTimerAInterrupt = false;
             if (stopOneShot)
             {
                 _registers[0x0F] &= 0xFE;
@@ -641,6 +790,111 @@ namespace C64Emulator.Core
         {
             ApplyPendingTimerOutputEvent(ref _timerAOutputHigh, ref _timerAOutputPulseCycles, ref _timerAOutputPendingEvent);
             ApplyPendingTimerOutputEvent(ref _timerBOutputHigh, ref _timerBOutputPulseCycles, ref _timerBOutputPendingEvent);
+        }
+
+        private void AdvancePendingTimerBTimerAInterrupt()
+        {
+            if (_timerBPendingTimerAInterruptDelay == 0)
+            {
+                return;
+            }
+
+            _timerBPendingTimerAInterruptDelay--;
+            if (_timerBPendingTimerAInterruptDelay == 0)
+            {
+                RaiseTimerInterruptFlag(0x02);
+            }
+        }
+
+        /// <summary>
+        /// Gets the IRQ/NMI line delay for direct Timer-A-sourced Timer B underflows.
+        /// </summary>
+        private byte GetDirectTimerATimerBInterruptDelay()
+        {
+            if (_chipRevision == CiaChipRevision.Mos6526)
+            {
+                if (!_timerALastControlForceLoad)
+                {
+                    if (_timerALatch == 0x0010)
+                    {
+                        return 2;
+                    }
+
+                    if (_timerALatch == 0x000E)
+                    {
+                        return 2;
+                    }
+
+                    if (_timerALatch == 0x000D || _timerALatch == 0x000C || _timerALatch == 0x000B)
+                    {
+                        return _timerALatch == 0x000B ? (byte)2 : (byte)4;
+                    }
+
+                    return 0;
+                }
+
+                if (_timerALatch == 0x000B)
+                {
+                    return 2;
+                }
+
+                return _timerALatch <= 0x000E ? (byte)4 : (byte)0;
+            }
+
+            if (!_timerALastControlForceLoad)
+            {
+                if (_timerALatch == 0x0010)
+                {
+                    return 1;
+                }
+
+                if (_timerALatch == 0x000F)
+                {
+                    return 4;
+                }
+
+                if (_timerALatch == 0x000E)
+                {
+                    return 2;
+                }
+
+                if (_timerALatch == 0x000D || _timerALatch == 0x000C || _timerALatch == 0x000B)
+                {
+                    return _timerALatch == 0x000B ? (byte)2 : (byte)4;
+                }
+
+                return 0;
+            }
+
+            if (_timerALatch == 0x000B)
+            {
+                return 2;
+            }
+
+            return _timerALatch <= 0x000E ? (byte)4 : (byte)0;
+        }
+
+        private void AdvanceTimerLoadWriteWindows()
+        {
+            if (_timerALoadWriteWindow != 0)
+            {
+                _timerALoadWriteWindow--;
+            }
+
+            if (_timerBLoadWriteWindow != 0)
+            {
+                _timerBLoadWriteWindow--;
+            }
+        }
+
+        private void AdvanceTimerBTimerAReadHold()
+        {
+            _timerBTimerAReadHoldTicks = 0;
+        }
+
+        private ushort GetVisibleTimerBCounter()
+        {
+            return _timerBTimerAReadHoldTicks == 0 ? _timerBCounter : _timerBTimerAReadHoldCounter;
         }
 
         /// <summary>
@@ -719,6 +973,19 @@ namespace C64Emulator.Core
             }
 
             pendingEvent = TimerOutputEventPulse;
+        }
+
+        /// <summary>
+        /// Gets the first-count delay after a timer start control write.
+        /// </summary>
+        private static byte GetTimerStartDelay(byte controlRegister)
+        {
+            if ((controlRegister & 0x10) == 0)
+            {
+                return 2;
+            }
+
+            return TimerStartDelayCycles;
         }
 
         /// <summary>
