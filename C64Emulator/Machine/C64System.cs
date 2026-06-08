@@ -155,6 +155,9 @@ namespace C64Emulator.Core
                 MountedMediaInfo mountedMedia = _mediaManager.MountedMedia;
                 string mountedHostPath = mountedMedia.HostPath;
                 bool hadMountedMedia = mountedMedia.HasMedia && !string.IsNullOrWhiteSpace(mountedHostPath);
+                EasyFlashCartridge easyFlash = _bus.EasyFlash;
+                string easyFlashPath = easyFlash != null ? easyFlash.SourcePath : string.Empty;
+                bool easyFlashEnabled = easyFlash != null && easyFlash.Enabled;
                 var mountedDrivePaths = new Dictionary<int, string>(_mountedDrivePaths);
 
                 ResetCore();
@@ -164,6 +167,12 @@ namespace C64Emulator.Core
                 {
                     MountDiskToDrive(mountedDrivePath.Value, mountedDrivePath.Key, true);
                     resetMessage = "RESET MEDIA RELOADED";
+                }
+
+                if (easyFlash != null && !string.IsNullOrWhiteSpace(easyFlashPath) && File.Exists(easyFlashPath))
+                {
+                    MountEasyFlash(easyFlashPath, easyFlashEnabled, false);
+                    resetMessage = "RESET EASYFLASH RELOADED";
                 }
 
                 if (hadMountedMedia && mountedMedia.Kind == MountedMediaKind.Prg)
@@ -198,6 +207,7 @@ namespace C64Emulator.Core
                 _cia2.Reset();
                 _vic.Reset();
                 _sid.Reset();
+                _bus.EasyFlash?.Reset();
                 _iecKernalBridge.Reset();
                 _pressedHostKeys.Clear();
                 _lastMirroredPollKey = null;
@@ -599,6 +609,30 @@ namespace C64Emulator.Core
                     _bus.ReadRam(0x0001),
                     _bus.ProcessorPortValue,
                     _bus.IsIoAreaVisible);
+            }
+        }
+
+        /// <summary>
+        /// Gets compact EasyFlash debug information for probe logs.
+        /// </summary>
+        public string GetEasyFlashDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                if (cartridge == null)
+                {
+                    return "easyflash=none";
+                }
+
+                return string.Format(
+                    "easyflash=inserted enabled={0} bank={1} control={2:X2} mode={3} dirty={4} name=\"{5}\"",
+                    cartridge.Enabled,
+                    cartridge.Bank,
+                    cartridge.Control,
+                    cartridge.MemoryMode,
+                    cartridge.IsDirty,
+                    cartridge.DisplayName);
             }
         }
 
@@ -1013,6 +1047,11 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
+                if (string.Equals(Path.GetExtension(path), ".crt", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MountEasyFlash(path, true, true);
+                }
+
                 if (string.Equals(Path.GetExtension(path), ".d64", StringComparison.OrdinalIgnoreCase))
                 {
                     return MountDiskToDrive(path, deviceNumber, true);
@@ -1042,8 +1081,180 @@ namespace C64Emulator.Core
                 _drive9.EjectDisk();
                 _drive10.EjectDisk();
                 _drive11.EjectDisk();
+                _bus.EjectEasyFlash();
                 _lastMountedMedia = MountedMediaInfo.None;
                 return message;
+            }
+        }
+
+        /// <summary>
+        /// Gets whether an EasyFlash cartridge is inserted.
+        /// </summary>
+        public bool IsEasyFlashInserted
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.EasyFlash != null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the inserted EasyFlash is enabled on the expansion port.
+        /// </summary>
+        public bool EasyFlashEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.EasyFlashEnabled;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the inserted EasyFlash has unsaved flash changes.
+        /// </summary>
+        public bool IsEasyFlashDirty
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null && cartridge.IsDirty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the inserted EasyFlash display name.
+        /// </summary>
+        public string EasyFlashDisplayName
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null ? cartridge.DisplayName : string.Empty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the inserted EasyFlash image path.
+        /// </summary>
+        public string EasyFlashImagePath
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null ? cartridge.SourcePath : string.Empty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enables or disables the inserted EasyFlash.
+        /// </summary>
+        public string SetEasyFlashEnabled(bool enabled)
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.EasyFlash == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.EasyFlashEnabled = enabled;
+                _cpu.Reset(_bus.ReadResetVector());
+                return enabled ? "EASYFLASH ON" : "EASYFLASH OFF";
+            }
+        }
+
+        /// <summary>
+        /// Saves the inserted EasyFlash back to its CRT file.
+        /// </summary>
+        public string SaveEasyFlash()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                if (cartridge == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                try
+                {
+                    cartridge.SaveToSource();
+                    return "EASYFLASH SAVED";
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(ex);
+                    return "EASYFLASH SAVE FAILED";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ejects the inserted EasyFlash cartridge.
+        /// </summary>
+        public string EjectEasyFlash()
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.EasyFlash == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.EjectEasyFlash();
+                if (_lastMountedMedia != null && _lastMountedMedia.Kind == MountedMediaKind.EasyFlash)
+                {
+                    _lastMountedMedia = MountedMediaInfo.None;
+                }
+
+                _cpu.Reset(_bus.ReadResetVector());
+                return "EASYFLASH EJECTED";
+            }
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the inserted EasyFlash, preserving unsaved edits.
+        /// </summary>
+        public EasyFlashCartridge CreateEasyFlashSnapshot()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                return cartridge != null ? cartridge.Clone() : null;
+            }
+        }
+
+        /// <summary>
+        /// Inserts a previously captured EasyFlash snapshot after a power-cycle recreate.
+        /// </summary>
+        public string InsertEasyFlashSnapshot(EasyFlashCartridge cartridge)
+        {
+            lock (_syncRoot)
+            {
+                if (cartridge == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.InsertEasyFlash(cartridge);
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.EasyFlash, "CRT", cartridge.DisplayName, cartridge.SourcePath);
+                _cpu.Reset(_bus.ReadResetVector());
+                return cartridge.Enabled ? "RESET EASYFLASH READY" : "RESET EASYFLASH OFF";
             }
         }
 
@@ -1123,6 +1334,33 @@ namespace C64Emulator.Core
             _drive1541ExecutedCycles = 0.0;
             _catchingUpDrivesForIecAccess = false;
             _cpu.Reset(_bus.ReadResetVector());
+        }
+
+        /// <summary>
+        /// Loads and inserts an EasyFlash CRT image.
+        /// </summary>
+        private string MountEasyFlash(string path, bool enabled, bool resetMachine)
+        {
+            try
+            {
+                EasyFlashCartridge cartridge = EasyFlashCartridge.LoadCrt(path);
+                cartridge.Enabled = enabled;
+                if (resetMachine)
+                {
+                    ResetCore();
+                }
+
+                _bus.InsertEasyFlash(cartridge);
+                _bus.EasyFlashEnabled = enabled;
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.EasyFlash, "CRT", cartridge.DisplayName, path);
+                _cpu.Reset(_bus.ReadResetVector());
+                return enabled ? "EASYFLASH MOUNTED" : "EASYFLASH LOADED OFF";
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(ex);
+                return "INVALID EASYFLASH";
+            }
         }
 
         /// <summary>

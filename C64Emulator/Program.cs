@@ -181,6 +181,29 @@ namespace C64Emulator
                 return;
             }
 
+            if (args != null && args.Length >= 2 && string.Equals(args[0], "--probe-easyflash-input", StringComparison.OrdinalIgnoreCase))
+            {
+                string logPath = args.Length >= 3
+                    ? args[2]
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "easyflash_input_probe.log");
+                string framePath = args.Length >= 4
+                    ? args[3]
+                    : string.Empty;
+                int preCycles = args.Length >= 5 && int.TryParse(args[4], out int parsedPreCycles) && parsedPreCycles >= 0
+                    ? parsedPreCycles
+                    : 20000000;
+                int postCycles = args.Length >= 6 && int.TryParse(args[5], out int parsedPostCycles) && parsedPostCycles >= 0
+                    ? parsedPostCycles
+                    : 6000000;
+                string keyName = args.Length >= 7 ? args[6] : "ControlLeft";
+                string joystickPortName = args.Length >= 8 ? args[7] : "Port2";
+                int followupCycles = args.Length >= 9 && int.TryParse(args[8], out int parsedFollowupCycles) && parsedFollowupCycles >= 0
+                    ? parsedFollowupCycles
+                    : 0;
+                RunEasyFlashInputProbe(args[1], logPath, framePath, preCycles, postCycles, followupCycles, keyName, joystickPortName);
+                return;
+            }
+
             if (args != null && args.Length >= 3 && string.Equals(args[0], "--run-prg-sys", StringComparison.OrdinalIgnoreCase))
             {
                 ushort startAddress = ParseUShort(args[2]);
@@ -521,6 +544,30 @@ namespace C64Emulator
             catch (Exception ex)
             {
                 Console.WriteLine("REGRESSION RUN FAILED");
+                Console.WriteLine(ex);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        /// <summary>
+        /// Runs an EasyFlash CRT, injects one frontend key, and logs input/cartridge state.
+        /// </summary>
+        private static void RunEasyFlashInputProbe(string crtPath, string logPath, string framePath, int preCycles, int postCycles, int followupCycles, string keyName, string joystickPortName)
+        {
+            try
+            {
+                DevTraceExporter.RunEasyFlashInputProbe(crtPath, logPath, framePath, preCycles, postCycles, followupCycles, keyName, joystickPortName);
+                Console.WriteLine("EasyFlash input probe written: " + Path.GetFullPath(logPath));
+                if (!string.IsNullOrWhiteSpace(framePath))
+                {
+                    Console.WriteLine("Frame written: " + Path.GetFullPath(framePath));
+                }
+
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("EASYFLASH INPUT PROBE FAILED");
                 Console.WriteLine(ex);
                 Environment.ExitCode = 1;
             }

@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.8](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.8), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.9](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.9), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -37,8 +37,8 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - SID register handling and audio output.
 - CIA1/CIA2 emulation for keyboard, joystick, timers, interrupts, and IEC interaction.
 - IEC bus infrastructure with emulated 1541-compatible drives on device numbers 8 to 11.
-- D64 disk image mounting and PRG direct loading.
-- Drag-and-drop mounting for `.prg` and `.d64` media files.
+- D64 disk image mounting, PRG direct loading, and EasyFlash `.crt` cartridge mounting.
+- Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
@@ -57,7 +57,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | `F10` | Open the main emulator menu. From there you can open Settings, Network, Media, or Reset. The emulator pauses while a menu is open on the host. |
 | `F11` | Toggle fullscreen mode. |
 | `F12` | Open the savestate overlay. The emulator pauses while this menu is open. |
-| Drag `.prg` / `.d64` onto the window | Load PRG directly or mount D64 into the currently selected target drive. |
+| Drag `.prg` / `.d64` / `.crt` onto the window | Load PRG directly, mount D64 into the currently selected target drive, or insert an EasyFlash cartridge. |
 | Gamepad left stick / D-pad | C64 joystick direction for the selected joystick port. |
 | Gamepad A/B/RB | C64 joystick fire. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
@@ -235,7 +235,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.8`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.9`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -315,7 +315,7 @@ The drive activity footer can be toggled through the `DRIVE OVERLAY` entry in th
 
 ## Media Handling
 
-PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM.
+PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM. EasyFlash `.crt` images are inserted through the cartridge expansion-port path and can be enabled, disabled, saved, or ejected from the settings overlay.
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
 

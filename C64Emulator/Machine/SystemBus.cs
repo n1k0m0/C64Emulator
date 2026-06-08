@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +44,7 @@ namespace C64Emulator.Core
         private Cia1 _cia1;
         private Cia2 _cia2;
         private Sid _sid;
+        private EasyFlashCartridge _easyFlash;
         private bool _externalIrqAsserted;
         private bool _externalNmiAsserted;
         private byte _lastCpuBusValue;
@@ -157,6 +158,10 @@ namespace C64Emulator.Core
             _cpuPhi2CanAccess = true;
             _vicPhi2CanAccess = false;
             Owner = BusOwner.Cpu;
+            if (_easyFlash != null)
+            {
+                _easyFlash.Reset();
+            }
         }
 
         /// <summary>
@@ -177,9 +182,57 @@ namespace C64Emulator.Core
         /// </summary>
         public ushort ReadResetVector()
         {
+            if (_easyFlash != null && _easyFlash.TryReadResetVector(out ushort cartridgeResetVector))
+            {
+                return cartridgeResetVector;
+            }
+
             var lo = _kernalRom[0x1FFC];
             var hi = _kernalRom[0x1FFD];
             return (ushort)(lo | (hi << 8));
+        }
+
+        /// <summary>
+        /// Inserts an EasyFlash cartridge into the expansion port.
+        /// </summary>
+        public void InsertEasyFlash(EasyFlashCartridge cartridge)
+        {
+            _easyFlash = cartridge;
+            if (_easyFlash != null)
+            {
+                _easyFlash.Reset();
+            }
+        }
+
+        /// <summary>
+        /// Removes the inserted EasyFlash cartridge.
+        /// </summary>
+        public void EjectEasyFlash()
+        {
+            _easyFlash = null;
+        }
+
+        /// <summary>
+        /// Gets the inserted EasyFlash cartridge, if any.
+        /// </summary>
+        public EasyFlashCartridge EasyFlash
+        {
+            get { return _easyFlash; }
+        }
+
+        /// <summary>
+        /// Gets or sets whether the inserted EasyFlash currently drives the bus.
+        /// </summary>
+        public bool EasyFlashEnabled
+        {
+            get { return _easyFlash != null && _easyFlash.Enabled; }
+            set
+            {
+                if (_easyFlash != null)
+                {
+                    _easyFlash.Enabled = value;
+                }
+            }
         }
 
         /// <summary>
@@ -218,6 +271,12 @@ namespace C64Emulator.Core
                 return value;
             }
 
+            if (_easyFlash != null && _easyFlash.TryRead(address, GetProcessorPortValue(), out value))
+            {
+                _lastCpuBusValue = value;
+                return value;
+            }
+
             if (address >= 0xA000 && address <= 0xBFFF && IsBasicRomVisible())
             {
                 value = _basicRom[address - 0xA000];
@@ -249,6 +308,13 @@ namespace C64Emulator.Core
                 return value;
             }
 
+            if (IsUltimaxUnmappedCpuRead(address))
+            {
+                value = 0xFF;
+                _lastCpuBusValue = value;
+                return value;
+            }
+
             value = _ram[address];
             _lastCpuBusValue = value;
             return value;
@@ -267,6 +333,11 @@ namespace C64Emulator.Core
             if (address == 1)
             {
                 return GetProcessorPortValue();
+            }
+
+            if (_easyFlash != null && _easyFlash.TryRead(address, GetProcessorPortValue(), out byte cartridgeValue))
+            {
+                return cartridgeValue;
             }
 
             if (address >= 0xA000 && address <= 0xBFFF && IsBasicRomVisible())
@@ -292,6 +363,11 @@ namespace C64Emulator.Core
                 return _kernalRom[address - 0xE000];
             }
 
+            if (IsUltimaxUnmappedCpuRead(address))
+            {
+                return 0xFF;
+            }
+
             return _ram[address];
         }
 
@@ -311,6 +387,19 @@ namespace C64Emulator.Core
             if (address >= 0xD000 && address <= 0xDFFF && IsIoVisible())
             {
                 WriteIo(address, value);
+                return;
+            }
+
+            if (_easyFlash != null)
+            {
+                // EasyFlash flash chips observe writes to visible ROML/ROMH for command
+                // sequences, but normal C64 writes still update the RAM underneath unless
+                // the current Ultimax map disconnects that internal RAM range.
+                _easyFlash.TryWrite(address, GetProcessorPortValue(), value);
+            }
+
+            if (IsUltimaxUnmappedCpuWrite(address))
+            {
                 return;
             }
 
@@ -476,6 +565,11 @@ namespace C64Emulator.Core
                 return _cia2.Read((ushort)(address & 0x000F));
             }
 
+            if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryReadIo(address, out byte cartridgeValue))
+            {
+                return cartridgeValue;
+            }
+
             return _ioRam[address - 0xD000];
         }
 
@@ -487,6 +581,11 @@ namespace C64Emulator.Core
             if (address >= 0xD800 && address <= 0xDBFF)
             {
                 return ReadColorRam((ushort)(address - 0xD800));
+            }
+
+            if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryReadIo(address, out byte cartridgeValue))
+            {
+                return cartridgeValue;
             }
 
             return _ioRam[address - 0xD000];
@@ -527,6 +626,11 @@ namespace C64Emulator.Core
                 return;
             }
 
+            if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryWriteIo(address, value))
+            {
+                return;
+            }
+
             _ioRam[address - 0xD000] = value;
         }
 
@@ -535,6 +639,13 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsBasicRomVisible()
         {
+            if (_easyFlash != null &&
+                (_easyFlash.MemoryMode == EasyFlashMemoryMode.SixteenKilobyte ||
+                _easyFlash.MemoryMode == EasyFlashMemoryMode.Ultimax))
+            {
+                return false;
+            }
+
             byte port = GetProcessorPortValue();
             return (port & 0x03) == 0x03;
         }
@@ -544,6 +655,11 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsKernalRomVisible()
         {
+            if (_easyFlash != null && _easyFlash.MemoryMode == EasyFlashMemoryMode.Ultimax)
+            {
+                return false;
+            }
+
             byte port = GetProcessorPortValue();
             return (port & 0x02) != 0;
         }
@@ -553,6 +669,11 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsIoVisible()
         {
+            if (_easyFlash != null && _easyFlash.MemoryMode == EasyFlashMemoryMode.Ultimax)
+            {
+                return true;
+            }
+
             byte port = GetProcessorPortValue();
             bool loramOrHiram = (port & 0x03) != 0;
             bool charen = (port & 0x04) != 0;
@@ -564,10 +685,44 @@ namespace C64Emulator.Core
         /// </summary>
         private bool IsCharacterRomVisibleToCpu()
         {
+            if (_easyFlash != null && _easyFlash.MemoryMode == EasyFlashMemoryMode.Ultimax)
+            {
+                return false;
+            }
+
             byte port = GetProcessorPortValue();
             bool loramOrHiram = (port & 0x03) != 0;
             bool charen = (port & 0x04) != 0;
             return loramOrHiram && !charen;
+        }
+
+        /// <summary>
+        /// Returns whether Ultimax mode leaves a CPU read without internal memory.
+        /// </summary>
+        private bool IsUltimaxUnmappedCpuRead(ushort address)
+        {
+            if (_easyFlash == null || _easyFlash.MemoryMode != EasyFlashMemoryMode.Ultimax)
+            {
+                return false;
+            }
+
+            return (address >= 0x1000 && address <= 0x7FFF) ||
+                (address >= 0xA000 && address <= 0xCFFF);
+        }
+
+        /// <summary>
+        /// Returns whether Ultimax mode leaves a CPU write without internal RAM.
+        /// </summary>
+        private bool IsUltimaxUnmappedCpuWrite(ushort address)
+        {
+            if (_easyFlash == null || _easyFlash.MemoryMode != EasyFlashMemoryMode.Ultimax)
+            {
+                return false;
+            }
+
+            return (address >= 0x1000 && address <= 0x7FFF) ||
+                (address >= 0xA000 && address <= 0xCFFF) ||
+                (address >= 0xE000 && address <= 0xFFFF);
         }
 
         /// <summary>

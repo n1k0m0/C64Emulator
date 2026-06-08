@@ -98,7 +98,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 14;
+        private const int AudioOverlayItemCount = 17;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int StandardC64ContentLeft = 41;
@@ -308,6 +308,12 @@ namespace C64Emulator
                 return;
             }
 
+            if (!string.IsNullOrWhiteSpace(settings.EasyFlashImagePath) && File.Exists(settings.EasyFlashImagePath))
+            {
+                _system.MountMedia(settings.EasyFlashImagePath);
+                _system.SetEasyFlashEnabled(settings.EasyFlashEnabled);
+            }
+
             _system.SetSidMasterVolume(settings.SidMasterVolume);
             _system.SetSidNoiseLevel(settings.SidNoiseLevel);
             _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
@@ -380,6 +386,8 @@ namespace C64Emulator
                 ForceSoftwareIecTransport = _system.ForceSoftwareIecTransport,
                 EnableInputInjection = _system.EnableInputInjection,
                 DriveOverlayEnabled = _driveOverlayEnabled,
+                EasyFlashEnabled = _system.EasyFlashEnabled,
+                EasyFlashImagePath = _system.EasyFlashImagePath,
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
                 MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty,
                 // Store the network menu fields so host/client setup survives app restarts.
@@ -4886,6 +4894,24 @@ namespace C64Emulator
                 ToggleDriveOverlay();
                 return;
             }
+
+            if (_audioOverlaySelection == 14)
+            {
+                ToggleEasyFlash();
+                return;
+            }
+
+            if (_audioOverlaySelection == 15)
+            {
+                SaveEasyFlash();
+                return;
+            }
+
+            if (_audioOverlaySelection == 16)
+            {
+                EjectEasyFlash();
+                return;
+            }
         }
 
         /// <summary>
@@ -4916,6 +4942,41 @@ namespace C64Emulator
             _system.EnableInputInjection = !_system.EnableInputInjection;
             _overlayStatusText = _system.EnableInputInjection ? "INPUT INJECT ON" : "INPUT INJECT OFF";
             SaveSettings();
+        }
+
+        /// <summary>
+        /// Enables or disables the inserted EasyFlash cartridge.
+        /// </summary>
+        private void ToggleEasyFlash()
+        {
+            if (!_system.IsEasyFlashInserted)
+            {
+                _overlayStatusText = "NO EASYFLASH";
+                return;
+            }
+
+            _overlayStatusText = _system.SetEasyFlashEnabled(!_system.EasyFlashEnabled);
+            SaveSettings();
+            ResetEmulationTiming();
+        }
+
+        /// <summary>
+        /// Saves the editable EasyFlash image back to its CRT file.
+        /// </summary>
+        private void SaveEasyFlash()
+        {
+            _overlayStatusText = _system.SaveEasyFlash();
+            SaveSettings();
+        }
+
+        /// <summary>
+        /// Ejects the inserted EasyFlash cartridge.
+        /// </summary>
+        private void EjectEasyFlash()
+        {
+            _overlayStatusText = _system.EjectEasyFlash();
+            SaveSettings();
+            ResetEmulationTiming();
         }
 
         /// <summary>
@@ -5712,6 +5773,15 @@ namespace C64Emulator
                 case 13:
                     DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
+                case 14:
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    break;
+                case 15:
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    break;
+                case 16:
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    break;
             }
         }
 
@@ -5836,6 +5906,58 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Formats the EasyFlash enabled state for the settings overlay.
+        /// </summary>
+        private string FormatEasyFlashState()
+        {
+            if (!_system.IsEasyFlashInserted)
+            {
+                return "NO CRT";
+            }
+
+            return _system.EasyFlashEnabled ? "ON" : "OFF";
+        }
+
+        /// <summary>
+        /// Gets the EasyFlash enabled fill value.
+        /// </summary>
+        private float GetEasyFlashFill()
+        {
+            if (!_system.IsEasyFlashInserted)
+            {
+                return 0.0f;
+            }
+
+            return _system.EasyFlashEnabled ? 1.0f : 0.25f;
+        }
+
+        /// <summary>
+        /// Formats the EasyFlash dirty/save state.
+        /// </summary>
+        private string FormatEasyFlashSaveState()
+        {
+            if (!_system.IsEasyFlashInserted)
+            {
+                return "NO CRT";
+            }
+
+            return _system.IsEasyFlashDirty ? "DIRTY" : "CLEAN";
+        }
+
+        /// <summary>
+        /// Formats the inserted EasyFlash name.
+        /// </summary>
+        private string FormatEasyFlashName()
+        {
+            if (!_system.IsEasyFlashInserted)
+            {
+                return "NO CRT";
+            }
+
+            return FormatOverlayValue(_system.EasyFlashDisplayName, 12);
+        }
+
+        /// <summary>
         /// Formats reset mode.
         /// </summary>
         private static string FormatResetMode(ResetMode resetMode)
@@ -5947,7 +6069,8 @@ namespace C64Emulator
 
                 string extension = Path.GetExtension(path);
                 if (!string.Equals(extension, ".prg", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".crt", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -5960,12 +6083,13 @@ namespace C64Emulator
                     : 8;
                 UpdateLastMediaBrowserDirectory(Path.GetDirectoryName(path), true);
                 _overlayStatusText = _system.MountMedia(path, targetDrive);
+                SaveSettings();
                 ResetEmulationTiming();
                 ShowTurboToast(_overlayStatusText);
                 return;
             }
 
-            _overlayStatusText = "DROP PRG OR D64";
+            _overlayStatusText = "DROP PRG D64 OR CRT";
             ShowTurboToast(_overlayStatusText);
         }
 
@@ -6082,6 +6206,7 @@ namespace C64Emulator
 
             MountedMediaInfo mountedMedia = _system.MountedMedia;
             Dictionary<int, string> mountedDrivePaths = _system.GetMountedDriveHostPaths();
+            EasyFlashCartridge easyFlashSnapshot = _system.CreateEasyFlashSnapshot();
             float sidMasterVolume = _system.SidMasterVolume;
             float sidNoiseLevel = _system.SidNoiseLevel;
             SidChipModel sidChipModel = _system.CurrentSidChipModel;
@@ -6111,6 +6236,12 @@ namespace C64Emulator
             _driveFooterPulsePhase = 0.0;
             _turboToastSecondsRemaining = 0.0;
             _lastGamepadJoystickState = 0xFF;
+            if (easyFlashSnapshot != null)
+            {
+                _system.InsertEasyFlashSnapshot(easyFlashSnapshot);
+                mountedMedia = _system.MountedMedia;
+            }
+
             SaveSettings();
             _overlayStatusText = ReloadMountedMediaAfterPowerCycle(mountedMedia, mountedDrivePaths);
             StartEmulation();
@@ -6150,6 +6281,12 @@ namespace C64Emulator
                 statusText = string.Equals(mountStatus, "PRG LOADED", StringComparison.OrdinalIgnoreCase)
                     ? "RESET MEDIA RELOADED"
                     : mountStatus;
+            }
+            else if (mountedMedia != null &&
+                mountedMedia.Kind == MountedMediaKind.EasyFlash &&
+                _system.IsEasyFlashInserted)
+            {
+                statusText = "RESET EASYFLASH READY";
             }
 
             return statusText;
@@ -6297,6 +6434,7 @@ namespace C64Emulator
                     var files = new List<string>();
                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.prg", SearchOption.TopDirectoryOnly));
                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.d64", SearchOption.TopDirectoryOnly));
+                    files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.crt", SearchOption.TopDirectoryOnly));
                     files.Sort(StringComparer.OrdinalIgnoreCase);
                     foreach (string file in files)
                     {
@@ -6315,7 +6453,7 @@ namespace C64Emulator
             _mediaBrowserEntries = entries;
             if (_mediaBrowserEntries.Count == 0)
             {
-                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG OR D64 FILES", false, false));
+                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG D64 OR CRT FILES", false, false));
             }
 
             _mediaBrowserSelection = Math.Max(0, Math.Min(_mediaBrowserSelection, _mediaBrowserEntries.Count - 1));
@@ -6393,6 +6531,8 @@ namespace C64Emulator
 
             UpdateLastMediaBrowserDirectory(Path.GetDirectoryName(entry.Path), true);
             string statusText = _system.MountMedia(entry.Path, _mediaBrowserTargetDrive);
+            SaveSettings();
+            ResetEmulationTiming();
             ReturnToMainMenuFromSubmenu();
             _overlayStatusText = statusText;
         }

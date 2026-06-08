@@ -100,25 +100,37 @@ namespace C64Emulator.Core
                 return false;
             }
 
+            bool isOneShot = (controlRegister & 0x08) != 0;
             if (latch == 0)
             {
+                if (exposeTerminalZero && isOneShot && counter == 0)
+                {
+                    stopOneShot = true;
+                    return true;
+                }
+
                 if (counter == 0)
                 {
                     counter = 0xFFFF;
                 }
 
-                counter--;
-                if (counter != 0)
+                if (counter > 1)
                 {
+                    counter--;
+                    return false;
+                }
+
+                if (exposeTerminalZero && isOneShot)
+                {
+                    counter = 0;
                     return false;
                 }
 
                 counter = ReloadAfterUnderflow(latch);
-                stopOneShot = (controlRegister & 0x08) != 0;
+                stopOneShot = isOneShot;
                 return true;
             }
 
-            bool isOneShot = (controlRegister & 0x08) != 0;
             if (exposeTerminalZero && isOneShot && counter == 0)
             {
                 counter = ReloadAfterUnderflow(latch);

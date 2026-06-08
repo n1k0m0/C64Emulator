@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,11 +114,14 @@ namespace C64Emulator.Core
             failures += RunCase(output, "VIC invalid display modes keep hidden foreground", TestVicInvalidDisplayModesKeepHiddenForeground);
             failures += RunCase(output, "VIC matrix fetch does not latch display mode", TestVicMatrixFetchDoesNotLatchDisplayMode);
             failures += RunCase(output, "CIA timer A continuous/one-shot timing", TestCiaTimerATiming);
+            failures += RunCase(output, "CIA timer A latch-zero one-shot exposes terminal zero", TestCiaTimerALatchZeroOneShotTerminalZero);
             failures += RunCase(output, "CIA running timer A force-load phase", TestCiaRunningTimerAForceLoadPhase);
             failures += RunCase(output, "CIA1/CIA2 timer force-load parity", TestCiaTimerForceLoadParity);
             failures += RunCase(output, "CIA timer B counts timer A underflows", TestCiaTimerBCountsTimerA);
             failures += RunCase(output, "CIA TOD PAL tenth increment", TestCiaTodTenthIncrement);
             failures += RunCase(output, "State serializer tolerates resized readonly arrays", TestStateSerializerToleratesResizedReadonlyArrays);
+            failures += RunCase(output, "EasyFlash bank and flash program sequence", TestEasyFlashBankAndProgramSequence);
+            failures += RunCase(output, "EasyFlash ROM writes update underlying RAM", TestEasyFlashRomWritesUpdateUnderlyingRam);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
             failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
             failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
@@ -1302,7 +1305,42 @@ namespace C64Emulator.Core
             cia.Tick();
             cia.Tick();
             cia.Tick();
+            context.Equal("timer A one-shot exposes terminal zero", 0x00, cia.Read(0x04));
+            context.Equal("timer A one-shot remains running at terminal zero", 0x09, (byte)(cia.Read(0x0E) & 0x09));
+            cia.Tick();
             context.Equal("timer A one-shot stops", 0x08, cia.Read(0x0E));
+        }
+
+        private static void TestCiaTimerALatchZeroOneShotTerminalZero(AccuracyContext context)
+        {
+            var cia = new Cia1();
+            cia.Write(0x04, 0x08);
+            cia.Write(0x05, 0x00);
+            cia.Write(0x0E, 0x01);
+            cia.Tick();
+            cia.Tick();
+            cia.Write(0x04, 0x00);
+            cia.Write(0x05, 0x00);
+            cia.Write(0x0E, 0x09);
+
+            bool sawTerminalZero = false;
+            for (int tick = 0; tick < 32; tick++)
+            {
+                if (cia.Read(0x04) == 0x00 && cia.Read(0x05) == 0x00)
+                {
+                    sawTerminalZero = true;
+                    break;
+                }
+
+                cia.Tick();
+            }
+
+            context.True("timer A latch-zero one-shot exposes terminal zero", sawTerminalZero);
+            cia.Tick();
+            cia.Tick();
+            context.Equal("timer A latch-zero one-shot stops after terminal zero", 0x08, (byte)(cia.Read(0x0E) & 0x09));
+            context.Equal("timer A latch-zero one-shot stop low", 0x00, cia.Read(0x04));
+            context.Equal("timer A latch-zero one-shot stop high", 0x00, cia.Read(0x05));
         }
 
         private static void TestCiaTimerForceLoadParity(AccuracyContext context)
@@ -1485,6 +1523,81 @@ namespace C64Emulator.Core
                 context.Equal("short source keeps fourth default", (byte)0x44, longTarget.Values[3]);
                 context.Equal("short source keeps fifth default", (byte)0x45, longTarget.Values[4]);
             }
+        }
+
+        private static void TestEasyFlashBankAndProgramSequence(AccuracyContext context)
+        {
+            var cartridge = EasyFlashCartridge.CreateBlank("TEST EASYFLASH");
+            const byte ProcessorPortDefault = 0x37;
+
+            cartridge.TryWriteIo(0xDE02, 0x06);
+            cartridge.TryWriteIo(0xDE00, 0x02);
+            context.True("first unlock write consumed", cartridge.TryWrite(0x9555, ProcessorPortDefault, 0xAA));
+
+            cartridge.TryWriteIo(0xDE00, 0x01);
+            context.True("second unlock write consumed", cartridge.TryWrite(0x8AAA, ProcessorPortDefault, 0x55));
+
+            cartridge.TryWriteIo(0xDE00, 0x02);
+            context.True("program command consumed", cartridge.TryWrite(0x9555, ProcessorPortDefault, 0xA0));
+
+            cartridge.TryWriteIo(0xDE00, 0x00);
+            context.True("target program write consumed", cartridge.TryWrite(0x8000, ProcessorPortDefault, 0x42));
+
+            byte programmed;
+            context.True("programmed byte readable", cartridge.TryRead(0x8000, ProcessorPortDefault, out programmed));
+            context.Equal("programmed byte value", (byte)0x42, programmed);
+            context.True("programming marks cartridge dirty", cartridge.IsDirty);
+
+            cartridge.TryWriteIo(0xDE00, 0x01);
+            byte otherBank;
+            context.True("other bank remains readable", cartridge.TryRead(0x8000, ProcessorPortDefault, out otherBank));
+            context.Equal("other bank remains erased", (byte)0xFF, otherBank);
+
+            cartridge.TryWriteIo(0xDE02, 0x04);
+            byte hidden;
+            context.True("off mode hides ROML", !cartridge.TryRead(0x8000, ProcessorPortDefault, out hidden));
+
+            cartridge.TryWriteIo(0xDE02, 0x07);
+            cartridge.TryWriteIo(0xDE00, 0x02);
+            context.True("ROMH first unlock write consumed", cartridge.TryWrite(0xB555, ProcessorPortDefault, 0xAA));
+
+            cartridge.TryWriteIo(0xDE00, 0x01);
+            context.True("ROMH second unlock write consumed", cartridge.TryWrite(0xAAAA, ProcessorPortDefault, 0x55));
+
+            cartridge.TryWriteIo(0xDE00, 0x02);
+            context.True("ROMH program command consumed", cartridge.TryWrite(0xB555, ProcessorPortDefault, 0xA0));
+
+            cartridge.TryWriteIo(0xDE00, 0x00);
+            context.True("ROMH target program write consumed", cartridge.TryWrite(0xA000, ProcessorPortDefault, 0x24));
+
+            const byte HiramOnlyPort = 0x36;
+            byte romhWithLoramOff;
+            context.True("HIRAM-only port reads ROMH in 16K mode", cartridge.TryRead(0xA000, HiramOnlyPort, out romhWithLoramOff));
+            context.Equal("HIRAM-only ROMH value", (byte)0x24, romhWithLoramOff);
+
+            byte romlWithLoramOff;
+            context.True("LORAM off hides ROML in 16K mode", !cartridge.TryRead(0x8000, HiramOnlyPort, out romlWithLoramOff));
+        }
+
+        private static void TestEasyFlashRomWritesUpdateUnderlyingRam(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            var cartridge = EasyFlashCartridge.CreateBlank("RAM UNDER ROM");
+            bus.InsertEasyFlash(cartridge);
+            cartridge.TryWriteIo(0xDE02, 0x07);
+
+            bus.CpuWrite(0x8000, 0x5A);
+            bus.CpuWrite(0xA000, 0xA5);
+
+            context.Equal("ROML write reaches RAM underneath", (byte)0x5A, bus.ReadRam(0x8000));
+            context.Equal("ROMH write reaches RAM underneath", (byte)0xA5, bus.ReadRam(0xA000));
+
+            byte visibleRom;
+            context.True("ROML remains cartridge-visible for reads", bus.CpuRead(0x8000) == 0xFF);
+            cartridge.TryWriteIo(0xDE02, 0x04);
+            visibleRom = bus.CpuRead(0x8000);
+            context.Equal("RAM underneath visible after cartridge off", (byte)0x5A, visibleRom);
         }
 
         private static void TestSidEnvelopeGateAttackRelease(AccuracyContext context)

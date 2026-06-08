@@ -580,7 +580,8 @@ namespace C64Emulator.Core
                 ref _timerAReloadHold,
                 controlRegister,
                 countPulse,
-                out bool stopOneShot);
+                out bool stopOneShot,
+                (controlRegister & 0x08) != 0);
             if (!underflow)
             {
                 return false;

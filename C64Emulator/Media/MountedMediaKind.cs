@@ -22,6 +22,7 @@ namespace C64Emulator.Core
     {
         None,
         Prg,
-        D64
+        D64,
+        EasyFlash
     }
 }

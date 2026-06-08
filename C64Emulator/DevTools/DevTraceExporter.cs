@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using OpenTK.Input;
 
 namespace C64Emulator.Core
 {
@@ -132,6 +133,211 @@ namespace C64Emulator.Core
                     log.AppendLine("FinalDrive8=" + system.GetDriveDebugInfo(8));
                     string frameHash = ComputeFrameHash(system.FrameBuffer);
                     log.AppendLine("FrameSHA256=" + frameHash);
+
+                    if (!string.IsNullOrWhiteSpace(framePath))
+                    {
+                        WriteFrameBufferPpm(system.FrameBuffer, framePath);
+                        log.AppendLine("FramePath=" + Path.GetFullPath(framePath));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.AppendLine("EXCEPTION:");
+                log.AppendLine(ex.ToString());
+                File.WriteAllText(logPath, log.ToString());
+                throw;
+            }
+
+            File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Runs an EasyFlash CRT until a probe point, injects one frontend key, and logs input/cartridge state.
+        /// </summary>
+        public static void RunEasyFlashInputProbe(string crtPath, string logPath, string framePath, int preCycles, int postCycles, int followupCycles, string keyName, string joystickPortName)
+        {
+            EnsureDirectory(logPath);
+            if (!string.IsNullOrWhiteSpace(framePath))
+            {
+                EnsureDirectory(framePath);
+            }
+
+            if (!Enum.TryParse(keyName, true, out Key key))
+            {
+                key = Key.ControlLeft;
+            }
+
+            if (!Enum.TryParse(joystickPortName, true, out JoystickPort joystickPort))
+            {
+                joystickPort = JoystickPort.Port2;
+            }
+
+            var log = new StringBuilder();
+            log.AppendLine("EASYFLASH INPUT PROBE");
+            log.AppendLine("Started=" + DateTime.Now.ToString("O"));
+            log.AppendLine("Crt=" + (crtPath ?? string.Empty));
+            log.AppendLine("PreCycles=" + Math.Max(0, preCycles).ToString(CultureInfo.InvariantCulture));
+            log.AppendLine("PostCycles=" + Math.Max(0, postCycles).ToString(CultureInfo.InvariantCulture));
+            log.AppendLine("FollowupCycles=" + Math.Max(0, followupCycles).ToString(CultureInfo.InvariantCulture));
+            log.AppendLine("Key=" + key);
+            log.AppendLine("JoystickPort=" + joystickPort);
+
+            try
+            {
+                using (var system = new C64System(C64Model.Pal))
+                {
+                    int ciaReadLogCount = 0;
+                    int ciaAccessLogCount = 0;
+                    int ioLogCount = 0;
+                    int pcLogCount = 0;
+                    int timerLoopAccessLogCount = 0;
+                    const int maxCiaReadLogCount = 512;
+                    const int maxCiaAccessLogCount = 1024;
+                    const int maxIoLogCount = 512;
+                    const int maxPcLogCount = 512;
+                    const int maxTimerLoopAccessLogCount = 2048;
+
+                    log.AppendLine("Mount=" + system.MountMedia(crtPath, 8));
+                    system.SetJoystickPort(joystickPort);
+                    system.RunCycles(Math.Max(0, preCycles));
+                    AppendEasyFlashProbeState(log, "BeforeInput", system);
+
+                    system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
+                    {
+                        if (entry.AccessType == CpuTraceAccessType.Read &&
+                            (entry.Address == 0xDC00 || entry.Address == 0xDC01) &&
+                            ciaReadLogCount < maxCiaReadLogCount)
+                        {
+                            VicTiming timing = system.Timing;
+                            log.AppendFormat(
+                                CultureInfo.InvariantCulture,
+                                "CiaRead[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} addr:{5:X4} value:{6:X2}",
+                                ciaReadLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.LastOpcodeAddress,
+                                entry.Address,
+                                entry.Value);
+                            log.AppendLine();
+                            ciaReadLogCount++;
+                        }
+
+                        if ((entry.AccessType == CpuTraceAccessType.Read ||
+                            entry.AccessType == CpuTraceAccessType.Write) &&
+                            entry.Address >= 0xDC00 &&
+                            entry.Address <= 0xDC0F &&
+                            ciaAccessLogCount < maxCiaAccessLogCount)
+                        {
+                            VicTiming timing = system.Timing;
+                            log.AppendFormat(
+                                CultureInfo.InvariantCulture,
+                                "CiaAccess[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} access:{5} addr:{6:X4} value:{7:X2}",
+                                ciaAccessLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.LastOpcodeAddress,
+                                entry.AccessType,
+                                entry.Address,
+                                entry.Value);
+                            log.AppendLine();
+                            ciaAccessLogCount++;
+                        }
+
+                        if (entry.AccessType == CpuTraceAccessType.Read &&
+                            (entry.Address == 0xDC04 || entry.Address == 0xDC05) &&
+                            entry.LastOpcodeAddress >= 0x5139 &&
+                            entry.LastOpcodeAddress <= 0x5146 &&
+                            (entry.Address == 0xDC04 || entry.Value <= 0x02) &&
+                            timerLoopAccessLogCount < maxTimerLoopAccessLogCount)
+                        {
+                            VicTiming timing = system.Timing;
+                            log.AppendFormat(
+                                CultureInfo.InvariantCulture,
+                                "TimerLoopAccess[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} addr:{5:X4} value:{6:X2}",
+                                timerLoopAccessLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.LastOpcodeAddress,
+                                entry.Address,
+                                entry.Value);
+                            log.AppendLine();
+                            timerLoopAccessLogCount++;
+                        }
+
+                        if ((entry.AccessType == CpuTraceAccessType.Read ||
+                            entry.AccessType == CpuTraceAccessType.Write) &&
+                            entry.Address >= 0xDE00 &&
+                            entry.Address <= 0xDFFF &&
+                            ioLogCount < maxIoLogCount)
+                        {
+                            VicTiming timing = system.Timing;
+                            log.AppendFormat(
+                                CultureInfo.InvariantCulture,
+                                "EasyFlashIo[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} access:{5} addr:{6:X4} value:{7:X2}",
+                                ioLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.LastOpcodeAddress,
+                                entry.AccessType,
+                                entry.Address,
+                                entry.Value);
+                            log.AppendLine();
+                            ioLogCount++;
+                        }
+
+                        if (entry.AccessType == CpuTraceAccessType.OpcodeFetch &&
+                            entry.LastOpcodeAddress >= 0x5100 &&
+                            entry.LastOpcodeAddress <= 0x5180 &&
+                            pcLogCount < maxPcLogCount)
+                        {
+                            VicTiming timing = system.Timing;
+                            log.AppendFormat(
+                                CultureInfo.InvariantCulture,
+                                "PcLoop[{0}]=global:{1} raster:{2} cycle:{3} pc:{4:X4} opcode:{5:X2} instr:{6}",
+                                pcLogCount,
+                                timing.GlobalCycle,
+                                timing.RasterLine,
+                                timing.CycleInLine,
+                                entry.LastOpcodeAddress,
+                                entry.Opcode,
+                                entry.InstructionName ?? string.Empty);
+                            log.AppendLine();
+                            pcLogCount++;
+                        }
+                    };
+
+                    system.Cpu.TraceEnabled = true;
+                    system.KeyDown(key);
+                    int holdCycles = Math.Min(Math.Max(0, postCycles), 50000);
+                    system.RunCycles(holdCycles);
+                    AppendEasyFlashProbeState(log, "HeldInput", system);
+                    system.KeyUp(key);
+                    system.RunCycles(Math.Max(0, postCycles - holdCycles));
+                    AppendEasyFlashProbeState(log, "AfterInput", system);
+
+                    if (followupCycles > 0)
+                    {
+                        system.KeyDown(key);
+                        int followupHoldCycles = Math.Min(Math.Max(0, followupCycles), 50000);
+                        system.RunCycles(followupHoldCycles);
+                        AppendEasyFlashProbeState(log, "HeldFollowupInput", system);
+                        system.KeyUp(key);
+                        system.RunCycles(Math.Max(0, followupCycles - followupHoldCycles));
+                        AppendEasyFlashProbeState(log, "AfterFollowupInput", system);
+                    }
+
+                    system.Cpu.TraceEnabled = false;
+                    log.AppendLine("LoggedCiaReads=" + ciaReadLogCount.ToString(CultureInfo.InvariantCulture));
+                    log.AppendLine("LoggedCiaAccess=" + ciaAccessLogCount.ToString(CultureInfo.InvariantCulture));
+                    log.AppendLine("LoggedEasyFlashIo=" + ioLogCount.ToString(CultureInfo.InvariantCulture));
+                    log.AppendLine("LoggedPcLoop=" + pcLogCount.ToString(CultureInfo.InvariantCulture));
+                    log.AppendLine("LoggedTimerLoopAccess=" + timerLoopAccessLogCount.ToString(CultureInfo.InvariantCulture));
+                    log.AppendLine("FrameSHA256=" + ComputeFrameHash(system.FrameBuffer));
 
                     if (!string.IsNullOrWhiteSpace(framePath))
                     {
@@ -296,6 +502,58 @@ namespace C64Emulator.Core
             }
 
             File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Appends compact machine, CIA, and EasyFlash state to an input probe log.
+        /// </summary>
+        private static void AppendEasyFlashProbeState(StringBuilder log, string label, C64System system)
+        {
+            VicTiming timing = system.Timing;
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                "{0}=global:{1} raster:{2} cycle:{3}",
+                label,
+                timing.GlobalCycle,
+                timing.RasterLine,
+                timing.CycleInLine);
+            log.AppendLine();
+            log.AppendLine(label + "Cpu=" + system.GetCpuDebugInfo());
+            log.AppendLine(label + "Mem=" + system.GetMemoryConfigDebugInfo());
+            log.AppendLine(label + "Cia=" + system.GetCiaDebugInfo());
+            log.AppendLine(label + "EasyFlash=" + system.GetEasyFlashDebugInfo());
+            log.AppendLine(label + "PcBytes=" + FormatCpuBytes(system, system.Cpu.PC, 24));
+            log.AppendLine(label + "Vectors=" + FormatCpuBytes(system, 0x0314, 8));
+            log.AppendLine(label + "TimerTarget=" + FormatCpuBytes(system, 0x0063, 2));
+            log.AppendFormat(
+                CultureInfo.InvariantCulture,
+                "{0}InputRead=dc00:{1:X2} dc01:{2:X2}",
+                label,
+                system.Peek(0xDC00),
+                system.Peek(0xDC01));
+            log.AppendLine();
+        }
+
+        /// <summary>
+        /// Formats mapped CPU-visible bytes for compact probe diagnostics.
+        /// </summary>
+        private static string FormatCpuBytes(C64System system, ushort startAddress, int count)
+        {
+            var builder = new StringBuilder();
+            builder.Append(startAddress.ToString("X4", CultureInfo.InvariantCulture));
+            builder.Append(":");
+            for (int index = 0; index < count; index++)
+            {
+                if (index > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                ushort address = (ushort)(startAddress + index);
+                builder.Append(system.Peek(address).ToString("X2", CultureInfo.InvariantCulture));
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>
