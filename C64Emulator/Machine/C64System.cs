@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using OpenTK.Input;
 
 namespace C64Emulator.Core
@@ -158,9 +159,15 @@ namespace C64Emulator.Core
                 EasyFlashCartridge easyFlash = _bus.EasyFlash;
                 string easyFlashPath = easyFlash != null ? easyFlash.SourcePath : string.Empty;
                 bool easyFlashEnabled = easyFlash != null && easyFlash.Enabled;
+                ReuExpansion reuSnapshot = CreateReuSnapshotNoLock();
                 var mountedDrivePaths = new Dictionary<int, string>(_mountedDrivePaths);
 
                 ResetCore();
+                if (reuSnapshot != null)
+                {
+                    reuSnapshot.Reset();
+                    _bus.InsertReu(reuSnapshot);
+                }
 
                 string resetMessage = "RESET COMPLETE";
                 foreach (KeyValuePair<int, string> mountedDrivePath in mountedDrivePaths)
@@ -208,6 +215,7 @@ namespace C64Emulator.Core
                 _vic.Reset();
                 _sid.Reset();
                 _bus.EasyFlash?.Reset();
+                _bus.Reu?.Reset();
                 _iecKernalBridge.Reset();
                 _pressedHostKeys.Clear();
                 _lastMirroredPollKey = null;
@@ -293,6 +301,7 @@ namespace C64Emulator.Core
                 _drive1541TargetCycles = reader.ReadDouble();
                 _drive1541ExecutedCycles = reader.ReadDouble();
                 _catchingUpDrivesForIecAccess = reader.ReadBoolean();
+                RefreshMountedDriveDiskSets();
                 _iecKernalBridge.Reset();
             }
         }
@@ -636,6 +645,31 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Gets compact REU debug information for probe logs.
+        /// </summary>
+        public string GetReuDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                ReuExpansion reu = _bus.Reu;
+                if (reu == null)
+                {
+                    return "reu=none";
+                }
+
+                return string.Format(
+                    "reu=configured enabled={0} size={1} dma={2} status={3:X2} c64={4:X4} reuaddr={5:X6} len={6:X4}",
+                    reu.Enabled,
+                    ReuExpansion.FormatSize(reu.Size),
+                    reu.IsDmaActive,
+                    reu.Status,
+                    reu.C64Address,
+                    reu.ReuAddress,
+                    reu.TransferLength);
+            }
+        }
+
         public object SyncRoot
         {
             get { return _syncRoot; }
@@ -782,6 +816,35 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 return _sid.GetDebugInfo();
+            }
+        }
+
+        /// <summary>
+        /// Consumes the next user-visible machine status message.
+        /// </summary>
+        public string ConsumeStatusText()
+        {
+            lock (_syncRoot)
+            {
+                string status = _drive8.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                status = _drive9.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                status = _drive10.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                return _drive11.ConsumeStatusText();
             }
         }
 
@@ -1088,6 +1151,89 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Gets whether the configured REU is visible at I/O2.
+        /// </summary>
+        public bool ReuEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.ReuEnabled;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the configured REU capacity.
+        /// </summary>
+        public ReuMemorySize ReuSize
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.Reu != null ? _bus.Reu.Size : ReuMemorySize.K512;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enables or disables the REU, creating it with the current/default size if needed.
+        /// </summary>
+        public string SetReuEnabled(bool enabled)
+        {
+            lock (_syncRoot)
+            {
+                ReuMemorySize size = _bus.Reu != null ? _bus.Reu.Size : ReuMemorySize.K512;
+                _bus.ConfigureReu(enabled, size);
+                return enabled ? "REU ON " + ReuExpansion.FormatSize(size) : "REU OFF";
+            }
+        }
+
+        /// <summary>
+        /// Changes the configured REU capacity.
+        /// </summary>
+        public string SetReuSize(ReuMemorySize size)
+        {
+            lock (_syncRoot)
+            {
+                bool enabled = _bus.Reu != null && _bus.Reu.Enabled;
+                _bus.ConfigureReu(enabled, size);
+                return "REU SIZE " + ReuExpansion.FormatSize(_bus.Reu.Size);
+            }
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the configured REU.
+        /// </summary>
+        public ReuExpansion CreateReuSnapshot()
+        {
+            lock (_syncRoot)
+            {
+                return CreateReuSnapshotNoLock();
+            }
+        }
+
+        /// <summary>
+        /// Inserts a previously captured REU snapshot.
+        /// </summary>
+        public string InsertReuSnapshot(ReuExpansion reu)
+        {
+            lock (_syncRoot)
+            {
+                if (reu == null)
+                {
+                    return "NO REU";
+                }
+
+                reu.Reset();
+                _bus.InsertReu(reu);
+                return reu.Enabled ? "REU READY " + ReuExpansion.FormatSize(reu.Size) : "REU OFF";
+            }
+        }
+
+        /// <summary>
         /// Gets whether an EasyFlash cartridge is inserted.
         /// </summary>
         public bool IsEasyFlashInserted
@@ -1334,6 +1480,15 @@ namespace C64Emulator.Core
             _drive1541ExecutedCycles = 0.0;
             _catchingUpDrivesForIecAccess = false;
             _cpu.Reset(_bus.ReadResetVector());
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the configured REU without taking the outer lock.
+        /// </summary>
+        private ReuExpansion CreateReuSnapshotNoLock()
+        {
+            ReuExpansion reu = _bus.Reu;
+            return reu != null ? reu.Clone() : null;
         }
 
         /// <summary>
@@ -1584,12 +1739,26 @@ namespace C64Emulator.Core
             AdvanceDriveClock();
             _vic.PrepareCycle();
             Phi2BusState phi2BusState = ComputePhi2BusState();
-            _bus.SetPhi2BusState(
-                phi2BusState.BaLow,
-                phi2BusState.AecLow,
-                phi2BusState.CpuCanAccess,
-                phi2BusState.VicCanAccess);
+            bool runReuDmaCycle = _bus.IsReuDmaActive && !phi2BusState.BaLow && !phi2BusState.VicCanAccess;
+            if (runReuDmaCycle)
+            {
+                _bus.SetPhi2BusState(false, false, false, false);
+            }
+            else
+            {
+                _bus.SetPhi2BusState(
+                    phi2BusState.BaLow,
+                    phi2BusState.AecLow,
+                    phi2BusState.CpuCanAccess,
+                    phi2BusState.VicCanAccess);
+            }
+
             _cpu.Tick();
+            if (runReuDmaCycle)
+            {
+                _bus.TickReuDmaCycle();
+            }
+
             _cia1.Tick();
             _cia2.Tick();
             _sid.Tick();
@@ -1638,7 +1807,7 @@ namespace C64Emulator.Core
                 return "INVALID D64";
             }
 
-            drive.MountDisk(mountedDiskImage);
+            drive.MountDisk(mountedDiskImage, LoadCompanionDiskSetImages(path, mountedDiskImage));
             _mountedDrivePaths[deviceNumber] = path;
 
             if (updateLastMountedMedia)
@@ -1650,6 +1819,100 @@ namespace C64Emulator.Core
             }
 
             return "DISK MOUNTED IN DRIVE " + deviceNumber;
+        }
+
+        /// <summary>
+        /// Rebuilds companion D64 side lists after loading a savestate.
+        /// </summary>
+        private void RefreshMountedDriveDiskSets()
+        {
+            foreach (KeyValuePair<int, string> mountedDrivePath in _mountedDrivePaths)
+            {
+                IecDrive1541 drive = GetDrive(mountedDrivePath.Key);
+                if (drive == null || !drive.IsMounted)
+                {
+                    continue;
+                }
+
+                drive.SetCompanionDisks(LoadCompanionDiskSetImages(mountedDrivePath.Value, null));
+            }
+        }
+
+        /// <summary>
+        /// Loads D64 images in the same folder that look like other sides of the mounted disk.
+        /// </summary>
+        private static List<D64Image> LoadCompanionDiskSetImages(string mountedPath, D64Image primaryImage)
+        {
+            var images = new List<D64Image>();
+            if (primaryImage != null)
+            {
+                images.Add(primaryImage);
+            }
+
+            if (string.IsNullOrWhiteSpace(mountedPath))
+            {
+                return images;
+            }
+
+            string directory = Path.GetDirectoryName(mountedPath);
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return images;
+            }
+
+            string mountedFullPath = Path.GetFullPath(mountedPath);
+            string diskSetKey = GetD64DiskSetKey(Path.GetFileNameWithoutExtension(mountedPath));
+            string[] candidates;
+            try
+            {
+                candidates = Directory.GetFiles(directory, "*.d64", SearchOption.TopDirectoryOnly);
+                Array.Sort(candidates, StringComparer.OrdinalIgnoreCase);
+            }
+            catch (IOException)
+            {
+                return images;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return images;
+            }
+
+            for (int index = 0; index < candidates.Length; index++)
+            {
+                string candidate = candidates[index];
+                if (string.Equals(Path.GetFullPath(candidate), mountedFullPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(GetD64DiskSetKey(Path.GetFileNameWithoutExtension(candidate)), diskSetKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    images.Add(D64Image.Load(candidate));
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+                catch (InvalidDataException)
+                {
+                }
+            }
+
+            return images;
+        }
+
+        /// <summary>
+        /// Normalizes common disk-side tokens so Side A/B or Side 1/2 images share one lookup key.
+        /// </summary>
+        private static string GetD64DiskSetKey(string fileNameWithoutExtension)
+        {
+            string key = (fileNameWithoutExtension ?? string.Empty).ToUpperInvariant();
+            key = Regex.Replace(key, @"(^|[\s_.-])SIDE[\s_.-]?(?:[0-9]+|[A-Z])($|[\s_.-])", "$1SIDE$2", RegexOptions.CultureInvariant);
+            key = Regex.Replace(key, @"(^|[\s_.-])DISK[\s_.-]?(?:[0-9]+|[A-Z])($|[\s_.-])", "$1DISK$2", RegexOptions.CultureInvariant);
+            return key;
         }
 
         /// <summary>

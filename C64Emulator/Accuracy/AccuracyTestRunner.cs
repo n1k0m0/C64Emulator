@@ -122,12 +122,16 @@ namespace C64Emulator.Core
             failures += RunCase(output, "State serializer tolerates resized readonly arrays", TestStateSerializerToleratesResizedReadonlyArrays);
             failures += RunCase(output, "EasyFlash bank and flash program sequence", TestEasyFlashBankAndProgramSequence);
             failures += RunCase(output, "EasyFlash ROM writes update underlying RAM", TestEasyFlashRomWritesUpdateUnderlyingRam);
+            failures += RunCase(output, "REU registers and basic DMA", TestReuRegistersAndBasicDma);
+            failures += RunCase(output, "REU swap verify and fixed addressing", TestReuSwapVerifyAndFixedAddressing);
+            failures += RunCase(output, "REU size wrapping and FF00 trigger", TestReuSizeWrappingAndFf00Trigger);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
             failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
             failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
+            failures += RunCase(output, "1541 disk set auto-opens companion side", TestDriveDiskSetAutoOpensCompanionSide);
             failures += RunCase(output, "1541 stepper moves only while motor is on", TestDriveStepperMovesOnlyWhileMotorOn);
 
             output.WriteLine("Result: " + (failures == 0 ? "OK" : "FAILED"));
@@ -1600,6 +1604,173 @@ namespace C64Emulator.Core
             context.Equal("RAM underneath visible after cartridge off", (byte)0x5A, visibleRom);
         }
 
+        private static void TestReuRegistersAndBasicDma(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            bus.ConfigureReu(true, ReuMemorySize.K512);
+
+            context.Equal("unconnected mirrored register reads high", (byte)0xFF, bus.CpuRead(0xDF0B));
+            bus.CpuWrite(0xDF22, 0x34);
+            context.Equal("register mirrors through five selection lines", (byte)0x34, bus.CpuRead(0xDF02));
+
+            bus.WriteRam(0x2000, 0x10);
+            bus.WriteRam(0x2001, 0x11);
+            bus.WriteRam(0x2002, 0x12);
+            bus.WriteRam(0x2003, 0x13);
+            ConfigureReuTransfer(bus, 0x2000, 0x000000, 4, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 4);
+
+            context.Equal("C64 address advanced after C64 to REU", (byte)0x04, bus.CpuRead(0xDF02));
+            context.Equal("C64 address high advanced after C64 to REU", (byte)0x20, bus.CpuRead(0xDF03));
+            context.Equal("length register ends at one", (byte)0x01, bus.CpuRead(0xDF07));
+            byte status = bus.CpuRead(0xDF00);
+            context.Equal("end-of-block status includes size bit", (byte)0x50, status);
+            context.Equal("status read clears completion bits", (byte)0x10, bus.CpuRead(0xDF00));
+
+            bus.WriteRam(0x2100, 0x00);
+            bus.WriteRam(0x2101, 0x00);
+            bus.WriteRam(0x2102, 0x00);
+            bus.WriteRam(0x2103, 0x00);
+            ConfigureReuTransfer(bus, 0x2100, 0x000000, 4, 0x00);
+            bus.CpuWrite(0xDF01, 0x91);
+            RunReuDma(context, bus, 4);
+
+            context.Equal("REU to C64 byte 0", (byte)0x10, bus.ReadRam(0x2100));
+            context.Equal("REU to C64 byte 1", (byte)0x11, bus.ReadRam(0x2101));
+            context.Equal("REU to C64 byte 2", (byte)0x12, bus.ReadRam(0x2102));
+            context.Equal("REU to C64 byte 3", (byte)0x13, bus.ReadRam(0x2103));
+        }
+
+        private static void TestReuSwapVerifyAndFixedAddressing(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            bus.ConfigureReu(true, ReuMemorySize.K512);
+
+            bus.WriteRam(0x3000, 0xAA);
+            ConfigureReuTransfer(bus, 0x3000, 0x000100, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0x3000, 0x55);
+            ConfigureReuTransfer(bus, 0x3000, 0x000100, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x92);
+            RunReuDma(context, bus, 2);
+            context.Equal("swap writes REU byte to C64", (byte)0xAA, bus.ReadRam(0x3000));
+
+            bus.WriteRam(0x3001, 0x00);
+            ConfigureReuTransfer(bus, 0x3001, 0x000100, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x91);
+            RunReuDma(context, bus, 1);
+            context.Equal("swap writes old C64 byte to REU", (byte)0x55, bus.ReadRam(0x3001));
+
+            ConfigureReuTransfer(bus, 0x3001, 0x000100, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x93);
+            RunReuDma(context, bus, 1);
+            context.Equal("verify match sets end of block", (byte)0x50, bus.CpuRead(0xDF00));
+
+            bus.WriteRam(0x3001, 0x56);
+            ConfigureReuTransfer(bus, 0x3001, 0x000100, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x93);
+            RunReuDma(context, bus, 1);
+            context.Equal("verify mismatch sets fault", (byte)0x30, bus.CpuRead(0xDF00));
+
+            bus.WriteRam(0x3100, 0x7E);
+            ConfigureReuTransfer(bus, 0x3100, 0x000200, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0x3200, 0x00);
+            bus.WriteRam(0x3201, 0x00);
+            bus.WriteRam(0x3202, 0x00);
+            ConfigureReuTransfer(bus, 0x3200, 0x000200, 3, 0x40);
+            bus.CpuWrite(0xDF01, 0x91);
+            RunReuDma(context, bus, 3);
+            context.Equal("fixed REU fills first byte", (byte)0x7E, bus.ReadRam(0x3200));
+            context.Equal("fixed REU fills second byte", (byte)0x7E, bus.ReadRam(0x3201));
+            context.Equal("fixed REU fills third byte", (byte)0x7E, bus.ReadRam(0x3202));
+        }
+
+        private static void TestReuSizeWrappingAndFf00Trigger(AccuracyContext context)
+        {
+            var bus = new SystemBus();
+            bus.InitializeMemory();
+            bus.ConfigureReu(true, ReuMemorySize.K128);
+
+            bus.WriteRam(0x4000, 0x11);
+            ConfigureReuTransfer(bus, 0x4000, 0x000000, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0x4000, 0x22);
+            ConfigureReuTransfer(bus, 0x4000, 0x020000, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0x4001, 0x00);
+            ConfigureReuTransfer(bus, 0x4001, 0x000000, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x91);
+            RunReuDma(context, bus, 1);
+            context.Equal("128 KB REU wraps bank 2 to bank 0", (byte)0x22, bus.ReadRam(0x4001));
+
+            bus.ConfigureReu(true, ReuMemorySize.M16);
+            bus.WriteRam(0x4002, 0x77);
+            ConfigureReuTransfer(bus, 0x4002, 0xFF0000, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x90);
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0x4003, 0x00);
+            ConfigureReuTransfer(bus, 0x4003, 0xFF0000, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x91);
+            RunReuDma(context, bus, 1);
+            context.Equal("16 MB REU stores in high bank", (byte)0x77, bus.ReadRam(0x4003));
+
+            bus.ConfigureReu(true, ReuMemorySize.K512);
+            bus.WriteRam(0xD000, 0xA6);
+            bus.CpuWrite(0x0001, 0x37);
+            ConfigureReuTransfer(bus, 0xD000, 0x000010, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x80);
+            context.True("delayed command waits for FF00", !bus.IsReuDmaActive);
+            bus.CpuWrite(0x0001, 0x30);
+            bus.CpuWrite(0xFF00, bus.ReadRam(0xFF00));
+            RunReuDma(context, bus, 1);
+
+            bus.WriteRam(0xD001, 0x00);
+            bus.CpuWrite(0x0001, 0x37);
+            ConfigureReuTransfer(bus, 0xD001, 0x000010, 1, 0x00);
+            bus.CpuWrite(0xDF01, 0x81);
+            bus.CpuWrite(0x0001, 0x30);
+            bus.CpuWrite(0xFF00, bus.ReadRam(0xFF00));
+            RunReuDma(context, bus, 1);
+            context.Equal("FF00-triggered transfer used RAM under I/O", (byte)0xA6, bus.ReadRam(0xD001));
+        }
+
+        private static void ConfigureReuTransfer(SystemBus bus, ushort c64Address, int reuAddress, ushort length, byte addressControl)
+        {
+            bus.CpuWrite(0xDF02, (byte)(c64Address & 0xFF));
+            bus.CpuWrite(0xDF03, (byte)(c64Address >> 8));
+            bus.CpuWrite(0xDF04, (byte)(reuAddress & 0xFF));
+            bus.CpuWrite(0xDF05, (byte)((reuAddress >> 8) & 0xFF));
+            bus.CpuWrite(0xDF06, (byte)((reuAddress >> 16) & 0xFF));
+            bus.CpuWrite(0xDF07, (byte)(length & 0xFF));
+            bus.CpuWrite(0xDF08, (byte)(length >> 8));
+            bus.CpuWrite(0xDF0A, addressControl);
+        }
+
+        private static void RunReuDma(AccuracyContext context, SystemBus bus, int expectedCycles)
+        {
+            int guard = Math.Max(16, expectedCycles + 16);
+            while (bus.IsReuDmaActive && guard > 0)
+            {
+                bus.TickReuDmaCycle();
+                guard--;
+            }
+
+            context.True("REU DMA completed", !bus.IsReuDmaActive);
+        }
+
         private static void TestSidEnvelopeGateAttackRelease(AccuracyContext context)
         {
             var sid = new Sid();
@@ -1801,6 +1972,101 @@ namespace C64Emulator.Core
                     File.Delete(tempPath);
                 }
             }
+        }
+
+        private static void TestDriveDiskSetAutoOpensCompanionSide(AccuracyContext context)
+        {
+            string tempDirectory = Path.Combine(Path.GetTempPath(), "c64emulator-diskset-" + Guid.NewGuid().ToString("N"));
+            string sideAPath = Path.Combine(tempDirectory, "test_Side_1.d64");
+            string sideBPath = Path.Combine(tempDirectory, "test_Side_2.d64");
+
+            try
+            {
+                Directory.CreateDirectory(tempDirectory);
+                WriteMinimalD64(sideAPath, null, null);
+                WriteMinimalD64(sideBPath, "E5", new byte[] { 0x01, 0x08, 0xAA });
+
+                D64Image sideA = D64Image.Load(sideAPath);
+                D64Image sideB = D64Image.Load(sideBPath);
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.MountDisk(sideA, new[] { sideA, sideB });
+
+                IecDrive1541.CommandResult openResult = drive.OpenKernalChannel(0, "0:E5");
+                context.Equal("companion side open succeeds", (byte)0x00, openResult.Status);
+                context.Equal("companion side status message", "AUTO-SWAPPED TO DISK 2", drive.ConsumeStatusText());
+                context.True("debug records companion side", drive.GetDebugInfo().Contains("test_Side_2.d64"));
+
+                byte value;
+                bool endOfInformation;
+                context.True("first companion byte can be read", drive.TryReadKernalChannelByte(0, out value, out endOfInformation));
+                context.Equal("first companion byte", (byte)0x01, value);
+            }
+            finally
+            {
+                if (Directory.Exists(tempDirectory))
+                {
+                    Directory.Delete(tempDirectory, true);
+                }
+            }
+        }
+
+        private static void WriteMinimalD64(string path, string fileName, byte[] fileBytes)
+        {
+            byte[] diskBytes = new byte[174848];
+            if (!string.IsNullOrWhiteSpace(fileName) && fileBytes != null)
+            {
+                int fileSectorOffset = GetD64SectorOffsetForTest(1, 0);
+                diskBytes[fileSectorOffset] = 0x00;
+                diskBytes[fileSectorOffset + 1] = (byte)Math.Min(255, fileBytes.Length + 1);
+                Array.Copy(fileBytes, 0, diskBytes, fileSectorOffset + 2, Math.Min(fileBytes.Length, 254));
+
+                int directorySectorOffset = GetD64SectorOffsetForTest(18, 1);
+                diskBytes[directorySectorOffset + 2] = 0x82;
+                diskBytes[directorySectorOffset + 3] = 1;
+                diskBytes[directorySectorOffset + 4] = 0;
+                for (int index = 0; index < 16; index++)
+                {
+                    diskBytes[directorySectorOffset + 5 + index] = 0xA0;
+                }
+
+                byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(fileName.ToUpperInvariant());
+                Array.Copy(nameBytes, 0, diskBytes, directorySectorOffset + 5, Math.Min(nameBytes.Length, 16));
+                diskBytes[directorySectorOffset + 30] = 1;
+            }
+
+            File.WriteAllBytes(path, diskBytes);
+        }
+
+        private static int GetD64SectorOffsetForTest(int track, int sector)
+        {
+            int sectorOffset = 0;
+            for (int currentTrack = 1; currentTrack < track; currentTrack++)
+            {
+                sectorOffset += GetD64SectorsPerTrackForTest(currentTrack);
+            }
+
+            return (sectorOffset + sector) * 256;
+        }
+
+        private static int GetD64SectorsPerTrackForTest(int track)
+        {
+            if (track <= 17)
+            {
+                return 21;
+            }
+
+            if (track <= 24)
+            {
+                return 19;
+            }
+
+            if (track <= 30)
+            {
+                return 18;
+            }
+
+            return 17;
         }
 
         private static void TestDriveStepperMovesOnlyWhileMotorOn(AccuracyContext context)

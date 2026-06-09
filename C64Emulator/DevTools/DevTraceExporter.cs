@@ -750,7 +750,15 @@ namespace C64Emulator.Core
 
                 int safeFrames = Math.Max(0, frames);
                 int cycles = C64Model.Pal.RasterLines * C64Model.Pal.CyclesPerLine * safeFrames;
-                system.RunCycles(cycles);
+                RenderSavestateRunOptions runOptions = ReadRenderSavestateRunOptions(log);
+                if (runOptions.HasAnyOption)
+                {
+                    RunSavestateWithOptions(system, cycles, runOptions, log);
+                }
+                else
+                {
+                    system.RunCycles(cycles);
+                }
 
                 VicTiming timing = system.Timing;
                 log.AppendLine("FinalCycle=" + timing.GlobalCycle.ToString(CultureInfo.InvariantCulture));
@@ -771,6 +779,200 @@ namespace C64Emulator.Core
             }
 
             File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Reads optional environment-controlled savestate render probes.
+        /// </summary>
+        private static RenderSavestateRunOptions ReadRenderSavestateRunOptions(StringBuilder log)
+        {
+            var options = new RenderSavestateRunOptions();
+
+            string firePort = Environment.GetEnvironmentVariable("C64_RENDER_JOYSTICK_FIRE_PORT");
+            if (!string.IsNullOrWhiteSpace(firePort) && Enum.TryParse(firePort, true, out JoystickPort joystickPort))
+            {
+                options.JoystickFirePort = joystickPort;
+                options.HasJoystickFire = true;
+                options.JoystickFireStartCycle = Math.Max(0, ParseIntEnvironment("C64_RENDER_JOYSTICK_FIRE_START_CYCLE", 0));
+                options.JoystickFireCycles = Math.Max(1, ParseIntEnvironment("C64_RENDER_JOYSTICK_FIRE_CYCLES", C64Model.Pal.RasterLines * C64Model.Pal.CyclesPerLine));
+                log.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    "InjectedJoystick={0}Fire start={1} cycles={2}",
+                    joystickPort,
+                    options.JoystickFireStartCycle,
+                    options.JoystickFireCycles);
+                log.AppendLine();
+            }
+
+            options.SampleIntervalCycles = Math.Max(0, ParseIntEnvironment("C64_RENDER_SAMPLE_CYCLES", 0));
+            if (options.SampleIntervalCycles > 0)
+            {
+                log.AppendLine("RenderSamplesEveryCycles=" + options.SampleIntervalCycles.ToString(CultureInfo.InvariantCulture));
+            }
+
+            options.TraceCpu = string.Equals(Environment.GetEnvironmentVariable("C64_RENDER_CPU_TRACE"), "1", StringComparison.Ordinal);
+            if (options.TraceCpu)
+            {
+                options.TraceCpuStart = ParseUshortEnvironment("C64_RENDER_CPU_TRACE_START", 0x0000);
+                options.TraceCpuEnd = ParseUshortEnvironment("C64_RENDER_CPU_TRACE_END", 0xFFFF);
+                options.TraceCpuLimit = Math.Max(1, ParseIntEnvironment("C64_RENDER_CPU_TRACE_LIMIT", 4096));
+                log.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    "RenderCpuTrace={0:X4}-{1:X4} limit={2}",
+                    options.TraceCpuStart,
+                    options.TraceCpuEnd,
+                    options.TraceCpuLimit);
+                log.AppendLine();
+            }
+
+            return options;
+        }
+
+        /// <summary>
+        /// Runs a savestate render with optional input and trace probes.
+        /// </summary>
+        private static void RunSavestateWithOptions(C64System system, int cycles, RenderSavestateRunOptions options, StringBuilder log)
+        {
+            int traceCount = 0;
+            if (options.TraceCpu)
+            {
+                system.Cpu.TraceEnabled = true;
+                system.Cpu.TraceEmitted += delegate(CpuTraceEntry entry)
+                {
+                    if (traceCount >= options.TraceCpuLimit ||
+                        entry.LastOpcodeAddress < options.TraceCpuStart ||
+                        entry.LastOpcodeAddress > options.TraceCpuEnd)
+                    {
+                        return;
+                    }
+
+                    log.AppendFormat(
+                        CultureInfo.InvariantCulture,
+                        "CpuTrace[{0}]=cy:{1} pc:{2:X4}->{3:X4} op:{4:X2} instr:{5} a:{6:X2}->{7:X2} x:{8:X2}->{9:X2} y:{10:X2}->{11:X2} sp:{12:X2}->{13:X2} sr:{14:X2}->{15:X2} acc:{16} addr:{17:X4} val:{18:X2}",
+                        traceCount,
+                        entry.Cycle,
+                        entry.PcBefore,
+                        entry.PcAfter,
+                        entry.Opcode,
+                        entry.InstructionName ?? string.Empty,
+                        entry.ABefore,
+                        entry.AAfter,
+                        entry.XBefore,
+                        entry.XAfter,
+                        entry.YBefore,
+                        entry.YAfter,
+                        entry.SpBefore,
+                        entry.SpAfter,
+                        entry.SrBefore,
+                        entry.SrAfter,
+                        entry.AccessType,
+                        entry.Address,
+                        entry.Value);
+                    log.AppendLine();
+                    traceCount++;
+                };
+            }
+
+            bool fireDown = false;
+            int fireEndCycle = options.JoystickFireStartCycle + options.JoystickFireCycles;
+            for (int cycle = 0; cycle < cycles; cycle++)
+            {
+                if (options.HasJoystickFire)
+                {
+                    bool shouldHoldFire = cycle >= options.JoystickFireStartCycle && cycle < fireEndCycle;
+                    if (shouldHoldFire != fireDown)
+                    {
+                        fireDown = shouldHoldFire;
+                        system.SetJoystickPort(options.JoystickFirePort);
+                        system.SetGamepadJoystickState(fireDown ? (byte)0x0F : (byte)0x1F);
+                        log.AppendFormat(
+                            CultureInfo.InvariantCulture,
+                            "JoystickFire {0} cycle={1}",
+                            fireDown ? "down" : "up",
+                            cycle);
+                        log.AppendLine();
+                    }
+                }
+
+                system.Tick();
+                if (options.SampleIntervalCycles > 0 &&
+                    ((cycle + 1) % options.SampleIntervalCycles == 0 || cycle + 1 == cycles))
+                {
+                    log.AppendFormat(
+                        CultureInfo.InvariantCulture,
+                        "Sample cycle={0} cpu={1} iec={2} drive8={3}",
+                        cycle + 1,
+                        system.GetCpuDebugInfo(),
+                        system.GetIecDebugInfo(),
+                        system.GetDriveDebugInfo(8));
+                    log.AppendLine();
+                }
+            }
+
+            if (fireDown)
+            {
+                system.SetGamepadJoystickState(0x1F);
+            }
+        }
+
+        /// <summary>
+        /// Parses an integer environment variable.
+        /// </summary>
+        private static int ParseIntEnvironment(string name, int fallback)
+        {
+            string value = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return fallback;
+            }
+
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            {
+                return parsed;
+            }
+
+            if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(value.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out parsed))
+            {
+                return parsed;
+            }
+
+            return fallback;
+        }
+
+        /// <summary>
+        /// Parses a 16-bit hexadecimal-friendly environment variable.
+        /// </summary>
+        private static ushort ParseUshortEnvironment(string name, ushort fallback)
+        {
+            int parsed = ParseIntEnvironment(name, fallback);
+            if (parsed < ushort.MinValue || parsed > ushort.MaxValue)
+            {
+                return fallback;
+            }
+
+            return (ushort)parsed;
+        }
+
+        /// <summary>
+        /// Stores environment-controlled savestate render probe settings.
+        /// </summary>
+        private sealed class RenderSavestateRunOptions
+        {
+            public bool HasJoystickFire;
+            public JoystickPort JoystickFirePort;
+            public int JoystickFireStartCycle;
+            public int JoystickFireCycles;
+            public int SampleIntervalCycles;
+            public bool TraceCpu;
+            public ushort TraceCpuStart;
+            public ushort TraceCpuEnd;
+            public int TraceCpuLimit;
+
+            public bool HasAnyOption
+            {
+                get { return HasJoystickFire || SampleIntervalCycles > 0 || TraceCpu; }
+            }
         }
 
         /// <summary>

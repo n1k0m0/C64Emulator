@@ -45,6 +45,7 @@ namespace C64Emulator.Core
         private Cia2 _cia2;
         private Sid _sid;
         private EasyFlashCartridge _easyFlash;
+        private ReuExpansion _reu;
         private bool _externalIrqAsserted;
         private bool _externalNmiAsserted;
         private byte _lastCpuBusValue;
@@ -162,6 +163,11 @@ namespace C64Emulator.Core
             {
                 _easyFlash.Reset();
             }
+
+            if (_reu != null)
+            {
+                _reu.Reset();
+            }
         }
 
         /// <summary>
@@ -233,6 +239,77 @@ namespace C64Emulator.Core
                     _easyFlash.Enabled = value;
                 }
             }
+        }
+
+        /// <summary>
+        /// Configures or creates the RAM Expansion Unit attached to the expansion port.
+        /// </summary>
+        public void ConfigureReu(bool enabled, ReuMemorySize size)
+        {
+            if (_reu == null)
+            {
+                _reu = new ReuExpansion(size);
+            }
+            else
+            {
+                _reu.ConfigureSize(size);
+            }
+
+            _reu.Enabled = enabled;
+        }
+
+        /// <summary>
+        /// Inserts a previously captured REU instance.
+        /// </summary>
+        public void InsertReu(ReuExpansion reu)
+        {
+            _reu = reu;
+        }
+
+        /// <summary>
+        /// Gets the configured REU, if any.
+        /// </summary>
+        public ReuExpansion Reu
+        {
+            get { return _reu; }
+        }
+
+        /// <summary>
+        /// Gets whether the REU currently appears on the expansion port.
+        /// </summary>
+        public bool ReuEnabled
+        {
+            get { return _reu != null && _reu.Enabled; }
+            set
+            {
+                if (_reu == null)
+                {
+                    _reu = new ReuExpansion();
+                }
+
+                _reu.Enabled = value;
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the REU currently owns CPU bus cycles for DMA.
+        /// </summary>
+        public bool IsReuDmaActive
+        {
+            get { return _reu != null && _reu.IsDmaActive; }
+        }
+
+        /// <summary>
+        /// Runs one available REU DMA cycle.
+        /// </summary>
+        public void TickReuDmaCycle()
+        {
+            if (_reu == null)
+            {
+                return;
+            }
+
+            _reu.TickDmaCycle(ReadC64ForReu, WriteC64ForReu);
         }
 
         /// <summary>
@@ -408,6 +485,11 @@ namespace C64Emulator.Core
             {
                 _vic.NotifyCpuMemoryWrite(address, value);
             }
+
+            if (address == 0xFF00 && _reu != null)
+            {
+                _reu.TriggerFf00(GetProcessorPortValue());
+            }
         }
 
         /// <summary>
@@ -497,6 +579,7 @@ namespace C64Emulator.Core
         public bool IsIrqAsserted()
         {
             return _externalIrqAsserted ||
+                (_reu != null && _reu.IsIrqAsserted) ||
                 (_vic != null && _vic.IsIrqAsserted()) ||
                 (_cia1 != null && _cia1.IsIrqAsserted());
         }
@@ -565,6 +648,11 @@ namespace C64Emulator.Core
                 return _cia2.Read((ushort)(address & 0x000F));
             }
 
+            if (address >= 0xDF00 && address <= 0xDFFF && _reu != null && _reu.TryReadIo(address, out byte reuValue))
+            {
+                return reuValue;
+            }
+
             if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryReadIo(address, out byte cartridgeValue))
             {
                 return cartridgeValue;
@@ -581,6 +669,11 @@ namespace C64Emulator.Core
             if (address >= 0xD800 && address <= 0xDBFF)
             {
                 return ReadColorRam((ushort)(address - 0xD800));
+            }
+
+            if (address >= 0xDF00 && address <= 0xDFFF && _reu != null && _reu.TryReadIo(address, out byte reuValue))
+            {
+                return reuValue;
             }
 
             if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryReadIo(address, out byte cartridgeValue))
@@ -626,6 +719,188 @@ namespace C64Emulator.Core
                 return;
             }
 
+            if (address >= 0xDF00 && address <= 0xDFFF && _reu != null && _reu.TryWriteIo(address, value, GetProcessorPortValue()))
+            {
+                return;
+            }
+
+            if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryWriteIo(address, value))
+            {
+                return;
+            }
+
+            _ioRam[address - 0xD000] = value;
+        }
+
+        /// <summary>
+        /// Reads the C64-side memory space for a REC DMA cycle.
+        /// </summary>
+        private byte ReadC64ForReu(ushort address, byte processorPort)
+        {
+            if (address == 0)
+            {
+                return _ram[0];
+            }
+
+            if (address == 1)
+            {
+                return GetProcessorPortValue();
+            }
+
+            if (_easyFlash != null && _easyFlash.TryRead(address, processorPort, out byte cartridgeValue))
+            {
+                return cartridgeValue;
+            }
+
+            if (address >= 0xA000 && address <= 0xBFFF && IsBasicRomVisible(processorPort))
+            {
+                return _basicRom[address - 0xA000];
+            }
+
+            if (address >= 0xD000 && address <= 0xDFFF)
+            {
+                if (IsIoVisible(processorPort))
+                {
+                    return ReadIoForReu(address);
+                }
+
+                if (IsCharacterRomVisibleToCpu(processorPort))
+                {
+                    return _charRom[address - 0xD000];
+                }
+            }
+
+            if (address >= 0xE000 && address <= 0xFFFF && IsKernalRomVisible(processorPort))
+            {
+                return _kernalRom[address - 0xE000];
+            }
+
+            if (IsUltimaxUnmappedCpuRead(address))
+            {
+                return 0xFF;
+            }
+
+            return _ram[address];
+        }
+
+        /// <summary>
+        /// Writes the C64-side memory space for a REC DMA cycle.
+        /// </summary>
+        private void WriteC64ForReu(ushort address, byte value, byte processorPort)
+        {
+            if (address == 0 || address == 1)
+            {
+                _ram[address] = value;
+                UpdateProcessorPortInputLatch();
+                return;
+            }
+
+            if (address >= 0xD000 && address <= 0xDFFF && IsIoVisible(processorPort))
+            {
+                WriteIoForReu(address, value);
+                return;
+            }
+
+            if (_easyFlash != null)
+            {
+                _easyFlash.TryWrite(address, processorPort, value);
+            }
+
+            if (IsUltimaxUnmappedCpuWrite(address))
+            {
+                return;
+            }
+
+            _ram[address] = value;
+            if (_vic != null)
+            {
+                _vic.NotifyCpuMemoryWrite(address, value);
+            }
+        }
+
+        /// <summary>
+        /// Reads I/O for a REC DMA cycle while the REC itself is switched out.
+        /// </summary>
+        private byte ReadIoForReu(ushort address)
+        {
+            if (address >= 0xD000 && address <= 0xD3FF && _vic != null)
+            {
+                return _vic.Read((ushort)(address & 0x003F));
+            }
+
+            if (address >= 0xD400 && address <= 0xD7FF && _sid != null)
+            {
+                return _sid.Read((ushort)(address & 0x001F));
+            }
+
+            if (address >= 0xD800 && address <= 0xDBFF)
+            {
+                return ReadColorRam((ushort)(address - 0xD800));
+            }
+
+            if (address >= 0xDC00 && address <= 0xDCFF && _cia1 != null)
+            {
+                return _cia1.Read((ushort)(address & 0x000F));
+            }
+
+            if (address >= 0xDD00 && address <= 0xDDFF && _cia2 != null)
+            {
+                return _cia2.Read((ushort)(address & 0x000F));
+            }
+
+            if (address >= 0xDF00 && address <= 0xDFFF && _reu != null && _reu.Enabled)
+            {
+                return 0xFF;
+            }
+
+            if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryReadIo(address, out byte cartridgeValue))
+            {
+                return cartridgeValue;
+            }
+
+            return _ioRam[address - 0xD000];
+        }
+
+        /// <summary>
+        /// Writes I/O for a REC DMA cycle while the REC itself is switched out.
+        /// </summary>
+        private void WriteIoForReu(ushort address, byte value)
+        {
+            if (address >= 0xD000 && address <= 0xD3FF && _vic != null)
+            {
+                _vic.Write((ushort)(address & 0x003F), value);
+                return;
+            }
+
+            if (address >= 0xD400 && address <= 0xD7FF && _sid != null)
+            {
+                _sid.Write((ushort)(address & 0x001F), value);
+                return;
+            }
+
+            if (address >= 0xD800 && address <= 0xDBFF)
+            {
+                WriteColorRam((ushort)(address - 0xD800), value);
+                return;
+            }
+
+            if (address >= 0xDC00 && address <= 0xDCFF && _cia1 != null)
+            {
+                _cia1.Write((ushort)(address & 0x000F), value);
+                return;
+            }
+
+            if (address >= 0xDD00 && address <= 0xDDFF && _cia2 != null)
+            {
+                _cia2.Write((ushort)(address & 0x000F), value);
+                return;
+            }
+
+            if (address >= 0xDF00 && address <= 0xDFFF && _reu != null && _reu.Enabled)
+            {
+                return;
+            }
+
             if (address >= 0xDE00 && address <= 0xDFFF && _easyFlash != null && _easyFlash.TryWriteIo(address, value))
             {
                 return;
@@ -647,7 +922,15 @@ namespace C64Emulator.Core
             }
 
             byte port = GetProcessorPortValue();
-            return (port & 0x03) == 0x03;
+            return IsBasicRomVisible(port);
+        }
+
+        /// <summary>
+        /// Returns whether BASIC ROM is visible for a captured processor port value.
+        /// </summary>
+        private static bool IsBasicRomVisible(byte processorPort)
+        {
+            return (processorPort & 0x03) == 0x03;
         }
 
         /// <summary>
@@ -661,7 +944,15 @@ namespace C64Emulator.Core
             }
 
             byte port = GetProcessorPortValue();
-            return (port & 0x02) != 0;
+            return IsKernalRomVisible(port);
+        }
+
+        /// <summary>
+        /// Returns whether KERNAL ROM is visible for a captured processor port value.
+        /// </summary>
+        private static bool IsKernalRomVisible(byte processorPort)
+        {
+            return (processorPort & 0x02) != 0;
         }
 
         /// <summary>
@@ -675,8 +966,16 @@ namespace C64Emulator.Core
             }
 
             byte port = GetProcessorPortValue();
-            bool loramOrHiram = (port & 0x03) != 0;
-            bool charen = (port & 0x04) != 0;
+            return IsIoVisible(port);
+        }
+
+        /// <summary>
+        /// Returns whether I/O is visible for a captured processor port value.
+        /// </summary>
+        private static bool IsIoVisible(byte processorPort)
+        {
+            bool loramOrHiram = (processorPort & 0x03) != 0;
+            bool charen = (processorPort & 0x04) != 0;
             return loramOrHiram && charen;
         }
 
@@ -691,8 +990,16 @@ namespace C64Emulator.Core
             }
 
             byte port = GetProcessorPortValue();
-            bool loramOrHiram = (port & 0x03) != 0;
-            bool charen = (port & 0x04) != 0;
+            return IsCharacterRomVisibleToCpu(port);
+        }
+
+        /// <summary>
+        /// Returns whether character ROM is visible for a captured processor port value.
+        /// </summary>
+        private static bool IsCharacterRomVisibleToCpu(byte processorPort)
+        {
+            bool loramOrHiram = (processorPort & 0x03) != 0;
+            bool charen = (processorPort & 0x04) != 0;
             return loramOrHiram && !charen;
         }
 

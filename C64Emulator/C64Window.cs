@@ -98,7 +98,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 17;
+        private const int AudioOverlayItemCount = 19;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int StandardC64ContentLeft = 41;
@@ -314,6 +314,9 @@ namespace C64Emulator
                 _system.SetEasyFlashEnabled(settings.EasyFlashEnabled);
             }
 
+            _system.SetReuSize(ParseEnum(settings.ReuSize, ReuMemorySize.K512));
+            _system.SetReuEnabled(settings.ReuEnabled);
+
             _system.SetSidMasterVolume(settings.SidMasterVolume);
             _system.SetSidNoiseLevel(settings.SidNoiseLevel);
             _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
@@ -388,6 +391,8 @@ namespace C64Emulator
                 DriveOverlayEnabled = _driveOverlayEnabled,
                 EasyFlashEnabled = _system.EasyFlashEnabled,
                 EasyFlashImagePath = _system.EasyFlashImagePath,
+                ReuEnabled = _system.ReuEnabled,
+                ReuSize = _system.ReuSize.ToString(),
                 MediaBrowserTargetDrive = _mediaBrowserTargetDrive,
                 MediaBrowserDirectory = _mediaBrowserLastDirectory ?? string.Empty,
                 // Store the network menu fields so host/client setup survives app restarts.
@@ -612,6 +617,7 @@ namespace C64Emulator
             string sidDebugInfo = string.Empty;
             string iecDebugInfo = string.Empty;
             string drive8DebugInfo = string.Empty;
+            string pendingStatusText = string.Empty;
             bool drive8Mounted;
             bool drive8LedOn;
             bool drive8Active;
@@ -661,6 +667,13 @@ namespace C64Emulator
                 }
 
                 Array.Copy(_system.FrameBuffer.CompletedPixels, _frameSnapshot, _frameSnapshot.Length);
+                pendingStatusText = _system.ConsumeStatusText();
+            }
+
+            if (!string.IsNullOrWhiteSpace(pendingStatusText))
+            {
+                _overlayStatusText = pendingStatusText;
+                ShowTurboToast(pendingStatusText);
             }
 
             if (_driveOverlayEnabled)
@@ -3545,7 +3558,9 @@ namespace C64Emulator
             byte textGreen = ClampToByte((int)Math.Round(248.0 * alphaFactor));
             byte textBlue = ClampToByte((int)Math.Round(255.0 * alphaFactor));
 
-            int width = 120;
+            int maxToastCharacters = Math.Max(1, (PixelsWidth - 52) / 12);
+            string toastText = FormatOverlayValue(_turboToastText, maxToastCharacters);
+            int width = Math.Min(PixelsWidth - 20, Math.Max(120, GetOverlayTextWidth(toastText, 2) + 32));
             int height = 34;
             int x = (PixelsWidth - width) / 2;
             int y = 18;
@@ -3554,7 +3569,7 @@ namespace C64Emulator
             DrawLine(x, y + height - 1, x + width - 1, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawLine(x, y, x, y + height - 1, frameRed, frameGreen, frameBlue);
             DrawLine(x + width - 1, y, x + width - 1, y + height - 1, frameRed, frameGreen, frameBlue);
-            DrawOverlayText(x + 16, y + 10, _turboToastText, 2, textRed, textGreen, textBlue);
+            DrawOverlayText(x + 16, y + 10, toastText, 2, textRed, textGreen, textBlue);
         }
 
         /// <summary>
@@ -4912,6 +4927,18 @@ namespace C64Emulator
                 EjectEasyFlash();
                 return;
             }
+
+            if (_audioOverlaySelection == 17)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 18)
+            {
+                CycleReuSize(direction);
+                return;
+            }
         }
 
         /// <summary>
@@ -4975,6 +5002,26 @@ namespace C64Emulator
         private void EjectEasyFlash()
         {
             _overlayStatusText = _system.EjectEasyFlash();
+            SaveSettings();
+            ResetEmulationTiming();
+        }
+
+        /// <summary>
+        /// Enables or disables the RAM Expansion Unit.
+        /// </summary>
+        private void ToggleReu()
+        {
+            _overlayStatusText = _system.SetReuEnabled(!_system.ReuEnabled);
+            SaveSettings();
+            ResetEmulationTiming();
+        }
+
+        /// <summary>
+        /// Cycles the configured REU capacity.
+        /// </summary>
+        private void CycleReuSize(int direction)
+        {
+            _overlayStatusText = _system.SetReuSize(GetNextReuSize(_system.ReuSize, direction));
             SaveSettings();
             ResetEmulationTiming();
         }
@@ -5782,6 +5829,12 @@ namespace C64Emulator
                 case 16:
                     DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
+                case 17:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 18:
+                    DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
+                    break;
             }
         }
 
@@ -5845,6 +5898,55 @@ namespace C64Emulator
                 default:
                     return 1.0f;
             }
+        }
+
+        /// <summary>
+        /// Gets the next supported REU size.
+        /// </summary>
+        private static ReuMemorySize GetNextReuSize(ReuMemorySize size, int direction)
+        {
+            ReuMemorySize[] sizes = ReuExpansion.GetSupportedSizes();
+            int index = Array.IndexOf(sizes, size);
+            if (index < 0)
+            {
+                index = Array.IndexOf(sizes, ReuMemorySize.K512);
+            }
+
+            index += direction >= 0 ? 1 : -1;
+            if (index < 0)
+            {
+                index = sizes.Length - 1;
+            }
+
+            if (index >= sizes.Length)
+            {
+                index = 0;
+            }
+
+            return sizes[index];
+        }
+
+        /// <summary>
+        /// Formats a REU capacity for the settings overlay.
+        /// </summary>
+        private static string FormatReuSize(ReuMemorySize size)
+        {
+            return ReuExpansion.FormatSize(size).Replace(" ", string.Empty).ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// Gets the settings slider fill value for the REU capacity.
+        /// </summary>
+        private static float GetReuSizeFill(ReuMemorySize size)
+        {
+            ReuMemorySize[] sizes = ReuExpansion.GetSupportedSizes();
+            int index = Array.IndexOf(sizes, size);
+            if (index < 0)
+            {
+                index = Array.IndexOf(sizes, ReuMemorySize.K512);
+            }
+
+            return sizes.Length <= 1 ? 0.0f : index / (float)(sizes.Length - 1);
         }
 
         /// <summary>
@@ -6215,6 +6317,7 @@ namespace C64Emulator
             bool enableLoadHack = _system.EnableLoadHack;
             bool forceSoftwareIecTransport = _system.ForceSoftwareIecTransport;
             bool enableInputInjection = _system.EnableInputInjection;
+            ReuExpansion reuSnapshot = _system.CreateReuSnapshot();
 
             C64System oldSystem = _system;
             oldSystem.Dispose();
@@ -6240,6 +6343,11 @@ namespace C64Emulator
             {
                 _system.InsertEasyFlashSnapshot(easyFlashSnapshot);
                 mountedMedia = _system.MountedMedia;
+            }
+
+            if (reuSnapshot != null)
+            {
+                _system.InsertReuSnapshot(reuSnapshot);
             }
 
             SaveSettings();

@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace C64Emulator.Core
 {
@@ -134,7 +135,7 @@ namespace C64Emulator.Core
         private const byte OpenBase = 0xF0;
 
         private const int EoiThresholdCycles = 140;
-        private const int EoiAcknowledgeHoldCycles = 48;
+        private const int EoiAcknowledgeHoldCycles = 128;
         private const int ByteAcknowledgeHoldCycles = 32;
         private const int PayloadInitialByteGraceCycles = 0;
         private const int TalkerInterByteDelayCycles = 24;
@@ -144,7 +145,7 @@ namespace C64Emulator.Core
         // when the VIC steals cycles. In practice that showed up as LOAD"*",8
         // stalling at the final EOI byte. These values bias toward reliability
         // over speed and leave enough margin for badlines.
-        private const int TalkerTurnaroundReleaseCycles = 50;
+        private const int TalkerTurnaroundReleaseCycles = 512;
         private const int TalkerPreambleLowCycles = 40;
         private const int TalkerPreambleSettleCycles = 21;
         private const int TalkerBitPrepareCycles = 45;
@@ -170,6 +171,7 @@ namespace C64Emulator.Core
         private readonly IecByteSender _sender;
         private readonly IecByteReceiver _passiveReceiver;
         private readonly Dictionary<byte, DriveChannel> _channels = new Dictionary<byte, DriveChannel>();
+        private readonly List<D64Image> _diskSetImages = new List<D64Image>();
         private readonly List<byte> _listenBuffer = new List<byte>();
         private readonly List<byte> _recentAttentionCommands = new List<byte>();
         private readonly List<string> _recentCommandTexts = new List<string>();
@@ -203,6 +205,8 @@ namespace C64Emulator.Core
         private int _talkBufferIndex;
         private ushort _lastExecuteAddress;
         private string _lastCommandText = string.Empty;
+        private string _lastAutoDiskSwapPath = string.Empty;
+        private string _pendingStatusText = string.Empty;
         private byte _statusCode;
         private string _statusText = "73, CBM DOS V2.6 1541,00,00";
         private int _memoryWriteCommandCount;
@@ -339,7 +343,16 @@ namespace C64Emulator.Core
         /// </summary>
         public void MountDisk(D64Image image)
         {
+            MountDisk(image, null);
+        }
+
+        /// <summary>
+        /// Mounts disk together with the other D64 images that belong to the same disk set.
+        /// </summary>
+        public void MountDisk(D64Image image, IEnumerable<D64Image> diskSetImages)
+        {
             _mountedImage = image;
+            SetCompanionDisks(diskSetImages);
             if (_hardware.HasCustomCodeActive)
             {
                 // A physical disk swap does not reset the 1541. Fast loaders
@@ -353,11 +366,47 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Replaces the side/disk candidates used for transparent multi-D64 disk-set lookups.
+        /// </summary>
+        public void SetCompanionDisks(IEnumerable<D64Image> diskSetImages)
+        {
+            _diskSetImages.Clear();
+            _lastAutoDiskSwapPath = string.Empty;
+            _pendingStatusText = string.Empty;
+            AddDiskSetImage(_mountedImage);
+            if (diskSetImages == null)
+            {
+                return;
+            }
+
+            foreach (D64Image diskSetImage in diskSetImages)
+            {
+                AddDiskSetImage(diskSetImage);
+            }
+        }
+
+        /// <summary>
+        /// Adds a D64 image to the disk set once.
+        /// </summary>
+        private void AddDiskSetImage(D64Image image)
+        {
+            if (image == null || _diskSetImages.Contains(image))
+            {
+                return;
+            }
+
+            _diskSetImages.Add(image);
+        }
+
+        /// <summary>
         /// Ejects disk.
         /// </summary>
         public void EjectDisk()
         {
             _mountedImage = null;
+            _diskSetImages.Clear();
+            _lastAutoDiskSwapPath = string.Empty;
+            _pendingStatusText = string.Empty;
             if (_hardware.HasCustomCodeActive)
             {
                 _hardware.EjectDisk();
@@ -388,10 +437,13 @@ namespace C64Emulator.Core
                 "_passiveReceiver",
                 "_channels",
                 "_listenBuffer",
+                "_diskSetImages",
                 "_recentAttentionCommands",
                 "_recentCommandTexts",
                 "_ram",
                 "_hardware",
+                "_lastAutoDiskSwapPath",
+                "_pendingStatusText",
                 "_mountedImage");
             BinaryStateIO.WriteByteArray(writer, _ram);
             BinaryStateIO.WriteByteList(writer, _listenBuffer);
@@ -426,10 +478,13 @@ namespace C64Emulator.Core
                 "_passiveReceiver",
                 "_channels",
                 "_listenBuffer",
+                "_diskSetImages",
                 "_recentAttentionCommands",
                 "_recentCommandTexts",
                 "_ram",
                 "_hardware",
+                "_lastAutoDiskSwapPath",
+                "_pendingStatusText",
                 "_mountedImage");
             byte[] ram = BinaryStateIO.ReadByteArray(reader);
             if (ram != null)
@@ -459,6 +514,16 @@ namespace C64Emulator.Core
         public bool IsMounted
         {
             get { return _mountedImage != null; }
+        }
+
+        /// <summary>
+        /// Consumes the next user-visible drive status message.
+        /// </summary>
+        public string ConsumeStatusText()
+        {
+            string statusText = _pendingStatusText;
+            _pendingStatusText = string.Empty;
+            return statusText;
         }
 
         /// <summary>
@@ -746,7 +811,7 @@ namespace C64Emulator.Core
         public string GetDebugInfo()
         {
             return string.Format(
-                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} deviceAttn={15} payloadRx={16} payloadTx={17} armRx={18} armTx={19} attn={20} probeHold={21}:{22} ch={23} listenSA={24:X2} talkSA={25:X2} talkIdx={26}/{27} sender={28} receiver={29} bus={30} recent={31} open0={32} open15={33} atnEdges={34}/{35} attnBeg={36} attnEnd={37} attnCmds={38} swClk={39} swData={40} pendArmed={41} pendWaitAtn={42} pendWait={43} pendIdle={44}",
+                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} deviceAttn={15} payloadRx={16} payloadTx={17} armRx={18} armTx={19} attn={20} probeHold={21}:{22} ch={23} listenSA={24:X2} talkSA={25:X2} talkIdx={26}/{27} sender={28} receiver={29} bus={30} recent={31} open0={32} open15={33} diskSet={34} autoDisk=\"{35}\" atnEdges={36}/{37} attnBeg={38} attnEnd={39} attnCmds={40} swClk={41} swData={42} pendArmed={43} pendWaitAtn={44} pendWait={45} pendIdle={46}",
                 _mountedImage != null,
                 _hardware.HasCustomCodeActive,
                 _hardware.IsBooting,
@@ -781,6 +846,8 @@ namespace C64Emulator.Core
                 FormatRecentCommands(),
                 DescribeOpenChannel(0),
                 DescribeOpenChannel(15),
+                _diskSetImages.Count,
+                Path.GetFileName(_lastAutoDiskSwapPath ?? string.Empty),
                 _atnLowTransitions,
                 _atnHighTransitions,
                 _attentionBeginCount,
@@ -2505,8 +2572,11 @@ namespace C64Emulator.Core
                 D64Image.SequentialFileReader reader;
                 if (!_mountedImage.TryOpenSequentialFile(filename, out reader) || reader == null)
                 {
-                    SetStatus(new CommandResult(0x04, "62, FILE NOT FOUND,00,00"));
-                    return false;
+                    if (!TryOpenSequentialFileFromDiskSet(filename, out reader) || reader == null)
+                    {
+                        SetStatus(new CommandResult(0x04, "62, FILE NOT FOUND,00,00"));
+                        return false;
+                    }
                 }
                 state.ResetReadSource();
                 state.SequentialReader = reader;
@@ -2516,6 +2586,65 @@ namespace C64Emulator.Core
             SetChannelReadBuffer(channel, channelData);
             BeginSimulatedTransfer(channelData.Length);
             return true;
+        }
+
+        /// <summary>
+        /// Attempts to resolve a sequential file on a companion side and swaps that image in if it succeeds.
+        /// </summary>
+        private bool TryOpenSequentialFileFromDiskSet(string filename, out D64Image.SequentialFileReader reader)
+        {
+            reader = null;
+            if (_diskSetImages.Count == 0)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < _diskSetImages.Count; index++)
+            {
+                D64Image candidate = _diskSetImages[index];
+                if (candidate == null || ReferenceEquals(candidate, _mountedImage))
+                {
+                    continue;
+                }
+
+                if (!candidate.TryOpenSequentialFile(filename, out reader) || reader == null)
+                {
+                    continue;
+                }
+
+                _mountedImage = candidate;
+                _lastAutoDiskSwapPath = candidate.HostPath ?? string.Empty;
+                _pendingStatusText = "AUTO-SWAPPED TO " + FormatDiskSetLabel(candidate.HostPath);
+                _hardware.MountDisk(_mountedImage);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Formats a disk-set image path as an overlay-friendly disk label.
+        /// </summary>
+        private static string FormatDiskSetLabel(string hostPath)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(hostPath ?? string.Empty) ?? string.Empty;
+            Match match = Regex.Match(
+                fileName,
+                @"(?:^|[\s_.-])(?:SIDE|DISK)[\s_.-]?([0-9]+|[A-Z])(?:$|[\s_.-])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                return "DISK";
+            }
+
+            string token = match.Groups[1].Value.ToUpperInvariant();
+            if (int.TryParse(token, out int number))
+            {
+                return "DISK " + number;
+            }
+
+            int letterNumber = (token[0] - 'A') + 1;
+            return letterNumber > 0 ? "DISK " + letterNumber : "DISK";
         }
 
         /// <summary>
@@ -3780,6 +3909,30 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Formats raw IEC payload bytes as compact hexadecimal text for diagnostics.
+        /// </summary>
+        private static string FormatByteArray(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(bytes.Length * 3);
+            for (int index = 0; index < bytes.Length; index++)
+            {
+                if (index > 0)
+                {
+                    builder.Append('-');
+                }
+
+                builder.Append(bytes[index].ToString("X2"));
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
         /// Handles the encode status text operation.
         /// </summary>
         private static byte[] EncodeStatusText(string text)
@@ -3929,22 +4082,24 @@ namespace C64Emulator.Core
             }
 
             string filename = DecodeFilename(state.FilenameBytes);
+            string rawFilename = FormatByteArray(state.FilenameBytes);
             if (state.SequentialReader != null)
             {
                 return string.Format(
-                    "{0}:{1}@{2}{3}",
+                    "{0}:{1}[{2}]@{3}{4}",
                     state.FilenameBytes.Length,
                     filename,
+                    rawFilename,
                     state.SequentialReader.BytesRead,
                     state.SequentialReader.IsFinished ? ":eof" : string.Empty);
             }
 
             if (state.ReadBuffer != null && state.ReadBuffer.Length > 0)
             {
-                return string.Format("{0}:{1}@{2}/{3}", state.FilenameBytes.Length, filename, state.ReadOffset, state.ReadBuffer.Length);
+                return string.Format("{0}:{1}[{2}]@{3}/{4}", state.FilenameBytes.Length, filename, rawFilename, state.ReadOffset, state.ReadBuffer.Length);
             }
 
-            return string.Format("{0}:{1}", state.FilenameBytes.Length, filename);
+            return string.Format("{0}:{1}[{2}]", state.FilenameBytes.Length, filename, rawFilename);
         }
 
         /// <summary>

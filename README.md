@@ -37,13 +37,14 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - SID register handling and audio output.
 - CIA1/CIA2 emulation for keyboard, joystick, timers, interrupts, and IEC interaction.
 - IEC bus infrastructure with emulated 1541-compatible drives on device numbers 8 to 11.
-- D64 disk image mounting, PRG direct loading, and EasyFlash `.crt` cartridge mounting.
+- D64 disk image mounting, PRG direct loading, EasyFlash `.crt` cartridge mounting, and optional REU expansion RAM.
 - Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
+- REU/REC emulation with 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB capacities.
 - Startup update check against the latest GitHub Release with a setup download progress window, optional SHA-256 verification, and safe setup launch after the emulator exits.
 - Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send host-approved joystick/keyboard input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
@@ -167,13 +168,18 @@ Menu entries:
 | `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
 | `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the main menu `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
 | `DRIVE OVERLAY` | `OFF` / `ON` | Shows or hides the drive activity footer. |
+| `EASYFLASH` | `OFF` / `ON` | Enables or disables the inserted EasyFlash cartridge. |
+| `EF SAVE` | `CLEAN`, `DIRTY`, `SAVE` | Saves flash changes back to the mounted `.crt` file when the cartridge has been modified by software. |
+| `EF EJECT` | `EMPTY`, cartridge name | Ejects the inserted EasyFlash cartridge. |
+| `REU` | `OFF` / `ON` | Enables or disables the emulated RAM Expansion Unit at I/O2 `$DF00-$DFFF`. |
+| `REU SIZE` | `128KB` to `16MB` | Selects the REU capacity. Supported sizes are 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB. |
 
 The `MEDIA` browser opened from the F10 overview has its own controls:
 
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` | Select a directory or media file. |
-| `Enter` | Enter a directory or mount the selected `.prg` / `.d64`. Mounting media returns to the F10 overview. |
+| `Enter` | Enter a directory or mount the selected `.prg`, `.d64`, or `.crt`. Mounting media returns to the F10 overview. |
 | `Left` / `Right` | Change the target drive from 8 to 11. |
 | `8` / `9` / `0` / `1` | Select target drive 8, 9, 10, or 11. |
 | `Esc` | Return to the F10 overview. |
@@ -193,6 +199,8 @@ C64Emulator/
   C64Window.cs
   Program.cs
   Machine/       C64 model, system coordinator, and memory bus
+  Cartridge/     Cartridge images such as EasyFlash
+  Expansion/     Expansion-port devices such as REU
   Cpu/           MOS 6510 CPU, instruction decoder, and trace helpers
   Vic/           VIC-II, video timing, bus planning, and framebuffer
   Sid/           SID emulation and audio output
@@ -323,6 +331,12 @@ Media can be selected from the `MEDIA` entry in the `F10` main menu or dropped d
 
 The D64 parser handles the common 35-track layout and extended image sizes where supported by the image parser. Some copy-protected titles or custom fast loaders can still expose gaps in the current 1541 accuracy work.
 
+## REU Expansion
+
+The optional REU emulates the MOS 8726 RAM Expansion Controller register window at `$DF00-$DF0A`, including the mirrored register layout across I/O2. It supports C64-to-REU, REU-to-C64, swap, and verify commands, autoload, delayed `$FF00` triggering, fixed C64/REU address modes, end/fault status bits, and IRQ status masking.
+
+Transfers run as DMA: the CPU is held while the REC consumes available CPU bus cycles, and the transfer pauses when the VIC owns the bus. The transfer captures the active C64 memory configuration when the command starts, so software can use the usual `$FF00` path to reach RAM below ROM or I/O. REU RAM is stored in savestates and survives emulator resets while the controller registers reset like hardware.
+
 ## Savestates
 
 Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay. Deleting a savestate always opens a `YES` / `NO` confirmation first.
@@ -341,7 +355,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists server/client ports, the last client host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists server/client ports, the last client host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
 
 ## ROM Files
 
@@ -367,7 +381,7 @@ ROM images and disk/program media are not covered by the source-code license. Ch
 
 ## Status
 
-The emulator is already useful for BASIC, PRG loading, D64 directory access, several games, savestates, and interactive testing. Recent VIC-II work improved display-mode latch timing, invalid display mode behavior, DMA-delay/FLI badlines, tightly multiplexed sprite reuse, and sprite-sprite collision latching outside the active display area. Cycle accuracy, remaining VIC-II edge cases, and 1541 custom loader compatibility remain the main long-term accuracy areas.
+The emulator is already useful for BASIC, PRG loading, D64 directory access, several games, savestates, EasyFlash titles, REU-aware software, and interactive testing. Recent VIC-II work improved display-mode latch timing, invalid display mode behavior, DMA-delay/FLI badlines, tightly multiplexed sprite reuse, and sprite-sprite collision latching outside the active display area. Cycle accuracy, remaining VIC-II edge cases, detailed REU/VIC DMA edge cases, and 1541 custom loader compatibility remain the main long-term accuracy areas.
 
 ## License
 

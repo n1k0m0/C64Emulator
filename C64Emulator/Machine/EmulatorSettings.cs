@@ -59,6 +59,10 @@ namespace C64Emulator.Core
 
         public string EasyFlashImagePath { get; set; } = string.Empty;
 
+        public bool ReuEnabled { get; set; }
+
+        public string ReuSize { get; set; } = "K512";
+
         public int MediaBrowserTargetDrive { get; set; } = 8;
 
         public string MediaBrowserDirectory { get; set; } = string.Empty;
