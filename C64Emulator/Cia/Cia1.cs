@@ -604,6 +604,14 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Releases all local host keyboard matrix keys.
+        /// </summary>
+        public void ClearHostKeyboardState()
+        {
+            System.Array.Clear(_keyboardMatrix, 0, _keyboardMatrix.Length);
+        }
+
+        /// <summary>
         /// Releases all network-controlled keyboard matrix keys.
         /// </summary>
         public void ClearNetworkKeyboardState()

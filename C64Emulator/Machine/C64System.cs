@@ -61,6 +61,7 @@ namespace C64Emulator.Core
         private MountedMediaInfo _lastMountedMedia = MountedMediaInfo.None;
         private Key? _lastMirroredPollKey;
         private int _pollMirrorRepeatDelayCycles;
+        private HostKeyboardLayout _hostKeyboardLayout = HostKeyboardLayout.En;
         private double _drive1541TargetCycles;
         private double _drive1541ExecutedCycles;
         private bool _forceSoftwareIecTransport = true;
@@ -905,9 +906,10 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
-                _pressedHostKeys.Add(key);
-                TryEnqueueHostKeyToKeyboardBuffer(key);
-                _cia1.KeyDown(key);
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Add(mappedKey);
+                TryEnqueueHostKeyToKeyboardBuffer(mappedKey);
+                _cia1.KeyDown(mappedKey);
             }
         }
 
@@ -918,9 +920,10 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
-                _pressedHostKeys.Remove(key);
-                _cia1.KeyUp(key);
-                if (_lastMirroredPollKey == key)
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Remove(mappedKey);
+                _cia1.KeyUp(mappedKey);
+                if (_lastMirroredPollKey == mappedKey)
                 {
                     _lastMirroredPollKey = null;
                     _pollMirrorRepeatDelayCycles = 0;
@@ -1002,6 +1005,38 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 _cia1.ActiveJoystickPort = joystickPort;
+            }
+        }
+
+        public HostKeyboardLayout CurrentHostKeyboardLayout
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _hostKeyboardLayout;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sets the frontend host keyboard layout used before mapping keys to the C64.
+        /// </summary>
+        /// <param name="layout">Host keyboard layout.</param>
+        public void SetHostKeyboardLayout(HostKeyboardLayout layout)
+        {
+            lock (_syncRoot)
+            {
+                if (_hostKeyboardLayout == layout)
+                {
+                    return;
+                }
+
+                _hostKeyboardLayout = layout;
+                _pressedHostKeys.Clear();
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                _cia1.ClearHostKeyboardState();
             }
         }
 
@@ -2178,6 +2213,29 @@ namespace C64Emulator.Core
                 key == Key.BackSpace ||
                 key == Key.Number1 ||
                 key == Key.Number2;
+        }
+
+        /// <summary>
+        /// Maps host key names that differ between the selected PC keyboard layout and C64 expectations.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>Logical key to pass to the emulated keyboard.</returns>
+        public Key MapHostKeyboardLayoutKey(Key key)
+        {
+            if (_hostKeyboardLayout == HostKeyboardLayout.Ger)
+            {
+                if (key == Key.Y)
+                {
+                    return Key.Z;
+                }
+
+                if (key == Key.Z)
+                {
+                    return Key.Y;
+                }
+            }
+
+            return key;
         }
 
         /// <summary>

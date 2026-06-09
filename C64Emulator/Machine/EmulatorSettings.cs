@@ -35,6 +35,8 @@ namespace C64Emulator.Core
 
         public string JoystickPort { get; set; } = "Port2";
 
+        public string HostKeyboardLayout { get; set; } = "En";
+
         public string VideoFilterMode { get; set; } = "Sharp";
 
         public bool VideoZoomEnabled { get; set; }

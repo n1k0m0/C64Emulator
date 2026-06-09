@@ -98,7 +98,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 19;
+        private const int AudioOverlayItemCount = 20;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int StandardC64ContentLeft = 41;
@@ -113,7 +113,9 @@ namespace C64Emulator
         // Remote clients resend unchanged joystick state periodically so the host can
         // recover from a dropped packet or a stale state after a quick reconnect.
         private const double RemoteInputRefreshSeconds = 0.05;
-        private const int MediaBrowserVisibleRows = 9;
+        private const int MediaBrowserListTopOffset = 58;
+        private const int MediaBrowserListBottomPadding = 10;
+        private const int MediaBrowserRowSpacing = 11;
         private const int SaveOverlayVisibleRows = 12;
         private const double DriveFooterVisibleHoldSeconds = 1.2;
         private const double DriveFooterFadeOutSeconds = 0.6;
@@ -169,6 +171,7 @@ namespace C64Emulator
         private int _mediaBrowserSelection;
         private int _mediaBrowserScroll;
         private int _mediaBrowserTargetDrive = 8;
+        private char _mediaBrowserLastJumpLetter;
         private string _mediaBrowserLastDirectory;
         private string _networkHost = "127.0.0.1";
         private string _networkServerPassword = string.Empty;
@@ -321,6 +324,7 @@ namespace C64Emulator
             _system.SetSidNoiseLevel(settings.SidNoiseLevel);
             _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
             _system.SetJoystickPort(ParseEnum(settings.JoystickPort, JoystickPort.Port2));
+            _system.SetHostKeyboardLayout(ParseEnum(settings.HostKeyboardLayout, HostKeyboardLayout.En));
             _system.EnableLoadHack = settings.EnableLoadHack;
             _system.ForceSoftwareIecTransport = settings.ForceSoftwareIecTransport;
             _system.EnableInputInjection = settings.EnableInputInjection;
@@ -379,6 +383,7 @@ namespace C64Emulator
                 SidNoiseLevel = _system.SidNoiseLevel,
                 SidChipModel = _system.CurrentSidChipModel.ToString(),
                 JoystickPort = _system.CurrentJoystickPort.ToString(),
+                HostKeyboardLayout = _system.CurrentHostKeyboardLayout.ToString(),
                 VideoFilterMode = _videoFilterMode.ToString(),
                 VideoZoomEnabled = _videoZoomEnabled,
                 ResetMode = _resetMode.ToString(),
@@ -1496,15 +1501,17 @@ namespace C64Emulator
             try
             {
                 string path = _pendingDeleteSavePath;
+                string deletedSaveDirectory = Path.GetDirectoryName(path);
                 File.Delete(path);
                 if (string.Equals(_lastLoadedSaveStatePath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     _lastLoadedSaveStatePath = null;
                 }
 
+                bool deletedDirectory = TryDeleteEmptySaveSubdirectory(deletedSaveDirectory);
                 _saveDeleteConfirmVisible = false;
                 _pendingDeleteSavePath = null;
-                _saveOverlayStatusText = "SAVE DELETED";
+                _saveOverlayStatusText = deletedDirectory ? "SAVE DIR DELETED" : "SAVE DELETED";
                 ReloadSaveStateEntries();
             }
             catch (Exception ex)
@@ -1514,6 +1521,72 @@ namespace C64Emulator
                 _pendingDeleteSavePath = null;
                 _saveOverlayStatusText = "DELETE FAILED";
             }
+        }
+
+        /// <summary>
+        /// Deletes an empty savestate subdirectory while preserving the savestate root.
+        /// </summary>
+        /// <param name="directory">Directory that contained a deleted savestate file.</param>
+        /// <returns>True when the empty subdirectory was removed.</returns>
+        private bool TryDeleteEmptySaveSubdirectory(string directory)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                {
+                    return false;
+                }
+
+                string rootDirectory = Path.GetFullPath(GetSaveDirectory()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string candidateDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(candidateDirectory, rootDirectory, StringComparison.OrdinalIgnoreCase) ||
+                    !IsPathInsideDirectory(candidateDirectory, rootDirectory) ||
+                    Directory.EnumerateFileSystemEntries(candidateDirectory).Any())
+                {
+                    return false;
+                }
+
+                string parentDirectory = Path.GetDirectoryName(candidateDirectory);
+                Directory.Delete(candidateDirectory);
+                string currentDirectory = string.IsNullOrWhiteSpace(_saveOverlayCurrentDirectory)
+                    ? string.Empty
+                    : Path.GetFullPath(_saveOverlayCurrentDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(currentDirectory, candidateDirectory, StringComparison.OrdinalIgnoreCase))
+                {
+                    _saveOverlayCurrentDirectory = !string.IsNullOrWhiteSpace(parentDirectory) && IsPathInsideOrEqual(parentDirectory, rootDirectory)
+                        ? parentDirectory
+                        : rootDirectory;
+                    _saveOverlaySelection = 0;
+                    _saveOverlayScroll = 0;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks whether a path is strictly inside a root directory.
+        /// </summary>
+        private static bool IsPathInsideDirectory(string path, string rootDirectory)
+        {
+            return path.StartsWith(rootDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith(rootDirectory + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Checks whether a path is the root directory or inside it.
+        /// </summary>
+        private static bool IsPathInsideOrEqual(string path, string rootDirectory)
+        {
+            string normalizedPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normalizedRoot = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(normalizedPath, normalizedRoot, StringComparison.OrdinalIgnoreCase) ||
+                IsPathInsideDirectory(normalizedPath, normalizedRoot);
         }
 
         /// <summary>
@@ -2739,7 +2812,7 @@ namespace C64Emulator
                 return;
             }
 
-            client.SendKeyboardKey(key, pressed);
+            client.SendKeyboardKey(_system.MapHostKeyboardLayoutKey(key), pressed);
         }
 
         /// <summary>
@@ -4375,7 +4448,7 @@ namespace C64Emulator
             }
 
             char character;
-            if (!TryMapNetworkTextKey(key, modifiers, out character))
+            if (!TryMapNetworkTextKey(_system.MapHostKeyboardLayoutKey(key), modifiers, out character))
             {
                 return false;
             }
@@ -4852,89 +4925,95 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 4)
             {
-                ToggleDisplayMode();
+                ToggleHostKeyboardLayout();
                 return;
             }
 
             if (_audioOverlaySelection == 5)
             {
-                CycleVideoFilter();
+                ToggleDisplayMode();
                 return;
             }
 
             if (_audioOverlaySelection == 6)
             {
-                ToggleVideoZoom();
+                CycleVideoFilter();
                 return;
             }
 
             if (_audioOverlaySelection == 7)
             {
-                ToggleTurboMode();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                ToggleGamepadInput();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleLoadHack();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleSoftwareIecTransport();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleInputInjection();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                CycleResetMode();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                ToggleDriveOverlay();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 14)
             {
-                ToggleEasyFlash();
+                ToggleDriveOverlay();
                 return;
             }
 
             if (_audioOverlaySelection == 15)
             {
-                SaveEasyFlash();
+                ToggleEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 16)
             {
-                EjectEasyFlash();
+                SaveEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 17)
             {
-                ToggleReu();
+                EjectEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 18)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 19)
             {
                 CycleReuSize(direction);
                 return;
@@ -5027,6 +5106,19 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Toggles the frontend host keyboard layout.
+        /// </summary>
+        private void ToggleHostKeyboardLayout()
+        {
+            HostKeyboardLayout nextLayout = _system.CurrentHostKeyboardLayout == HostKeyboardLayout.Ger
+                ? HostKeyboardLayout.En
+                : HostKeyboardLayout.Ger;
+            _system.SetHostKeyboardLayout(nextLayout);
+            _overlayStatusText = "KEYBOARD " + FormatHostKeyboardLayout(nextLayout);
+            SaveSettings();
+        }
+
+        /// <summary>
         /// Handles reset confirm key down.
         /// </summary>
         private bool HandleResetConfirmKeyDown(Key key)
@@ -5083,6 +5175,13 @@ namespace C64Emulator
         /// </summary>
         private bool HandleMediaBrowserKeyDown(Key key)
         {
+            char jumpLetter;
+            if (TryGetMediaBrowserJumpLetter(_system.MapHostKeyboardLayoutKey(key), out jumpLetter))
+            {
+                JumpMediaBrowserToLetter(jumpLetter);
+                return true;
+            }
+
             switch (key)
             {
                 case Key.Up:
@@ -5092,10 +5191,10 @@ namespace C64Emulator
                     MoveMediaBrowserSelection(1);
                     return true;
                 case Key.PageUp:
-                    MoveMediaBrowserSelection(-MediaBrowserVisibleRows);
+                    MoveMediaBrowserSelection(-GetStandaloneMediaBrowserVisibleRows());
                     return true;
                 case Key.PageDown:
-                    MoveMediaBrowserSelection(MediaBrowserVisibleRows);
+                    MoveMediaBrowserSelection(GetStandaloneMediaBrowserVisibleRows());
                     return true;
                 case Key.Left:
                     _mediaBrowserTargetDrive = Math.Max(8, _mediaBrowserTargetDrive - 1);
@@ -5519,7 +5618,7 @@ namespace C64Emulator
 
             // Remote clients can control only local display/presentation choices. The
             // server owns emulation-affecting settings such as SID, reset, and turbo.
-            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 8;
+            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 9;
         }
 
         /// <summary>
@@ -5791,48 +5890,51 @@ namespace C64Emulator
 
                     break;
                 case 4:
-                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "KEYBOARD", GetHostKeyboardLayoutFill(_system.CurrentHostKeyboardLayout), FormatHostKeyboardLayout(_system.CurrentHostKeyboardLayout), "EN", "GER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 5:
-                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 6:
-                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
-                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 15:
-                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 16:
-                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 18:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 19:
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
@@ -5898,6 +6000,22 @@ namespace C64Emulator
                 default:
                     return 1.0f;
             }
+        }
+
+        /// <summary>
+        /// Formats host keyboard layout.
+        /// </summary>
+        private static string FormatHostKeyboardLayout(HostKeyboardLayout layout)
+        {
+            return layout == HostKeyboardLayout.Ger ? "GER" : "EN";
+        }
+
+        /// <summary>
+        /// Gets the host keyboard layout fill value.
+        /// </summary>
+        private static float GetHostKeyboardLayoutFill(HostKeyboardLayout layout)
+        {
+            return layout == HostKeyboardLayout.Ger ? 1.0f : 0.0f;
         }
 
         /// <summary>
@@ -6124,6 +6242,33 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Formats a host file size for the compact media browser size column.
+        /// </summary>
+        private static string FormatMediaBrowserFileSize(long byteCount)
+        {
+            if (byteCount < 0)
+            {
+                return string.Empty;
+            }
+
+            if (byteCount < 1024)
+            {
+                return byteCount.ToString(CultureInfo.InvariantCulture) + "B";
+            }
+
+            long kibibytes = (byteCount + 1023) / 1024;
+            if (kibibytes < 1024)
+            {
+                return kibibytes.ToString(CultureInfo.InvariantCulture) + "K";
+            }
+
+            double mebibytes = byteCount / 1048576.0;
+            return mebibytes < 10.0
+                ? mebibytes.ToString("0.0", CultureInfo.InvariantCulture) + "M"
+                : mebibytes.ToString("0", CultureInfo.InvariantCulture) + "M";
+        }
+
+        /// <summary>
         /// Opens media browser.
         /// </summary>
         private void OpenMediaBrowser()
@@ -6139,6 +6284,7 @@ namespace C64Emulator
                 UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, false);
                 _mediaBrowserSelection = 0;
                 _mediaBrowserScroll = 0;
+                _mediaBrowserLastJumpLetter = '\0';
                 ReloadMediaBrowserEntries();
                 _mediaBrowserVisible = true;
                 _overlayStatusText = "BROWSER READY";
@@ -6529,14 +6675,14 @@ namespace C64Emulator
                         : null;
                     if (!string.IsNullOrWhiteSpace(parent))
                     {
-                        entries.Add(new MediaBrowserEntry(parent, "UP", true, true));
+                        entries.Add(new MediaBrowserEntry(parent, "UP", true, true, string.Empty, "UP"));
                     }
 
                     string[] directories = Directory.GetDirectories(_mediaBrowserCurrentDirectory, "*", SearchOption.TopDirectoryOnly);
                     Array.Sort(directories, StringComparer.OrdinalIgnoreCase);
                     foreach (string directory in directories)
                     {
-                        entries.Add(new MediaBrowserEntry(directory, "DIR " + Path.GetFileName(directory), true, false));
+                        entries.Add(new MediaBrowserEntry(directory, "DIR " + Path.GetFileName(directory), true, false, string.Empty, Path.GetFileName(directory)));
                     }
 
                     var files = new List<string>();
@@ -6548,7 +6694,7 @@ namespace C64Emulator
                     {
                         string extension = Path.GetExtension(file).TrimStart('.').ToUpperInvariant();
                         string fileName = Path.GetFileName(file).ToUpperInvariant();
-                        entries.Add(new MediaBrowserEntry(file, extension + " " + fileName, false, false));
+                        entries.Add(new MediaBrowserEntry(file, extension + " " + fileName, false, false, FormatMediaBrowserFileSize(new FileInfo(file).Length), Path.GetFileNameWithoutExtension(file)));
                     }
                 }
             }
@@ -6593,6 +6739,69 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Jumps the media browser selection to entries starting with the given letter.
+        /// </summary>
+        /// <param name="letter">Uppercase target letter.</param>
+        private void JumpMediaBrowserToLetter(char letter)
+        {
+            if (_mediaBrowserEntries.Count == 0)
+            {
+                return;
+            }
+
+            char upperLetter = char.ToUpperInvariant(letter);
+            int startIndex = _mediaBrowserLastJumpLetter == upperLetter
+                ? _mediaBrowserSelection + 1
+                : 0;
+
+            for (int offset = 0; offset < _mediaBrowserEntries.Count; offset++)
+            {
+                int index = (startIndex + offset) % _mediaBrowserEntries.Count;
+                if (!MediaBrowserEntryStartsWith(_mediaBrowserEntries[index], upperLetter))
+                {
+                    continue;
+                }
+
+                _mediaBrowserSelection = index;
+                _mediaBrowserLastJumpLetter = upperLetter;
+                ClampMediaBrowserScroll();
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Maps media-browser jump keys to letters.
+        /// </summary>
+        private static bool TryGetMediaBrowserJumpLetter(Key key, out char letter)
+        {
+            if (key >= Key.A && key <= Key.Z)
+            {
+                letter = (char)('A' + ((int)key - (int)Key.A));
+                return true;
+            }
+
+            letter = '\0';
+            return false;
+        }
+
+        /// <summary>
+        /// Tests whether a media browser entry starts with the requested letter.
+        /// </summary>
+        private static bool MediaBrowserEntryStartsWith(MediaBrowserEntry entry, char letter)
+        {
+            if (entry == null)
+            {
+                return false;
+            }
+
+            string searchName = string.IsNullOrWhiteSpace(entry.SearchName)
+                ? entry.DisplayName
+                : entry.SearchName;
+            searchName = searchName == null ? string.Empty : searchName.TrimStart();
+            return searchName.Length > 0 && char.ToUpperInvariant(searchName[0]) == letter;
+        }
+
+        /// <summary>
         /// Handles the move audio overlay selection operation.
         /// </summary>
         private void MoveAudioOverlaySelection(int delta)
@@ -6633,6 +6842,7 @@ namespace C64Emulator
                 UpdateLastMediaBrowserDirectory(_mediaBrowserCurrentDirectory, true);
                 _mediaBrowserSelection = 0;
                 _mediaBrowserScroll = 0;
+                _mediaBrowserLastJumpLetter = '\0';
                 ReloadMediaBrowserEntries();
                 return;
             }
@@ -6650,21 +6860,36 @@ namespace C64Emulator
         /// </summary>
         private void ClampMediaBrowserScroll()
         {
+            ClampMediaBrowserScroll(GetStandaloneMediaBrowserVisibleRows());
+        }
+
+        /// <summary>
+        /// Handles the clamp media browser scroll operation.
+        /// </summary>
+        /// <param name="visibleRows">Number of rows visible in the current media browser box.</param>
+        private void ClampMediaBrowserScroll(int visibleRows)
+        {
             if (_mediaBrowserSelection < _mediaBrowserScroll)
             {
                 _mediaBrowserScroll = _mediaBrowserSelection;
             }
 
-            int maxVisibleStart = Math.Max(0, _mediaBrowserEntries.Count - MediaBrowserVisibleRows);
-            int visibleEnd = _mediaBrowserScroll + MediaBrowserVisibleRows - 1;
+            visibleRows = Math.Max(1, visibleRows);
+            int maxVisibleStart = Math.Max(0, _mediaBrowserEntries.Count - visibleRows);
+            int visibleEnd = _mediaBrowserScroll + visibleRows - 1;
             if (_mediaBrowserSelection > visibleEnd)
             {
-                _mediaBrowserScroll = _mediaBrowserSelection - (MediaBrowserVisibleRows - 1);
+                _mediaBrowserScroll = _mediaBrowserSelection - (visibleRows - 1);
             }
 
             if (_mediaBrowserScroll > maxVisibleStart)
             {
                 _mediaBrowserScroll = maxVisibleStart;
+            }
+
+            if (_mediaBrowserScroll < 0)
+            {
+                _mediaBrowserScroll = 0;
             }
         }
 
@@ -6734,6 +6959,27 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Gets the current visible media browser row count for standalone layout.
+        /// </summary>
+        /// <returns>Number of rows that fit in the media browser list area.</returns>
+        private int GetStandaloneMediaBrowserVisibleRows()
+        {
+            int overlayHeight = Math.Min(PixelsHeight - 12, 214);
+            return GetMediaBrowserVisibleRows(overlayHeight);
+        }
+
+        /// <summary>
+        /// Gets the visible media browser row count for a given box height.
+        /// </summary>
+        /// <param name="height">Media browser overlay height.</param>
+        /// <returns>Number of rows that fit in the list area.</returns>
+        private static int GetMediaBrowserVisibleRows(int height)
+        {
+            int listHeight = height - MediaBrowserListTopOffset - MediaBrowserListBottomPadding;
+            return Math.Max(1, ((Math.Max(7, listHeight) - 7) / MediaBrowserRowSpacing) + 1);
+        }
+
+        /// <summary>
         /// Draws media browser overlay.
         /// </summary>
         private void DrawMediaBrowserOverlay(int x, int y, int width, int height)
@@ -6747,10 +6993,20 @@ namespace C64Emulator
             DrawOverlayText(x + 10, y + 8, "MEDIA BROWSER", 1, 240, 248, 255);
             DrawOverlayText(x + 10, y + 18, "ENTER MOUNT  LEFT/RIGHT OR 8/9/0/1 DRIVE", 1, 192, 210, 225);
             DrawOverlayText(x + 10, y + 30, "ESC MAIN MENU  DRIVE " + _mediaBrowserTargetDrive, 1, 182, 214, 108);
-            DrawOverlayText(x + 10, y + 42, "DIR " + FormatOverlayPath(_mediaBrowserCurrentDirectory, 35), 1, 182, 214, 108);
 
-            int rowY = y + 58;
-            for (int row = 0; row < MediaBrowserVisibleRows; row++)
+            int rowY = y + MediaBrowserListTopOffset;
+            int visibleRows = GetMediaBrowserVisibleRows(height);
+            ClampMediaBrowserScroll(visibleRows);
+            int scrollBarX = x + width - 10;
+            int sizeRightX = scrollBarX - 7;
+            int sizeColumnLeft = sizeRightX - 48;
+            int listX = x + 10;
+            int nameMaxCharacters = Math.Max(8, ((sizeColumnLeft - listX) / 6) - 1);
+            int pathMaxCharacters = Math.Max(16, ((sizeColumnLeft - listX) / 6) - 5);
+            DrawOverlayText(listX, y + 42, "DIR " + FormatOverlayPath(_mediaBrowserCurrentDirectory, pathMaxCharacters), 1, 182, 214, 108);
+            DrawOverlayTextRightAligned(sizeRightX, y + 42, "SIZE", 1, 182, 214, 108);
+
+            for (int row = 0; row < visibleRows; row++)
             {
                 int index = _mediaBrowserScroll + row;
                 if (index >= _mediaBrowserEntries.Count)
@@ -6763,8 +7019,38 @@ namespace C64Emulator
                 byte red = selected ? (byte)255 : (byte)232;
                 byte green = selected ? (byte)243 : (byte)238;
                 byte blue = selected ? (byte)168 : (byte)244;
-                DrawOverlayText(x + 10, rowY + (row * 11), (selected ? "> " : "  ") + FormatOverlayValue(entry.DisplayName, 37), 1, red, green, blue);
+                int textY = rowY + (row * MediaBrowserRowSpacing);
+                DrawOverlayText(listX, textY, (selected ? "> " : "  ") + FormatOverlayValue(entry.DisplayName, nameMaxCharacters), 1, red, green, blue);
+                if (!string.IsNullOrWhiteSpace(entry.SizeText))
+                {
+                    DrawOverlayTextRightAligned(sizeRightX, textY, FormatOverlayValue(entry.SizeText, 8), 1, red, green, blue);
+                }
             }
+
+            DrawMediaBrowserScrollBar(scrollBarX, rowY, visibleRows, height);
+        }
+
+        /// <summary>
+        /// Draws the media browser scroll bar.
+        /// </summary>
+        /// <param name="x">Scroll bar x coordinate.</param>
+        /// <param name="y">Scroll bar y coordinate.</param>
+        /// <param name="visibleRows">Visible media browser row count.</param>
+        /// <param name="height">Media browser overlay height.</param>
+        private void DrawMediaBrowserScrollBar(int x, int y, int visibleRows, int height)
+        {
+            int trackHeight = Math.Max(8, height - MediaBrowserListTopOffset - MediaBrowserListBottomPadding);
+            DrawFilledRectangle(x, y, 2, trackHeight, 38, 46, 70);
+
+            int entryCount = Math.Max(1, _mediaBrowserEntries.Count);
+            int thumbHeight = entryCount <= visibleRows
+                ? trackHeight
+                : Math.Max(8, (trackHeight * visibleRows) / entryCount);
+            int maxScroll = Math.Max(1, entryCount - visibleRows);
+            int thumbY = entryCount <= visibleRows
+                ? y
+                : y + (((trackHeight - thumbHeight) * _mediaBrowserScroll) / maxScroll);
+            DrawFilledRectangle(x - 1, thumbY, 4, thumbHeight, 182, 214, 108);
         }
 
         /// <summary>
@@ -6963,6 +7249,14 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Draws overlay text with its right edge aligned to the given x coordinate.
+        /// </summary>
+        private void DrawOverlayTextRightAligned(int rightX, int y, string text, int scale, byte red, byte green, byte blue)
+        {
+            DrawOverlayText(rightX - GetOverlayTextWidth(text ?? string.Empty, scale), y, text ?? string.Empty, scale, red, green, blue);
+        }
+
+        /// <summary>
         /// Gets the overlay text width value.
         /// </summary>
         private static int GetOverlayTextWidth(string text, int scale)
@@ -7033,12 +7327,14 @@ namespace C64Emulator
             /// <summary>
             /// Initializes a new MediaBrowserEntry instance.
             /// </summary>
-            public MediaBrowserEntry(string path, string displayName, bool isDirectory, bool isParent)
+            public MediaBrowserEntry(string path, string displayName, bool isDirectory, bool isParent, string sizeText = "", string searchName = "")
             {
                 Path = path;
                 DisplayName = displayName ?? string.Empty;
                 IsDirectory = isDirectory;
                 IsParent = isParent;
+                SizeText = sizeText ?? string.Empty;
+                SearchName = string.IsNullOrWhiteSpace(searchName) ? DisplayName : searchName;
             }
 
             /// <summary>
@@ -7050,6 +7346,16 @@ namespace C64Emulator
             /// Gets the user-facing display name.
             /// </summary>
             public string DisplayName { get; }
+
+            /// <summary>
+            /// Gets the user-facing file size text.
+            /// </summary>
+            public string SizeText { get; }
+
+            /// <summary>
+            /// Gets the name used for first-letter jumps.
+            /// </summary>
+            public string SearchName { get; }
 
             /// <summary>
             /// Gets whether the entry represents a directory.
