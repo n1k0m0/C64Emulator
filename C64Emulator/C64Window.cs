@@ -80,6 +80,16 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Lists the network action to retry after a user accepts a changed TLS pin.
+        /// </summary>
+        private enum NetworkTlsRetryAction
+        {
+            None,
+            StartServer,
+            StartClient
+        }
+
+        /// <summary>
         /// Lists the top-level F10 menu entries.
         /// </summary>
         private enum MainMenuItem
@@ -107,8 +117,8 @@ namespace C64Emulator
         private const int StandardC64ContentHeight = 200;
         // The network overlay is a single flat menu split visually into server rows and
         // client rows. The constants keep selection/wrapping independent of labels.
-        private const int NetworkOverlayItemCount = 14;
-        private const int NetworkOverlayServerItemCount = 7;
+        private const int NetworkOverlayItemCount = 16;
+        private const int NetworkOverlayServerItemCount = 9;
         private const int NetworkOverlayVisibleClientRows = 2;
         // Remote clients resend unchanged joystick state periodically so the host can
         // recover from a dropped packet or a stale state after a quick reconnect.
@@ -141,6 +151,7 @@ namespace C64Emulator
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
         private bool _networkOverlayVisible;
+        private bool _networkTlsCertificatePromptVisible;
         private volatile bool _saveOverlayVisible;
         private volatile bool _turboMode;
         private volatile bool _turboTimingResetPending;
@@ -166,14 +177,19 @@ namespace C64Emulator
         private int _audioOverlayScroll;
         private int _networkOverlaySelection;
         private int _networkSelectedClientIndex;
+        private NetworkTlsRetryAction _pendingNetworkTlsRetryAction;
+        private C64NetTlsPinChange _pendingNetworkTlsPinChange;
+        private C64NetTransportMode _networkTransportMode = C64NetTransportMode.Lan;
         private int _networkServerPort = C64NetProtocol.DefaultPort;
         private int _networkClientPort = C64NetProtocol.DefaultPort;
+        private int _networkRelayPort = C64NetProtocol.DefaultRelayPort;
         private int _mediaBrowserSelection;
         private int _mediaBrowserScroll;
         private int _mediaBrowserTargetDrive = 8;
         private char _mediaBrowserLastJumpLetter;
         private string _mediaBrowserLastDirectory;
         private string _networkHost = "127.0.0.1";
+        private string _networkConnectionId = "c64";
         private string _networkServerPassword = string.Empty;
         private string _networkClientPassword = string.Empty;
         private string _networkPlayerName = "player";
@@ -340,9 +356,12 @@ namespace C64Emulator
             _mediaBrowserLastDirectory = NormalizeExistingDirectory(settings.MediaBrowserDirectory);
             // Network UI values are user preferences. Active sessions themselves are not
             // restored automatically because joining/hosting has external side effects.
+            _networkTransportMode = ParseEnum(settings.NetworkTransportMode, C64NetTransportMode.Lan);
             _networkServerPort = ClampNetworkPort(settings.NetworkServerPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkServerPort);
             _networkClientPort = ClampNetworkPort(settings.NetworkClientPort <= 0 ? C64NetProtocol.DefaultPort : settings.NetworkClientPort);
+            _networkRelayPort = ClampNetworkPort(settings.NetworkRelayPort <= 0 ? C64NetProtocol.DefaultRelayPort : settings.NetworkRelayPort);
             _networkHost = string.IsNullOrWhiteSpace(settings.NetworkClientHost) ? "127.0.0.1" : settings.NetworkClientHost.Trim();
+            _networkConnectionId = NormalizeNetworkConnectionId(settings.NetworkConnectionId);
             _networkServerPassword = settings.NetworkServerPassword ?? string.Empty;
             _networkClientPassword = settings.NetworkClientPassword ?? string.Empty;
             _networkPlayerName = NormalizeNetworkPlayerName(settings.NetworkPlayerName);
@@ -403,10 +422,13 @@ namespace C64Emulator
                 // Store the network menu fields so host/client setup survives app restarts.
                 // Passwords are intentionally plain settings today, matching the simple
                 // local emulator settings model.
+                NetworkTransportMode = _networkTransportMode.ToString(),
                 NetworkServerPort = _networkServerPort,
                 NetworkServerPassword = _networkServerPassword ?? string.Empty,
                 NetworkClientHost = _networkHost ?? string.Empty,
                 NetworkClientPort = _networkClientPort,
+                NetworkRelayPort = _networkRelayPort,
+                NetworkConnectionId = NormalizeNetworkConnectionId(_networkConnectionId),
                 NetworkClientPassword = _networkClientPassword ?? string.Empty,
                 NetworkPlayerName = NormalizeNetworkPlayerName(_networkPlayerName),
                 NetworkRequestedRole = _networkRequestedRole.ToString()
@@ -1252,7 +1274,7 @@ namespace C64Emulator
                 {
                     // If the current mode disables the previously selected row, land on
                     // the primary action for that mode.
-                    _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 12 : 2;
+                    _networkOverlaySelection = _networkMode == NetworkSessionMode.Client ? 14 : 4;
                 }
             }
             else if (_networkMode != NetworkSessionMode.Client)
@@ -2316,7 +2338,7 @@ namespace C64Emulator
 
             Title = string.Format(
                 "C64 Emulator REMOTE {0} - NET:{1} FPS PING:{2} RENDER:{3}",
-                FormatNetworkPermission(_networkClient != null ? _networkClient.Permission : C64NetJoystickPermission.Observer),
+                FormatNetworkJoystickRight(_networkClient != null ? _networkClient.Permission : C64NetJoystickPermission.Observer),
                 _networkReceiveFps,
                 FormatNetworkLatency(GetNetworkDisplayLatencyMilliseconds()),
                 FPS);
@@ -2489,8 +2511,16 @@ namespace C64Emulator
 
             try
             {
-                _networkServer.Start(_networkServerPort, _networkServerPassword);
-                _networkServerPort = _networkServer.Port;
+                if (_networkTransportMode == C64NetTransportMode.Relay)
+                {
+                    _networkServer.StartRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkServerPassword);
+                }
+                else
+                {
+                    _networkServer.Start(_networkServerPort, _networkServerPassword);
+                    _networkServerPort = _networkServer.Port;
+                }
+
                 _networkMode = NetworkSessionMode.Host;
                 // Reset network counters at session start so the title bar starts from
                 // a meaningful fresh one-second window.
@@ -2501,15 +2531,109 @@ namespace C64Emulator
                 _networkSendFpsWindowStartTicks = DateTime.UtcNow.Ticks;
                 _networkSendFpsNextTicks = _networkSendFpsWindowStartTicks + TimeSpan.TicksPerSecond;
                 ResetNetworkTrafficCounters();
-                ShowNetworkStatus("TLS SERVER LISTENING");
+                ShowNetworkStatus(_networkTransportMode == C64NetTransportMode.Relay ? "RELAY SERVER READY" : "TLS SERVER LISTENING");
                 _system.LocalAudioEnabled = true;
                 SaveSettings();
+            }
+            catch (C64NetTlsException ex)
+            {
+                Debug.WriteLine(ex);
+                if (ex.IsCertificateChanged)
+                {
+                    ShowNetworkTlsCertificateChanged(ex.PinChange, NetworkTlsRetryAction.StartServer);
+                }
+                else
+                {
+                    ShowNetworkStatus(FormatNetworkStartFailure(ex));
+                }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                ShowNetworkStatus("SERVER START FAILED");
+                ShowNetworkStatus(FormatNetworkStartFailure(ex));
             }
+        }
+
+        /// <summary>
+        /// Formats server start failures without hiding useful relay/TLS diagnostics.
+        /// </summary>
+        /// <param name="exception">Exception thrown by the network start path.</param>
+        /// <returns>Short overlay status text.</returns>
+        private static string FormatNetworkStartFailure(Exception exception)
+        {
+            if (exception != null && !string.IsNullOrWhiteSpace(exception.Message))
+            {
+                string message = exception.Message.Trim().ToUpperInvariant();
+                return message.Length <= 44 ? message : message.Substring(0, 44);
+            }
+
+            return "SERVER START FAILED";
+        }
+
+        /// <summary>
+        /// Opens the explicit warning prompt for a changed pinned TLS certificate.
+        /// </summary>
+        /// <param name="pinChange">Old/new certificate-pin details from the TLS layer.</param>
+        /// <param name="retryAction">Network action to retry if the user accepts the new pin.</param>
+        private void ShowNetworkTlsCertificateChanged(C64NetTlsPinChange pinChange, NetworkTlsRetryAction retryAction)
+        {
+            if (pinChange == null)
+            {
+                ShowNetworkStatus("TLS CERT CHANGED");
+                return;
+            }
+
+            _pendingNetworkTlsPinChange = pinChange;
+            _pendingNetworkTlsRetryAction = retryAction;
+            _networkTlsCertificatePromptVisible = true;
+            _networkOverlayVisible = true;
+            ShowNetworkStatus("TLS CERT CHANGED");
+        }
+
+        /// <summary>
+        /// Clears the changed-certificate prompt state.
+        /// </summary>
+        private void ClearNetworkTlsCertificatePrompt()
+        {
+            _networkTlsCertificatePromptVisible = false;
+            _pendingNetworkTlsPinChange = null;
+            _pendingNetworkTlsRetryAction = NetworkTlsRetryAction.None;
+        }
+
+        /// <summary>
+        /// Accepts the newly presented certificate pin and retries the interrupted action.
+        /// </summary>
+        private void AcceptNetworkTlsCertificateChange()
+        {
+            C64NetTlsPinChange pinChange = _pendingNetworkTlsPinChange;
+            NetworkTlsRetryAction retryAction = _pendingNetworkTlsRetryAction;
+            if (pinChange == null)
+            {
+                ClearNetworkTlsCertificatePrompt();
+                ShowNetworkStatus("TLS PIN ABORTED");
+                return;
+            }
+
+            C64NetTls.ReplaceTrustedServerCertificate(pinChange.Host, pinChange.Port, pinChange.NewFingerprint);
+            ClearNetworkTlsCertificatePrompt();
+            ShowNetworkStatus("TLS PIN REPLACED");
+            if (retryAction == NetworkTlsRetryAction.StartServer)
+            {
+                StartNetworkServer();
+            }
+            else if (retryAction == NetworkTlsRetryAction.StartClient)
+            {
+                StartNetworkClientSession();
+            }
+        }
+
+        /// <summary>
+        /// Aborts the current changed-certificate prompt without changing the stored pin.
+        /// </summary>
+        private void AbortNetworkTlsCertificateChange()
+        {
+            ClearNetworkTlsCertificatePrompt();
+            ShowNetworkStatus("TLS PIN UNCHANGED");
         }
 
         /// <summary>
@@ -2574,7 +2698,27 @@ namespace C64Emulator
             }
 
             string status;
-            if (!_networkClient.Connect(_networkHost, _networkClientPort, _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status))
+            bool connected;
+            try
+            {
+                connected = _networkTransportMode == C64NetTransportMode.Relay
+                    ? _networkClient.ConnectRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status)
+                    : _networkClient.Connect(_networkHost, _networkClientPort, _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status);
+            }
+            catch (C64NetTlsException ex)
+            {
+                Debug.WriteLine(ex);
+                if (ex.IsCertificateChanged)
+                {
+                    ShowNetworkTlsCertificateChanged(ex.PinChange, NetworkTlsRetryAction.StartClient);
+                    return;
+                }
+
+                ShowNetworkStatus(ex.Message);
+                return;
+            }
+
+            if (!connected)
             {
                 ShowNetworkStatus(status);
                 return;
@@ -4154,6 +4298,11 @@ namespace C64Emulator
         /// <returns>True when the overlay consumed the key.</returns>
         private bool HandleNetworkOverlayKeyDown(Key key, KeyModifiers modifiers)
         {
+            if (_networkTlsCertificatePromptVisible)
+            {
+                return HandleNetworkTlsCertificatePromptKeyDown(key);
+            }
+
             switch (key)
             {
                 case Key.Up:
@@ -4179,6 +4328,28 @@ namespace C64Emulator
             }
 
             return TryApplyNetworkTextKey(key, modifiers);
+        }
+
+        /// <summary>
+        /// Handles the modal changed-certificate warning prompt inside the network menu.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>True because the modal prompt consumes all network-menu input.</returns>
+        private bool HandleNetworkTlsCertificatePromptKeyDown(Key key)
+        {
+            if (key == Key.Enter)
+            {
+                AcceptNetworkTlsCertificateChange();
+                return true;
+            }
+
+            if (key == Key.Escape)
+            {
+                AbortNetworkTlsCertificateChange();
+                return true;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -4214,36 +4385,50 @@ namespace C64Emulator
             switch (_networkOverlaySelection)
             {
                 case 0:
+                    _networkTransportMode = _networkTransportMode == C64NetTransportMode.Relay
+                        ? C64NetTransportMode.Lan
+                        : C64NetTransportMode.Relay;
+                    SaveSettings();
+                    break;
+                case 1:
                     // Port fields support both step adjustment and direct digit editing.
                     _networkServerPort = ClampNetworkPort(_networkServerPort + direction);
                     SaveSettings();
                     break;
-                case 2:
+                case 4:
                     if (direction != 0)
                     {
                         ToggleNetworkServer();
                     }
 
                     break;
-                case 3:
+                case 5:
                     // SELECT CLIENT cycles through connected clients.
                     MoveSelectedNetworkClient(direction);
                     break;
-                case 4:
+                case 6:
                     CycleSelectedNetworkClientPermission();
                     break;
-                case 5:
+                case 7:
                     ToggleSelectedNetworkClientKeyboard();
                     break;
-                case 6:
+                case 8:
                     // KICK CLIENT uses the same selected client cursor.
                     MoveSelectedNetworkClient(direction);
                     break;
-                case 9:
-                    _networkClientPort = ClampNetworkPort(_networkClientPort + direction);
+                case 11:
+                    if (_networkTransportMode == C64NetTransportMode.Relay)
+                    {
+                        _networkRelayPort = ClampNetworkPort(_networkRelayPort + direction);
+                    }
+                    else
+                    {
+                        _networkClientPort = ClampNetworkPort(_networkClientPort + direction);
+                    }
+
                     SaveSettings();
                     break;
-                case 11:
+                case 13:
                     // Role is only the requested join role. Host permissions remain
                     // authoritative after connection.
                     _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
@@ -4251,14 +4436,14 @@ namespace C64Emulator
                         : C64NetClientRole.Observer;
                     SaveSettings();
                     break;
-                case 12:
+                case 14:
                     if (direction != 0)
                     {
                         ToggleNetworkClientSession();
                     }
 
                     break;
-                case 13:
+                case 15:
                     // Video filter is local presentation even during a remote session.
                     CycleVideoFilter();
                     break;
@@ -4278,31 +4463,37 @@ namespace C64Emulator
 
             switch (_networkOverlaySelection)
             {
-                case 2:
-                    ToggleNetworkServer();
-                    break;
-                case 3:
-                    MoveSelectedNetworkClient(1);
+                case 0:
+                    _networkTransportMode = _networkTransportMode == C64NetTransportMode.Relay
+                        ? C64NetTransportMode.Lan
+                        : C64NetTransportMode.Relay;
+                    SaveSettings();
                     break;
                 case 4:
-                    CycleSelectedNetworkClientPermission();
+                    ToggleNetworkServer();
                     break;
                 case 5:
-                    ToggleSelectedNetworkClientKeyboard();
+                    MoveSelectedNetworkClient(1);
                     break;
                 case 6:
+                    CycleSelectedNetworkClientPermission();
+                    break;
+                case 7:
+                    ToggleSelectedNetworkClientKeyboard();
+                    break;
+                case 8:
                     KickSelectedNetworkClient();
                     break;
-                case 11:
+                case 13:
                     _networkRequestedRole = _networkRequestedRole == C64NetClientRole.Observer
                         ? C64NetClientRole.Player
                         : C64NetClientRole.Observer;
                     SaveSettings();
                     break;
-                case 12:
+                case 14:
                     ToggleNetworkClientSession();
                     break;
-                case 13:
+                case 15:
                     CycleVideoFilter();
                     break;
             }
@@ -4352,18 +4543,20 @@ namespace C64Emulator
                 return false;
             }
 
-            bool serverPortField = _networkOverlaySelection == 0;
-            bool clientPortField = _networkOverlaySelection == 9;
+            bool serverPortField = _networkOverlaySelection == 1;
+            bool clientPortField = _networkOverlaySelection == 11;
             if (serverPortField || clientPortField)
             {
                 // Ports are edited as numbers directly inside the pixel overlay. A blank
                 // port is represented by 0 and shown as TYPE PORT.
                 if (key == Key.BackSpace)
                 {
-                    int port = (serverPortField ? _networkServerPort : _networkClientPort) / 10;
+                    int port = (serverPortField ? _networkServerPort : GetNetworkMenuTargetPort()) / 10;
                     if (port <= 0)
                     {
-                        port = C64NetProtocol.DefaultPort;
+                        port = serverPortField || _networkTransportMode == C64NetTransportMode.Lan
+                            ? C64NetProtocol.DefaultPort
+                            : C64NetProtocol.DefaultRelayPort;
                     }
 
                     SetNetworkMenuPort(serverPortField, port);
@@ -4379,7 +4572,7 @@ namespace C64Emulator
                 int digit;
                 if (TryGetDigit(key, out digit))
                 {
-                    int currentPort = serverPortField ? _networkServerPort : _networkClientPort;
+                    int currentPort = serverPortField ? _networkServerPort : GetNetworkMenuTargetPort();
                     SetNetworkMenuPort(serverPortField, ClampNetworkPort((currentPort * 10) + digit));
                     return true;
                 }
@@ -4387,11 +4580,12 @@ namespace C64Emulator
                 return false;
             }
 
-            bool serverPasswordField = _networkOverlaySelection == 1;
-            bool playerNameField = _networkOverlaySelection == 7;
-            bool hostField = _networkOverlaySelection == 8;
-            bool clientPasswordField = _networkOverlaySelection == 10;
-            if (!serverPasswordField && !playerNameField && !hostField && !clientPasswordField)
+            bool serverPasswordField = _networkOverlaySelection == 2;
+            bool connectionIdField = _networkOverlaySelection == 3;
+            bool playerNameField = _networkOverlaySelection == 9;
+            bool hostField = _networkOverlaySelection == 10;
+            bool clientPasswordField = _networkOverlaySelection == 12;
+            if (!serverPasswordField && !connectionIdField && !playerNameField && !hostField && !clientPasswordField)
             {
                 return false;
             }
@@ -4403,6 +4597,11 @@ namespace C64Emulator
                 if (serverPasswordField && _networkServerPassword.Length > 0)
                 {
                     _networkServerPassword = _networkServerPassword.Substring(0, _networkServerPassword.Length - 1);
+                    SaveSettings();
+                }
+                else if (connectionIdField && _networkConnectionId.Length > 0)
+                {
+                    _networkConnectionId = _networkConnectionId.Substring(0, _networkConnectionId.Length - 1);
                     SaveSettings();
                 }
                 else if (playerNameField && _networkPlayerName.Length > 0)
@@ -4429,6 +4628,10 @@ namespace C64Emulator
                 if (serverPasswordField)
                 {
                     _networkServerPassword = string.Empty;
+                }
+                else if (connectionIdField)
+                {
+                    _networkConnectionId = string.Empty;
                 }
                 else if (playerNameField)
                 {
@@ -4462,6 +4665,11 @@ namespace C64Emulator
                     SaveSettings();
                 }
             }
+            else if (connectionIdField && IsNetworkConnectionIdCharacter(character) && _networkConnectionId.Length < 48)
+            {
+                _networkConnectionId += char.ToLowerInvariant(character);
+                SaveSettings();
+            }
             else if (playerNameField && IsNetworkPlayerNameCharacter(character) && _networkPlayerName.Length < 24)
             {
                 _networkPlayerName += character;
@@ -4485,15 +4693,30 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Stores a clamped server/client port and persists the menu setting.
+        /// Gets the currently edited target port from the client/relay menu row.
         /// </summary>
-        /// <param name="serverPortField">True for the server port, false for the client port.</param>
+        /// <returns>LAN client port in LAN mode, relay TLS port in Relay mode.</returns>
+        private int GetNetworkMenuTargetPort()
+        {
+            return _networkTransportMode == C64NetTransportMode.Relay
+                ? _networkRelayPort
+                : _networkClientPort;
+        }
+
+        /// <summary>
+        /// Stores a clamped server/client or relay port and persists the menu setting.
+        /// </summary>
+        /// <param name="serverPortField">True for the server port, false for client/relay port.</param>
         /// <param name="port">Requested TCP port.</param>
         private void SetNetworkMenuPort(bool serverPortField, int port)
         {
             if (serverPortField)
             {
                 _networkServerPort = ClampNetworkPort(port);
+            }
+            else if (_networkTransportMode == C64NetTransportMode.Relay)
+            {
+                _networkRelayPort = ClampNetworkPort(port);
             }
             else
             {
@@ -4786,6 +5009,32 @@ namespace C64Emulator
         private static bool IsNetworkPlayerNameCharacter(char character)
         {
             return char.IsLetterOrDigit(character) || character == ' ' || character == '-' || character == '.' || character == '_';
+        }
+
+        /// <summary>
+        /// Tests whether a character is valid for a relay connection id.
+        /// </summary>
+        /// <param name="character">Character to test.</param>
+        /// <returns>True for compact identifier characters.</returns>
+        private static bool IsNetworkConnectionIdCharacter(char character)
+        {
+            return char.IsLetterOrDigit(character) || character == '-' || character == '.' || character == '_';
+        }
+
+        /// <summary>
+        /// Normalizes a relay connection id for storage and relay registration.
+        /// </summary>
+        /// <param name="connectionId">Raw menu value.</param>
+        /// <returns>Trimmed lower-case id, defaulting to c64.</returns>
+        private static string NormalizeNetworkConnectionId(string connectionId)
+        {
+            if (string.IsNullOrWhiteSpace(connectionId))
+            {
+                return "c64";
+            }
+
+            string trimmed = connectionId.Trim().ToLowerInvariant();
+            return trimmed.Length <= 48 ? trimmed : trimmed.Substring(0, 48);
         }
 
         /// <summary>
@@ -5376,7 +5625,7 @@ namespace C64Emulator
             }
 
             // Server controls live above the separator; client controls live below it.
-            int separatorY = menuY + (NetworkOverlayServerItemCount * 9) + 3;
+            int separatorY = menuY + (NetworkOverlayServerItemCount * 8) + 3;
             DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
 
             int clientsY = overlayY + overlayHeight - 85;
@@ -5402,16 +5651,50 @@ namespace C64Emulator
                         selected ? "> " : "  ",
                         client.ClientId,
                         FormatOverlayValue(FormatNetworkClientDisplay(client), 15),
-                        FormatNetworkPermission(client.Permission),
-                        FormatNetworkKeyboardRightCompact(client.KeyboardEnabled),
+                        FormatNetworkJoystickRight(client.Permission),
+                        FormatNetworkKeyboardRightLong(client.KeyboardEnabled),
                         FormatNetworkLatencyCompact(client.LatencyMilliseconds));
-                    DrawOverlayText(menuX, clientsY + 13 + (row * 12), FormatOverlayValue(text, 56), 1, red, green, blue);
+                    DrawOverlayText(menuX, clientsY + 13 + (row * 12), FormatOverlayValue(text, 58), 1, red, green, blue);
                 }
             }
 
             DrawOverlayText(menuX, overlayY + overlayHeight - 39, FormatNetworkFingerprintText(), 1, 192, 210, 225);
             DrawOverlayText(menuX, overlayY + overlayHeight - 27, FormatNetworkTrafficText(), 1, 192, 210, 225);
             DrawOverlayText(menuX, overlayY + overlayHeight - 15, "STATUS " + FormatOverlayValue(_networkStatusText, 45), 1, 108, 214, 182);
+            DrawNetworkTlsCertificatePrompt(overlayX, overlayY, overlayWidth, overlayHeight);
+        }
+
+        /// <summary>
+        /// Draws the modal warning for a changed pinned TLS certificate.
+        /// </summary>
+        /// <param name="parentX">Network overlay x coordinate.</param>
+        /// <param name="parentY">Network overlay y coordinate.</param>
+        /// <param name="parentWidth">Network overlay width.</param>
+        /// <param name="parentHeight">Network overlay height.</param>
+        private void DrawNetworkTlsCertificatePrompt(int parentX, int parentY, int parentWidth, int parentHeight)
+        {
+            if (!_networkTlsCertificatePromptVisible || _pendingNetworkTlsPinChange == null)
+            {
+                return;
+            }
+
+            C64NetTlsPinChange pinChange = _pendingNetworkTlsPinChange;
+            int width = Math.Min(parentWidth - 36, 344);
+            int height = 88;
+            int x = parentX + ((parentWidth - width) / 2);
+            int y = parentY + ((parentHeight - height) / 2);
+
+            DrawFilledRectangleWithAlpha(x, y, width, height, 20, 10, 12, 244);
+            DrawLine(x, y, x + width - 1, y, 255, 243, 168);
+            DrawLine(x, y + height - 1, x + width - 1, y + height - 1, 255, 243, 168);
+            DrawLine(x, y, x, y + height - 1, 255, 243, 168);
+            DrawLine(x + width - 1, y, x + width - 1, y + height - 1, 255, 243, 168);
+
+            DrawOverlayText(x + 12, y + 10, "WARNING! TLS SERVER CERTIFICATE CHANGED", 1, 255, 243, 168);
+            DrawOverlayText(x + 12, y + 25, "HOST " + FormatOverlayValue(pinChange.Host + ":" + pinChange.Port.ToString(CultureInfo.InvariantCulture), 46), 1, 240, 248, 255);
+            DrawOverlayText(x + 12, y + 40, "FROM OLD ID " + pinChange.OldShortFingerprint, 1, 240, 210, 210);
+            DrawOverlayText(x + 12, y + 53, "TO   NEW ID " + pinChange.NewShortFingerprint, 1, 210, 255, 220);
+            DrawOverlayText(x + 12, y + 70, "ENTER REPLACE PIN   ESC ABORT", 1, 108, 214, 182);
         }
 
         /// <summary>
@@ -5488,7 +5771,7 @@ namespace C64Emulator
         private static int GetNetworkMenuRowY(int menuY, int index)
         {
             int extraGap = index >= NetworkOverlayServerItemCount ? 10 : 0;
-            return menuY + (index * 9) + extraGap;
+            return menuY + (index * 8) + extraGap;
         }
 
         /// <summary>
@@ -5502,14 +5785,14 @@ namespace C64Emulator
             {
                 // Remote clients may leave and change their local filter, but server-owned
                 // emulator/session settings are locked.
-                return index == 12 || index == 13;
+                return index == 14 || index == 15;
             }
 
             if (_networkMode == NetworkSessionMode.Host)
             {
                 // While hosting, server controls and the local filter remain available;
                 // joining another host from the same instance is disabled.
-                return index <= 6 || index == 13;
+                return index <= 8 || index == 15;
             }
 
             return true;
@@ -5525,32 +5808,36 @@ namespace C64Emulator
             switch (index)
             {
                 case 0:
-                    return "SERVER PORT";
+                    return "MODE";
                 case 1:
-                    return "SERVER PASSWORD";
+                    return "SERVER PORT";
                 case 2:
-                    return "SERVER";
+                    return "SERVER PASSWORD";
                 case 3:
-                    return "SELECT CLIENT";
+                    return "CONNECTION ID";
                 case 4:
-                    return "CLIENT RIGHT";
+                    return "SERVER";
                 case 5:
-                    return "KEYBOARD RIGHT";
+                    return "SELECT CLIENT";
                 case 6:
-                    return "KICK CLIENT";
+                    return "CLIENT RIGHT";
                 case 7:
-                    return "PLAYER NAME";
+                    return "KEYBOARD RIGHT";
                 case 8:
-                    return "CLIENT HOST";
+                    return "KICK CLIENT";
                 case 9:
-                    return "CLIENT PORT";
+                    return "PLAYER NAME";
                 case 10:
-                    return "CLIENT PASSWORD";
+                    return _networkTransportMode == C64NetTransportMode.Relay ? "RELAY HOST" : "CLIENT HOST";
                 case 11:
-                    return "CLIENT ROLE";
+                    return _networkTransportMode == C64NetTransportMode.Relay ? "RELAY PORT" : "CLIENT PORT";
                 case 12:
-                    return "CLIENT";
+                    return "CLIENT PASSWORD";
                 case 13:
+                    return "CLIENT ROLE";
+                case 14:
+                    return "CLIENT";
+                case 15:
                     return "VIDEO FILTER";
                 default:
                     return string.Empty;
@@ -5568,36 +5855,41 @@ namespace C64Emulator
             switch (index)
             {
                 case 0:
-                    return _networkServerPort <= 0 ? "TYPE PORT" : _networkServerPort.ToString();
+                    return _networkTransportMode == C64NetTransportMode.Relay ? "RELAY" : "LAN";
                 case 1:
-                    return FormatNetworkPassword(_networkServerPassword);
+                    return _networkServerPort <= 0 ? "TYPE PORT" : _networkServerPort.ToString();
                 case 2:
-                    return _networkServer != null && _networkServer.IsRunning ? "STOP SERVER" : "START SERVER";
+                    return FormatNetworkPassword(_networkServerPassword);
                 case 3:
-                    client = GetSelectedNetworkClient();
-                    return client == null ? "NONE" : "#" + client.ClientId + " " + FormatNetworkClientDisplay(client);
+                    return NormalizeNetworkConnectionId(_networkConnectionId);
                 case 4:
-                    client = GetSelectedNetworkClient();
-                    return client == null ? "NONE" : FormatNetworkPermission(client.Permission);
+                    return _networkServer != null && _networkServer.IsRunning ? "STOP SERVER" : "START SERVER";
                 case 5:
                     client = GetSelectedNetworkClient();
-                    return client == null ? "NONE" : FormatNetworkKeyboardRight(client.KeyboardEnabled);
+                    return client == null ? "NONE" : "#" + client.ClientId + " " + FormatNetworkClientDisplay(client);
                 case 6:
                     client = GetSelectedNetworkClient();
-                    return client == null ? "NONE" : FormatNetworkClientDisplay(client);
+                    return client == null ? "NONE" : FormatNetworkJoystickRight(client.Permission);
                 case 7:
-                    return NormalizeNetworkPlayerName(_networkPlayerName);
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : FormatNetworkKeyboardRightLong(client.KeyboardEnabled);
                 case 8:
-                    return string.IsNullOrWhiteSpace(_networkHost) ? "TYPE HOST" : _networkHost;
+                    client = GetSelectedNetworkClient();
+                    return client == null ? "NONE" : FormatNetworkClientDisplay(client);
                 case 9:
-                    return _networkClientPort <= 0 ? "TYPE PORT" : _networkClientPort.ToString();
+                    return NormalizeNetworkPlayerName(_networkPlayerName);
                 case 10:
-                    return FormatNetworkPassword(_networkClientPassword);
+                    return string.IsNullOrWhiteSpace(_networkHost) ? "TYPE HOST" : _networkHost;
                 case 11:
-                    return _networkRequestedRole == C64NetClientRole.Observer ? "OBSERVER" : "PLAYER";
+                    int targetPort = GetNetworkMenuTargetPort();
+                    return targetPort <= 0 ? "TYPE PORT" : targetPort.ToString();
                 case 12:
-                    return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
+                    return FormatNetworkPassword(_networkClientPassword);
                 case 13:
+                    return _networkRequestedRole == C64NetClientRole.Observer ? "OBSERVER" : "PLAYER";
+                case 14:
+                    return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
+                case 15:
                     return FormatVideoFilter(_videoFilterMode);
                 default:
                     return string.Empty;
@@ -5714,7 +6006,22 @@ namespace C64Emulator
         {
             if (_networkMode == NetworkSessionMode.Client && _networkClient != null)
             {
+                if (_networkClient.TransportMode == C64NetTransportMode.Relay)
+                {
+                    return "RELAY FINGERPRINT " + _networkClient.RelayFingerprint + " E2E " + _networkClient.RelaySessionFingerprint;
+                }
+
                 return "TLS SERVER FINGERPRINT " + _networkClient.ServerCertificateFingerprint;
+            }
+
+            if (_networkMode == NetworkSessionMode.Host && _networkServer != null && _networkServer.IsRelayMode)
+            {
+                return "RELAY FINGERPRINT " + _networkServer.RelayFingerprint + " E2E ACTIVE";
+            }
+
+            if (_networkTransportMode == C64NetTransportMode.Relay)
+            {
+                return "RELAY TRUST FINGERPRINT " + C64NetTls.GetTrustedServerShortFingerprint(_networkHost, _networkRelayPort);
             }
 
             return "TLS HOST FINGERPRINT " + C64NetTls.GetServerCertificateShortFingerprint();
@@ -5785,6 +6092,26 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Formats the actual remote joystick right granted by the host.
+        /// </summary>
+        /// <param name="permission">Permission value.</param>
+        /// <returns>Readable joystick-right label.</returns>
+        private static string FormatNetworkJoystickRight(C64NetJoystickPermission permission)
+        {
+            switch (permission)
+            {
+                case C64NetJoystickPermission.Port1:
+                    return "JOYSTICK 1";
+                case C64NetJoystickPermission.Port2:
+                    return "JOYSTICK 2";
+                case C64NetJoystickPermission.Both:
+                    return "BOTH JOYSTICKS";
+                default:
+                    return "NO JOYSTICK";
+            }
+        }
+
+        /// <summary>
         /// Formats keyboard input rights for the host network menu.
         /// </summary>
         /// <param name="enabled">True when remote keyboard input reaches the host.</param>
@@ -5795,13 +6122,13 @@ namespace C64Emulator
         }
 
         /// <summary>
-        /// Formats keyboard input rights for the compact client list.
+        /// Formats keyboard input rights for readable client-list style output.
         /// </summary>
         /// <param name="enabled">True when keyboard input is allowed.</param>
-        /// <returns>Compact keyboard marker.</returns>
-        private static string FormatNetworkKeyboardRightCompact(bool enabled)
+        /// <returns>Readable keyboard-right label.</returns>
+        private static string FormatNetworkKeyboardRightLong(bool enabled)
         {
-            return enabled ? "KEY" : "NOKEY";
+            return enabled ? "KEYBOARD" : "NO KEYBOARD";
         }
 
         private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)

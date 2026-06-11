@@ -76,6 +76,8 @@ namespace C64Emulator.Network
         private int _latencyPingPending;
         private long _lastLatencyPingTicks;
         private string _serverCertificateFingerprint = "UNKNOWN";
+        private string _relayFingerprint = "UNKNOWN";
+        private string _relaySessionFingerprint = "UNKNOWN";
 
         /// <summary>
         /// Raised when a complete host video frame has been decoded.
@@ -136,6 +138,27 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Gets the active transport mode for the current/last session.
+        /// </summary>
+        public C64NetTransportMode TransportMode { get; private set; } = C64NetTransportMode.Lan;
+
+        /// <summary>
+        /// Gets the short TLS fingerprint of the relay server in relay mode.
+        /// </summary>
+        public string RelayFingerprint
+        {
+            get { return _relayFingerprint; }
+        }
+
+        /// <summary>
+        /// Gets the short end-to-end fingerprint of the remote C64 host in relay mode.
+        /// </summary>
+        public string RelaySessionFingerprint
+        {
+            get { return _relaySessionFingerprint; }
+        }
+
+        /// <summary>
         /// Gets the total number of bytes written to the server in the current session.
         /// </summary>
         public long BytesSent
@@ -187,6 +210,9 @@ namespace C64Emulator.Network
             status = string.Empty;
             try
             {
+                TransportMode = C64NetTransportMode.Lan;
+                _relayFingerprint = "UNKNOWN";
+                _relaySessionFingerprint = "UNKNOWN";
                 _tcpClient = new TcpClient();
                 _tcpClient.NoDelay = true;
                 Task connectTask = _tcpClient.ConnectAsync(host, port);
@@ -207,7 +233,97 @@ namespace C64Emulator.Network
                 }
 
                 _serverCertificateFingerprint = C64NetTls.GetTrustedServerShortFingerprint(host, port);
+                return FinishConnect(password, role, name, out status);
+            }
+            catch (C64NetTlsException ex)
+            {
+                Debug.WriteLine(ex);
+                if (ex.IsCertificateChanged)
+                {
+                    Disconnect();
+                    throw;
+                }
 
+                status = ex.Message;
+                Disconnect();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                status = "CONNECT FAILED";
+                Disconnect();
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Connects to a host session through a public relay server.
+        /// </summary>
+        /// <param name="relayHost">Relay host name or IP address.</param>
+        /// <param name="relayPort">Relay TLS port.</param>
+        /// <param name="connectionId">Shared relay session id.</param>
+        /// <param name="password">Optional C64Net session password.</param>
+        /// <param name="role">Requested client role.</param>
+        /// <param name="name">Player name to show on the host.</param>
+        /// <param name="status">Result status text for the overlay.</param>
+        /// <returns>True when the relay and host handshake completed.</returns>
+        public bool ConnectRelay(string relayHost, int relayPort, string connectionId, string password, C64NetClientRole role, string name, out string status)
+        {
+            Disconnect();
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
+            status = string.Empty;
+            try
+            {
+                TransportMode = C64NetTransportMode.Relay;
+                _tcpClient = null;
+                _stream = C64RelayClientConnector.Connect(
+                    relayHost,
+                    relayPort,
+                    connectionId,
+                    out _relayFingerprint,
+                    out _relaySessionFingerprint,
+                    out status);
+                if (_stream == null)
+                {
+                    Disconnect();
+                    return false;
+                }
+
+                _serverCertificateFingerprint = "RELAY " + _relayFingerprint + " E2E " + _relaySessionFingerprint;
+                return FinishConnect(password, role, name, out status);
+            }
+            catch (C64NetTlsException ex)
+            {
+                Debug.WriteLine(ex);
+                if (ex.IsCertificateChanged)
+                {
+                    Disconnect();
+                    throw;
+                }
+
+                status = ex.Message;
+                Disconnect();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                status = "RELAY CONNECT FAILED";
+                Disconnect();
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Performs the normal C64Net client/server handshake over an already prepared stream.
+        /// </summary>
+        private bool FinishConnect(string password, C64NetClientRole role, string name, out string status)
+        {
+            status = string.Empty;
+            try
+            {
                 // ClientHello is the only message the server accepts before welcome/reject.
                 AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                 {
@@ -282,17 +398,10 @@ namespace C64Emulator.Network
                 RaiseStatus(status);
                 return true;
             }
-            catch (C64NetTlsException ex)
-            {
-                Debug.WriteLine(ex);
-                status = ex.Message;
-                Disconnect();
-                return false;
-            }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                status = "CONNECT FAILED";
+                status = TransportMode == C64NetTransportMode.Relay ? "RELAY HOST FAILED" : "CONNECT FAILED";
                 Disconnect();
                 return false;
             }
@@ -387,6 +496,8 @@ namespace C64Emulator.Network
             Permission = C64NetJoystickPermission.Observer;
             KeyboardEnabled = false;
             _serverCertificateFingerprint = "UNKNOWN";
+            _relayFingerprint = "UNKNOWN";
+            _relaySessionFingerprint = "UNKNOWN";
             _videoReferencePalettePixels = null;
             _videoReferenceFrameId = 0;
             _videoDecodePixels = null;

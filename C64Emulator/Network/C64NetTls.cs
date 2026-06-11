@@ -92,10 +92,11 @@ namespace C64Emulator.Network
             }
 
             string validationStatus = "TLS CONNECTING";
+            C64NetTlsPinChange detectedPinChange = null;
             var stream = new SslStream(
                 tcpClient.GetStream(),
                 false,
-                (sender, certificate, chain, errors) => ValidateServerCertificate(host, port, certificate, out validationStatus));
+                (sender, certificate, chain, errors) => ValidateServerCertificate(host, port, certificate, out validationStatus, out detectedPinChange));
 
             try
             {
@@ -109,7 +110,7 @@ namespace C64Emulator.Network
                 string failureStatus = string.Equals(validationStatus, "TLS CONNECTING", StringComparison.Ordinal)
                     ? "TLS FAILED"
                     : validationStatus;
-                throw new C64NetTlsException(failureStatus, ex);
+                throw new C64NetTlsException(failureStatus, ex, detectedPinChange);
             }
             catch
             {
@@ -155,6 +156,38 @@ namespace C64Emulator.Network
             }
 
             return "UNKNOWN";
+        }
+
+        /// <summary>
+        /// Formats a full SHA-256 certificate fingerprint for compact UI display.
+        /// </summary>
+        /// <param name="fingerprint">Full uppercase SHA-256 fingerprint.</param>
+        /// <returns>Grouped fingerprint prefix suitable for menus and status bars.</returns>
+        public static string FormatFingerprintForDisplay(string fingerprint)
+        {
+            return FormatShortFingerprint(fingerprint);
+        }
+
+        /// <summary>
+        /// Replaces a stored server certificate pin after explicit user approval.
+        /// </summary>
+        /// <param name="host">Host name or IP entered by the user.</param>
+        /// <param name="port">Remote TCP port.</param>
+        /// <param name="fingerprint">New full SHA-256 certificate fingerprint to pin.</param>
+        public static void ReplaceTrustedServerCertificate(string host, int port, string fingerprint)
+        {
+            if (string.IsNullOrWhiteSpace(fingerprint))
+            {
+                throw new ArgumentException("A certificate fingerprint is required.", nameof(fingerprint));
+            }
+
+            string trustKey = BuildTrustKey(host, port);
+            lock (TrustSyncRoot)
+            {
+                NetworkTrustFile trustFile = LoadTrustFile();
+                trustFile.PinnedCertificates[trustKey] = fingerprint.Trim().ToUpperInvariant();
+                SaveTrustFile(trustFile);
+            }
         }
 
         /// <summary>
@@ -247,9 +280,11 @@ namespace C64Emulator.Network
         /// <param name="port">Remote TCP port.</param>
         /// <param name="certificate">Certificate supplied by the TLS server.</param>
         /// <param name="status">Short status text describing the decision.</param>
+        /// <param name="pinChange">Details for a changed pinned certificate, or null.</param>
         /// <returns>True when the certificate is trusted for this host/port pair.</returns>
-        private static bool ValidateServerCertificate(string host, int port, X509Certificate certificate, out string status)
+        private static bool ValidateServerCertificate(string host, int port, X509Certificate certificate, out string status, out C64NetTlsPinChange pinChange)
         {
+            pinChange = null;
             if (certificate == null)
             {
                 status = "TLS NO CERT";
@@ -273,7 +308,8 @@ namespace C64Emulator.Network
                         return true;
                     }
 
-                    status = "TLS CERT CHANGED";
+                    pinChange = new C64NetTlsPinChange(host, port, pinnedFingerprint, fingerprint);
+                    status = "TLS CERT CHANGED " + pinChange.OldShortFingerprint + " " + pinChange.NewShortFingerprint;
                     return false;
                 }
 
@@ -412,6 +448,63 @@ namespace C64Emulator.Network
     }
 
     /// <summary>
+    /// Describes a remote TLS certificate that no longer matches the stored pin.
+    /// </summary>
+    public sealed class C64NetTlsPinChange
+    {
+        /// <summary>
+        /// Initializes a certificate-pin change description.
+        /// </summary>
+        /// <param name="host">Remote host name or IP entered by the user.</param>
+        /// <param name="port">Remote TCP port.</param>
+        /// <param name="oldFingerprint">Previously pinned full SHA-256 fingerprint.</param>
+        /// <param name="newFingerprint">New full SHA-256 fingerprint presented by the server.</param>
+        public C64NetTlsPinChange(string host, int port, string oldFingerprint, string newFingerprint)
+        {
+            Host = string.IsNullOrWhiteSpace(host) ? "unknown" : host.Trim();
+            Port = port;
+            OldFingerprint = string.IsNullOrWhiteSpace(oldFingerprint) ? string.Empty : oldFingerprint.Trim().ToUpperInvariant();
+            NewFingerprint = string.IsNullOrWhiteSpace(newFingerprint) ? string.Empty : newFingerprint.Trim().ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// Gets the remote host name or IP entered by the user.
+        /// </summary>
+        public string Host { get; private set; }
+
+        /// <summary>
+        /// Gets the remote TCP port.
+        /// </summary>
+        public int Port { get; private set; }
+
+        /// <summary>
+        /// Gets the previously trusted full SHA-256 certificate fingerprint.
+        /// </summary>
+        public string OldFingerprint { get; private set; }
+
+        /// <summary>
+        /// Gets the newly presented full SHA-256 certificate fingerprint.
+        /// </summary>
+        public string NewFingerprint { get; private set; }
+
+        /// <summary>
+        /// Gets the compact display form of the old pinned fingerprint.
+        /// </summary>
+        public string OldShortFingerprint
+        {
+            get { return C64NetTls.FormatFingerprintForDisplay(OldFingerprint); }
+        }
+
+        /// <summary>
+        /// Gets the compact display form of the new server fingerprint.
+        /// </summary>
+        public string NewShortFingerprint
+        {
+            get { return C64NetTls.FormatFingerprintForDisplay(NewFingerprint); }
+        }
+    }
+
+    /// <summary>
     /// Represents a user-visible TLS setup or validation failure.
     /// </summary>
     public sealed class C64NetTlsException : Exception
@@ -422,8 +515,33 @@ namespace C64Emulator.Network
         /// <param name="message">Short user-facing status.</param>
         /// <param name="innerException">Underlying TLS exception.</param>
         public C64NetTlsException(string message, Exception innerException)
+            : this(message, innerException, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a TLS exception with optional certificate-pin change details.
+        /// </summary>
+        /// <param name="message">Short user-facing status.</param>
+        /// <param name="innerException">Underlying TLS exception.</param>
+        /// <param name="pinChange">Certificate-pin change details, or null.</param>
+        public C64NetTlsException(string message, Exception innerException, C64NetTlsPinChange pinChange)
             : base(string.IsNullOrWhiteSpace(message) ? "TLS FAILED" : message, innerException)
         {
+            PinChange = pinChange;
+        }
+
+        /// <summary>
+        /// Gets certificate-pin change details when this failure was caused by a changed certificate.
+        /// </summary>
+        public C64NetTlsPinChange PinChange { get; private set; }
+
+        /// <summary>
+        /// Gets whether the failure is a changed pinned certificate that the UI can ask about.
+        /// </summary>
+        public bool IsCertificateChanged
+        {
+            get { return PinChange != null; }
         }
     }
 }

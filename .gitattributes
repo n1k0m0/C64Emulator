@@ -1,4 +1,7 @@
 * text=auto eol=crlf
+*.sh text eol=lf
+relay_server/*.py text eol=lf
+relay_server/*.md text eol=lf
 
 *.bin binary
 *.ico binary

@@ -243,6 +243,10 @@ namespace C64Emulator.Network
         /// </summary>
         public const int DefaultPort = 6464;
         /// <summary>
+        /// Default public relay TLS port shown when Relay Mode is selected.
+        /// </summary>
+        public const int DefaultRelayPort = 6465;
+        /// <summary>
         /// SID audio output sample rate used for host-to-client audio chunks.
         /// </summary>
         public const int DefaultAudioSampleRate = 44100;

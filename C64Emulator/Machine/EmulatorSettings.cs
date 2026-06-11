@@ -70,6 +70,11 @@ namespace C64Emulator.Core
         public string MediaBrowserDirectory { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets or sets the network transport mode shown in the network menu.
+        /// </summary>
+        public string NetworkTransportMode { get; set; } = "Lan";
+
+        /// <summary>
         /// Gets or sets the TCP port shown in the server section of the network menu.
         /// </summary>
         public int NetworkServerPort { get; set; } = 6464;
@@ -88,6 +93,16 @@ namespace C64Emulator.Core
         /// Gets or sets the TCP port used when joining a remote session.
         /// </summary>
         public int NetworkClientPort { get; set; } = 6464;
+
+        /// <summary>
+        /// Gets or sets the TCP/TLS port used when joining via a relay server.
+        /// </summary>
+        public int NetworkRelayPort { get; set; } = 6465;
+
+        /// <summary>
+        /// Gets or sets the relay connection id used to match server and clients.
+        /// </summary>
+        public string NetworkConnectionId { get; set; } = "c64";
 
         /// <summary>
         /// Gets or sets the optional client password sent during the C64Net handshake.

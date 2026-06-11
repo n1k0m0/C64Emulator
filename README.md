@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.11](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.11), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.12](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.12), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -46,7 +46,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - REU/REC emulation with 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB capacities.
 - Startup update check against the latest GitHub Release with a setup download progress window, optional SHA-256 verification, and safe setup launch after the emulator exits.
-- Network multiplayer/remote-play sessions over mandatory TLS/TCP: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send host-approved joystick/keyboard input or watch as observers.
+- Network multiplayer/remote-play sessions over mandatory TLS/TCP or optional Relay Mode: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send host-approved joystick/keyboard input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
@@ -68,7 +68,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 ## F10 Network Multiplayer Menu
 
-Open the main menu with `F10` and choose `NETWORK` to manage multiplayer. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send host-approved joystick and keyboard input back to the host. C64Net connections always use TLS; the host creates a local self-signed certificate and clients pin the certificate fingerprint on first connection. The network overlay shows the host certificate fingerprint on the server and the trusted server fingerprint on connected clients.
+Open the main menu with `F10` and choose `NETWORK` to manage multiplayer. In host mode, the local emulator keeps running the C64 simulation and streams the completed C64 frames plus live SID audio to connected clients. Clients do not run their own C64 while connected; they display the host frame stream, play the host audio, and optionally send host-approved joystick and keyboard input back to the host. C64Net connections always use TLS; LAN Mode uses direct emulator-to-emulator TLS and Relay Mode connects both sides through an optional public relay server so NAT and manual port forwarding are not required. Certificates are pinned on first use. If a pinned C64 server or relay certificate changes later, the network menu shows a warning with the old and new fingerprint and asks whether to replace the pinned id or abort.
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
@@ -78,7 +78,7 @@ Transport details:
 
 | Area | Behavior |
 | --- | --- |
-| Security | Every C64Net session uses TLS over TCP. The host creates a local self-signed certificate; clients pin the certificate fingerprint for the selected host/port after the first successful connection. |
+| Security | Every C64Net session uses TLS. LAN Mode pins the C64 server certificate for the selected host/port. Relay Mode pins the relay certificate and additionally encrypts the C64 session end to end between host emulator and client emulator. Certificate changes are shown as explicit old/new fingerprint warnings before a pin can be replaced. |
 | Video source | The host sends the unfiltered sharp C64 image. Client-side `SHARP`, `CRT`, `TV`, fullscreen, and `VIDEO ZOOM` settings remain local. |
 | Video compression | Frames are converted to the 16-color C64 palette and packed as 4-bit pixels. The protocol then picks the smallest full frame, sparse delta, Deflate-compressed sparse delta, XOR/RLE delta, or Deflate-compressed XOR/RLE delta. |
 | Audio compression | SID audio uses 4-bit IMA ADPCM network packets so audio bandwidth is far below raw 16-bit PCM. |
@@ -89,12 +89,14 @@ Server-side entries:
 
 | Entry | Values / Action | Details |
 | --- | --- | --- |
-| `SERVER PORT` | TLS/TCP port | Port used for incoming C64Net sessions. The default is `6464`. |
+| `MODE` | `LAN` / `RELAY` | Chooses direct LAN hosting or outbound Relay Mode. |
+| `SERVER PORT` | TLS/TCP port | Port used for incoming LAN C64Net sessions. The default is `6464`. |
 | `SERVER PASSWORD` | `NONE` or hidden text | Optional session password. Password characters are shown as `*` in the menu. |
+| `CONNECTION ID` | Text | Shared Relay Mode session id. The relay connects clients to the host registered with the same id. |
 | `SERVER` | `START SERVER` / `STOP SERVER` | Starts or stops the host session. |
 | `SELECT CLIENT` | Connected client | Selects a connected client by id, address, and player name. |
-| `CLIENT RIGHT` | `OBSERVER`, `PORT 1`, `PORT 2`, `BOTH` | Chooses whether the selected client may control a joystick port. |
-| `KEYBOARD RIGHT` | `ON` / `OFF` | Chooses whether the selected client may type on the host C64 keyboard matrix. This is independent from joystick rights. |
+| `CLIENT RIGHT` | `NO JOYSTICK`, `JOYSTICK 1`, `JOYSTICK 2`, `BOTH JOYSTICKS` | Chooses whether the selected client may control a joystick port. |
+| `KEYBOARD RIGHT` | `KEYBOARD` / `NO KEYBOARD` | Chooses whether the selected client may type on the host C64 keyboard matrix. This is independent from joystick rights. |
 | `KICK CLIENT` | Connected client | Disconnects the selected client. Kicked clients cannot rejoin the same server session; restarting the server clears this session ban list. |
 
 Client-side entries:
@@ -102,8 +104,8 @@ Client-side entries:
 | Entry | Values / Action | Details |
 | --- | --- | --- |
 | `PLAYER NAME` | Text | Name announced to the host. The default is `player`. |
-| `CLIENT HOST` | Host name or IP | Address of the host to connect to. |
-| `CLIENT PORT` | TLS/TCP port | Port of the host session. |
+| `RELAY HOST` / `CLIENT HOST` | Host name or IP | Address of the relay in Relay Mode, or the direct C64 host in LAN Mode. |
+| `RELAY PORT` / `CLIENT PORT` | TLS/TCP port | Relay TLS port in Relay Mode, or the direct host port in LAN Mode. The default relay port is `6465`. |
 | `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
 | `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick and keyboard rights after connection. |
 | `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
@@ -243,7 +245,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.11`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.12`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -355,7 +357,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists server/client ports, the last client host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
 
 ## ROM Files
 

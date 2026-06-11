@@ -59,8 +59,10 @@ namespace C64Emulator.Network
         /// </summary>
         private readonly int _videoHeight;
         private TcpListener _listener;
+        private C64RelayServerListener _relayListener;
         private CancellationTokenSource _shutdown;
         private Task _acceptTask;
+        private Task _relayAcceptTask;
         private string _password = string.Empty;
         private string _hostOverlayStatus = string.Empty;
         private int _nextClientId = 1;
@@ -93,7 +95,7 @@ namespace C64Emulator.Network
             {
                 lock (_syncRoot)
                 {
-                    return _listener != null;
+                    return _listener != null || _relayListener != null;
                 }
             }
         }
@@ -102,6 +104,23 @@ namespace C64Emulator.Network
         /// Gets the actual listening port. This matters when port zero is used.
         /// </summary>
         public int Port { get; private set; }
+
+        /// <summary>
+        /// Gets whether this host is currently registered through a relay server.
+        /// </summary>
+        public bool IsRelayMode { get; private set; }
+
+        /// <summary>
+        /// Gets the short TLS fingerprint of the connected relay, when relay mode is active.
+        /// </summary>
+        public string RelayFingerprint
+        {
+            get
+            {
+                C64RelayServerListener relay = _relayListener;
+                return relay == null ? "UNKNOWN" : relay.RelayFingerprint;
+            }
+        }
 
         /// <summary>
         /// Gets the total number of bytes written to clients in the current server session.
@@ -172,20 +191,80 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Starts a host session through an outbound relay connection.
+        /// </summary>
+        /// <param name="relayHost">Public relay host or IP.</param>
+        /// <param name="relayPort">Public relay TLS port.</param>
+        /// <param name="connectionId">Shared session id used by clients.</param>
+        /// <param name="password">Optional C64Net session password.</param>
+        public void StartRelay(string relayHost, int relayPort, string connectionId, string password)
+        {
+            Stop();
+            _password = password ?? string.Empty;
+            _hostOverlayStatus = string.Empty;
+            IsRelayMode = true;
+            Interlocked.Exchange(ref _bytesSent, 0);
+            Interlocked.Exchange(ref _bytesReceived, 0);
+            lock (_syncRoot)
+            {
+                _bannedRemoteAddresses.Clear();
+            }
+
+            _shutdown = new CancellationTokenSource();
+            var relay = new C64RelayServerListener();
+            string status;
+            try
+            {
+                if (!relay.Start(relayHost, relayPort, connectionId, out status))
+                {
+                    relay.Dispose();
+                    IsRelayMode = false;
+                    throw new IOException(status);
+                }
+            }
+            catch
+            {
+                relay.Dispose();
+                CancellationTokenSource failedShutdown = _shutdown;
+                _shutdown = null;
+                if (failedShutdown != null)
+                {
+                    failedShutdown.Cancel();
+                    failedShutdown.Dispose();
+                }
+
+                IsRelayMode = false;
+                throw;
+            }
+
+            lock (_syncRoot)
+            {
+                _relayListener = relay;
+            }
+
+            Port = relayPort;
+            _relayAcceptTask = Task.Run(() => RelayAcceptLoop(_shutdown.Token));
+            RaiseStatus(status);
+        }
+
+        /// <summary>
         /// Stops the host session and disconnects every client.
         /// </summary>
         public void Stop()
         {
             CancellationTokenSource shutdown;
             TcpListener listener;
+            C64RelayServerListener relayListener;
             lock (_syncRoot)
             {
                 // Null the listener under the lock first so IsRunning flips to false
                 // before sockets start closing and callbacks begin to unwind.
                 shutdown = _shutdown;
                 listener = _listener;
+                relayListener = _relayListener;
                 _shutdown = null;
                 _listener = null;
+                _relayListener = null;
             }
 
             if (shutdown != null)
@@ -203,6 +282,12 @@ namespace C64Emulator.Network
                 catch
                 {
                 }
+            }
+
+            if (relayListener != null)
+            {
+                relayListener.Stop();
+                relayListener.Dispose();
             }
 
             List<ClientConnection> clients;
@@ -232,12 +317,26 @@ namespace C64Emulator.Network
                 _acceptTask = null;
             }
 
+            if (_relayAcceptTask != null)
+            {
+                try
+                {
+                    _relayAcceptTask.Wait(250);
+                }
+                catch
+                {
+                }
+
+                _relayAcceptTask = null;
+            }
+
             if (shutdown != null)
             {
                 shutdown.Dispose();
             }
 
             Port = 0;
+            IsRelayMode = false;
             RaiseStatus("SERVER STOPPED");
         }
 
@@ -537,85 +636,68 @@ namespace C64Emulator.Network
         }
 
         /// <summary>
+        /// Accepts virtual client channels from the public relay registration.
+        /// </summary>
+        /// <param name="cancellationToken">Server shutdown token.</param>
+        private void RelayAcceptLoop(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    C64RelayServerListener relay;
+                    lock (_syncRoot)
+                    {
+                        relay = _relayListener;
+                    }
+
+                    if (relay == null)
+                    {
+                        return;
+                    }
+
+                    C64RelayAcceptedClient accepted = relay.AcceptClient(cancellationToken);
+                    if (accepted == null)
+                    {
+                        continue;
+                    }
+
+                    Task.Run(() => HandleAcceptedConnection(
+                        null,
+                        accepted.Stream,
+                        accepted.RemoteAddress,
+                        accepted.RemoteEndpoint,
+                        accepted.Dispose,
+                        cancellationToken));
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RaiseStatus("RELAY ACCEPT FAILED");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Validates the client handshake and promotes an accepted socket to a connection.
         /// </summary>
         /// <param name="tcpClient">Freshly accepted socket.</param>
         /// <param name="cancellationToken">Server shutdown token passed to client loops.</param>
         private void HandleAcceptedClient(TcpClient tcpClient, CancellationToken cancellationToken)
         {
-            ClientConnection client = null;
             try
             {
                 Stream stream = C64NetTls.AuthenticateServer(tcpClient);
-                C64NetMessage hello = C64NetProtocol.ReadMessage(stream);
-                AddBytesReceived(hello != null ? hello.WireLength : 0);
-                if (hello == null || hello.Type != C64NetMessageType.ClientHello)
-                {
-                    // The protocol is strict at the handshake boundary. Unknown first
-                    // messages are rejected before a ClientConnection is created.
-                    SendReject(stream, "BAD HELLO");
-                    tcpClient.Close();
-                    return;
-                }
-
-                C64NetProtocol.ReadClientHelloPayload(
-                    hello.Payload,
-                    out int version,
-                    out string name,
-                    out string password,
-                    out C64NetClientRole role);
-
-                if (version != C64NetProtocol.Version)
-                {
-                    // Version is checked before password or role so incompatible clients
-                    // get a deterministic error.
-                    SendReject(stream, "PROTOCOL MISMATCH");
-                    tcpClient.Close();
-                    return;
-                }
-
-                string remoteAddress = FormatRemoteAddress(tcpClient);
-                if (IsRemoteAddressBanned(remoteAddress))
-                {
-                    // Session bans are keyed by IP address because a kicked client may
-                    // reconnect with a new TCP port immediately.
-                    RaiseStatus("BANNED CLIENT " + remoteAddress);
-                    SendReject(stream, "KICKED FROM SESSION");
-                    tcpClient.Close();
-                    return;
-                }
-
-                if (!string.Equals(_password ?? string.Empty, password ?? string.Empty, StringComparison.Ordinal))
-                {
-                    // A wrong password is surfaced to the host overlay so the server
-                    // operator can see rejected connection attempts.
-                    RaiseStatus("BAD PASSWORD " + FormatRemoteEndpoint(tcpClient));
-                    SendReject(stream, "PASSWORD REJECTED");
-                    tcpClient.Close();
-                    return;
-                }
-
-                int clientId;
-                lock (_syncRoot)
-                {
-                    clientId = _nextClientId++;
-                }
-
-                C64NetJoystickPermission permission = role == C64NetClientRole.Observer
-                    ? C64NetJoystickPermission.Observer
-                    : C64NetJoystickPermission.Observer;
-                // Even "Player" joins as observer first. The host grants the actual
-                // joystick port explicitly from the client list.
-                client = new ClientConnection(this, tcpClient, stream, clientId, name, role, permission);
-                AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
-                    C64NetMessageType.ServerWelcome,
-                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, client.KeyboardEnabled, "TLS CONNECTED"))));
-
-                // Add the client only after welcome was sent, so the UI never shows a
-                // half-handshaken socket.
-                AddClient(client);
-                client.Start(cancellationToken);
-                RaiseStatus("CLIENT " + clientId + " JOINED");
+                HandleAcceptedConnection(
+                    tcpClient,
+                    stream,
+                    FormatRemoteAddress(tcpClient),
+                    FormatRemoteEndpoint(tcpClient),
+                    null,
+                    cancellationToken);
             }
             catch (AuthenticationException ex)
             {
@@ -632,6 +714,102 @@ namespace C64Emulator.Network
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
+                try
+                {
+                    tcpClient.Close();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        /// <summary>
+        /// Validates a ready transport stream and promotes it to a client connection.
+        /// </summary>
+        /// <param name="tcpClient">Original TCP socket for direct LAN mode, or null for relay channels.</param>
+        /// <param name="stream">Authenticated direct TLS stream or relay E2E stream.</param>
+        /// <param name="remoteAddress">Display/ban address for the remote peer.</param>
+        /// <param name="remoteEndpoint">Display endpoint for diagnostics and overlays.</param>
+        /// <param name="closeAction">Optional owner cleanup for relay channels.</param>
+        /// <param name="cancellationToken">Server shutdown token passed to client loops.</param>
+        private void HandleAcceptedConnection(TcpClient tcpClient, Stream stream, string remoteAddress, string remoteEndpoint, Action closeAction, CancellationToken cancellationToken)
+        {
+            ClientConnection client = null;
+            try
+            {
+                C64NetMessage hello = C64NetProtocol.ReadMessage(stream);
+                AddBytesReceived(hello != null ? hello.WireLength : 0);
+                if (hello == null || hello.Type != C64NetMessageType.ClientHello)
+                {
+                    // The protocol is strict at the handshake boundary. Unknown first
+                    // messages are rejected before a ClientConnection is created.
+                    SendReject(stream, "BAD HELLO");
+                    CloseRejectedConnection(tcpClient, stream, closeAction);
+                    return;
+                }
+
+                C64NetProtocol.ReadClientHelloPayload(
+                    hello.Payload,
+                    out int version,
+                    out string name,
+                    out string password,
+                    out C64NetClientRole role);
+
+                if (version != C64NetProtocol.Version)
+                {
+                    // Version is checked before password or role so incompatible clients
+                    // get a deterministic error.
+                    SendReject(stream, "PROTOCOL MISMATCH");
+                    CloseRejectedConnection(tcpClient, stream, closeAction);
+                    return;
+                }
+
+                if (IsRemoteAddressBanned(remoteAddress))
+                {
+                    // Session bans are keyed by IP address because a kicked client may
+                    // reconnect with a new TCP port immediately.
+                    RaiseStatus("BANNED CLIENT " + remoteAddress);
+                    SendReject(stream, "KICKED FROM SESSION");
+                    CloseRejectedConnection(tcpClient, stream, closeAction);
+                    return;
+                }
+
+                if (!string.Equals(_password ?? string.Empty, password ?? string.Empty, StringComparison.Ordinal))
+                {
+                    // A wrong password is surfaced to the host overlay so the server
+                    // operator can see rejected connection attempts.
+                    RaiseStatus("BAD PASSWORD " + remoteEndpoint);
+                    SendReject(stream, "PASSWORD REJECTED");
+                    CloseRejectedConnection(tcpClient, stream, closeAction);
+                    return;
+                }
+
+                int clientId;
+                lock (_syncRoot)
+                {
+                    clientId = _nextClientId++;
+                }
+
+                C64NetJoystickPermission permission = role == C64NetClientRole.Observer
+                    ? C64NetJoystickPermission.Observer
+                    : C64NetJoystickPermission.Observer;
+                // Even "Player" joins as observer first. The host grants the actual
+                // joystick port explicitly from the client list.
+                client = new ClientConnection(this, tcpClient, stream, remoteAddress, remoteEndpoint, closeAction, clientId, name, role, permission);
+                AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
+                    C64NetMessageType.ServerWelcome,
+                    C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, client.KeyboardEnabled, IsRelayMode ? "RELAY CONNECTED E2E" : "TLS CONNECTED"))));
+
+                // Add the client only after welcome was sent, so the UI never shows a
+                // half-handshaken socket.
+                AddClient(client);
+                client.Start(cancellationToken);
+                RaiseStatus("CLIENT " + clientId + " JOINED");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
                 if (client != null)
                 {
                     client.Close();
@@ -639,13 +817,46 @@ namespace C64Emulator.Network
                 }
                 else
                 {
-                    try
-                    {
-                        tcpClient.Close();
-                    }
-                    catch
-                    {
-                    }
+                    CloseRejectedConnection(tcpClient, stream, closeAction);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Closes a connection that failed before becoming a tracked ClientConnection.
+        /// </summary>
+        private static void CloseRejectedConnection(TcpClient tcpClient, Stream stream, Action closeAction)
+        {
+            try
+            {
+                if (stream != null)
+                {
+                    stream.Dispose();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (tcpClient != null)
+                {
+                    tcpClient.Close();
+                }
+            }
+            catch
+            {
+            }
+
+            if (closeAction != null)
+            {
+                try
+                {
+                    closeAction();
+                }
+                catch
+                {
                 }
             }
         }
@@ -1050,6 +1261,7 @@ namespace C64Emulator.Network
             private readonly C64NetServer _server;
             private readonly TcpClient _tcpClient;
             private readonly Stream _stream;
+            private readonly Action _closeAction;
             private readonly object _sendLock = new object();
             private readonly object _keyboardLock = new object();
             private readonly HashSet<Key> _pressedKeyboardKeys = new HashSet<Key>();
@@ -1086,15 +1298,26 @@ namespace C64Emulator.Network
             /// <param name="name">Player name from the handshake.</param>
             /// <param name="role">Accepted role.</param>
             /// <param name="permission">Initial joystick permission.</param>
-            public ClientConnection(C64NetServer server, TcpClient tcpClient, Stream stream, int clientId, string name, C64NetClientRole role, C64NetJoystickPermission permission)
+            public ClientConnection(
+                C64NetServer server,
+                TcpClient tcpClient,
+                Stream stream,
+                string remoteAddress,
+                string remoteEndpoint,
+                Action closeAction,
+                int clientId,
+                string name,
+                C64NetClientRole role,
+                C64NetJoystickPermission permission)
             {
                 _server = server;
                 _tcpClient = tcpClient;
                 _stream = stream;
+                _closeAction = closeAction;
                 ClientId = clientId;
                 Name = string.IsNullOrWhiteSpace(name) ? "player" : name.Trim();
-                RemoteAddress = FormatRemoteAddress(tcpClient);
-                RemoteEndpoint = FormatRemoteEndpoint(tcpClient);
+                RemoteAddress = string.IsNullOrWhiteSpace(remoteAddress) ? "UNKNOWN" : remoteAddress;
+                RemoteEndpoint = string.IsNullOrWhiteSpace(remoteEndpoint) ? RemoteAddress : remoteEndpoint;
                 Role = role;
                 Permission = permission;
                 JoystickState = 0xFF;
@@ -1153,7 +1376,7 @@ namespace C64Emulator.Network
             /// </summary>
             public bool IsConnected
             {
-                get { return !_closed && _tcpClient.Connected; }
+                get { return !_closed && (_tcpClient == null || _tcpClient.Connected); }
             }
 
             /// <summary>
@@ -1337,10 +1560,24 @@ namespace C64Emulator.Network
 
                 try
                 {
-                    _tcpClient.Close();
+                    if (_tcpClient != null)
+                    {
+                        _tcpClient.Close();
+                    }
                 }
                 catch
                 {
+                }
+
+                if (_closeAction != null)
+                {
+                    try
+                    {
+                        _closeAction();
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 _sendSignal.Dispose();
