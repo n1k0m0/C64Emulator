@@ -37,10 +37,10 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - SID register handling and audio output.
 - CIA1/CIA2 emulation for keyboard, joystick, timers, interrupts, and IEC interaction.
 - IEC bus infrastructure with emulated 1541-compatible drives on device numbers 8 to 11.
-- D64 disk image mounting, PRG direct loading, EasyFlash `.crt` cartridge mounting, and optional REU expansion RAM.
+- D64 disk image mounting, PRG direct loading, EasyFlash `.crt` cartridge mounting, editable EasyFlash flash saves, and optional REU expansion RAM.
 - Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
-- Host gamepad support for joystick input, alongside keyboard cursor/control mapping.
+- Host gamepad support for joystick input, alongside keyboard cursor/control mapping and EN/GER host keyboard layout selection.
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
@@ -125,6 +125,21 @@ Network menu controls:
 
 When the host is in a menu, connected clients receive a persistent popup such as `SERVER IN NETWORK MENU` or `SERVER IN SETTINGS MENU`, so observers and remote players know why the C64 picture is paused.
 
+## Relay Server
+
+Relay Mode is optional and is meant for sessions where the host cannot expose a LAN/TCP port directly. A public relay accepts one host registration per `CONNECTION ID` and forwards matching clients to that host. The relay itself does not need the C64Net session password and does not decrypt the end-to-end C64 session stream.
+
+The repository contains a small Python relay implementation in `relay_server/`. It listens on TLS port `6465` by default, creates or uses a self-signed relay certificate, writes normal logs, and includes Ubuntu `systemd` helper scripts:
+
+```bash
+cd relay_server
+bash install_service.sh
+sudo systemctl status c64-relay-server
+bash remove_service.sh
+```
+
+The Windows installer does not ship or install the relay server. The relay is intended to be deployed separately on a domain or VPS. See [relay_server/README.md](relay_server/README.md) for the service configuration, log paths, and certificate options.
+
 ## F10 Main And Settings Menu
 
 The `F10` overview contains `SETTINGS`, `NETWORK`, `MEDIA`, and `RESET`. The `MEDIA` row shows the currently mounted disk or media next to the entry. `Esc` from a submenu returns to this overview; `Esc` from the overview closes the emulator menu.
@@ -160,6 +175,7 @@ Menu entries:
 | `NOISE LEVEL` | Soft to harsh | Adjusts the generated SID noise amount. Lower values are cleaner; higher values make noise-heavy effects more aggressive. |
 | `SID MODEL` | `6581` / `8580` | Switches the SID character model. `6581` is the older, rougher sounding chip family; `8580` is cleaner and behaves differently for some filters and digi tricks. |
 | `JOYSTICK` | `PORT 2`, `PORT 1`, `BOTH` | Selects which C64 joystick port receives keyboard/gamepad joystick input. Most C64 games use port 2, while some use port 1. `BOTH` mirrors input to both ports for convenience. |
+| `KEYBOARD` | `EN` / `GER` | Selects the host keyboard layout used before PC keys are mapped to C64 keys. In `GER` mode, `Y`/`Z` behave as expected on a German keyboard. Remote keyboard input is mapped on the client before it is sent to the host. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
@@ -181,6 +197,8 @@ The `MEDIA` browser opened from the F10 overview has its own controls:
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` | Select a directory or media file. |
+| `PageUp` / `PageDown` | Jump by one visible page through long directories. |
+| `A` - `Z` | Jump to the next entry whose real file/directory name starts with that letter. Repeating the same letter cycles through matching entries and wraps around. |
 | `Enter` | Enter a directory or mount the selected `.prg`, `.d64`, or `.crt`. Mounting media returns to the F10 overview. |
 | `Left` / `Right` | Change the target drive from 8 to 11. |
 | `8` / `9` / `0` / `1` | Select target drive 8, 9, 10, or 11. |
@@ -196,10 +214,12 @@ README.md
 LICENSE
 docs/
   screenshots/
+  workflow notes and golden manifests
 C64Emulator/
   C64Emulator.csproj
   C64Window.cs
   Program.cs
+  Accuracy/      Built-in accuracy checks
   Machine/       C64 model, system coordinator, and memory bus
   Cartridge/     Cartridge images such as EasyFlash
   Expansion/     Expansion-port devices such as REU
@@ -207,13 +227,19 @@ C64Emulator/
   Vic/           VIC-II, video timing, bus planning, and framebuffer
   Sid/           SID emulation and audio output
   Cia/           CIA1/CIA2 peripheral chips
+  DevTools/      Trace/export helpers for emulator development
+  Golden/        Manifest-driven golden regression runner
+  SaveStates/    Savestate format, migration, and serialization
   Input/         Joystick and host input mapping
   Media/         PRG loading, D64 parsing, and mounted media state
   Iec/           IEC bus and high-level drive protocol bridge
   Drive1541/     1541 drive hardware, VIA, bus, and disk mechanism
-  Network/       C64Net TLS/TCP protocol, host server, and remote client transport
+  Network/       C64Net TLS/TCP, Relay Mode, host server, and remote client transport
   Updates/       GitHub release startup update checker
   Properties/
+relay_server/    Optional Python TLS relay and Ubuntu systemd service scripts
+scripts/         Release, installer, golden-test, VICE-test, and fixture helpers
+installer/       Inno Setup script for the Windows installer
 SharpPixels/
   SharpPixels.csproj
   Input/         OpenTK input compatibility types used by the emulator
@@ -285,21 +311,28 @@ The executable also exposes a few headless checks that are useful before accurac
 C64Emulator\bin\x64\Release\C64Emulator.exe --check-roms
 C64Emulator\bin\x64\Release\C64Emulator.exe --self-test-cpu C64Emulator\bin\x64\Release\cpu_self_test.log
 C64Emulator\bin\x64\Release\C64Emulator.exe --accuracy-tests C64Emulator\bin\x64\Release\accuracy_tests.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --migrate-savestates "%APPDATA%\C64Emulator\saves" "%APPDATA%\C64Emulator\saves\savestate-migration.log"
 C64Emulator\bin\x64\Release\C64Emulator.exe --trace-cycles 20000 C64Emulator\bin\x64\Release\trace_cycles.csv 63
 C64Emulator\bin\x64\Release\C64Emulator.exe --trace-machine 20000 C64Emulator\bin\x64\Release\trace_machine.jsonl 1
 C64Emulator\bin\x64\Release\C64Emulator.exe --golden-run docs\golden-manifest.sample.json artifacts\golden
 C64Emulator\bin\x64\Release\C64Emulator.exe --golden-accept docs\golden-manifest.sample.json artifacts\golden\golden-results.json artifacts\golden\accepted-manifest.json
 C64Emulator\bin\x64\Release\C64Emulator.exe --golden-compare artifacts\reference\golden-results.json artifacts\candidate\golden-results.json artifacts\candidate\golden-compare.log
 C64Emulator\bin\x64\Release\C64Emulator.exe --regression-run "" 500000 C64Emulator\bin\x64\Release\regression_boot.log C64Emulator\bin\x64\Release\regression_boot.ppm
+C64Emulator\bin\x64\Release\C64Emulator.exe --render-savestate "%APPDATA%\C64Emulator\saves\example.c64sav" 1 C64Emulator\bin\x64\Release\savestate_frame.ppm
+C64Emulator\bin\x64\Release\C64Emulator.exe --run-prg-sys tests\example.prg 0x080D 1000000 C64Emulator\bin\x64\Release\prg_sys.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --probe-run-d64 disks\example.d64 C64Emulator\bin\x64\Release\probe_run_d64.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --probe-iec-load disks\example.d64 C64Emulator\bin\x64\Release\probe_iec_load.log
+C64Emulator\bin\x64\Release\C64Emulator.exe --probe-easyflash-input carts\example.crt C64Emulator\bin\x64\Release\easyflash_probe.log C64Emulator\bin\x64\Release\easyflash_probe.ppm
 C64Emulator\bin\x64\Release\C64Emulator.exe --benchmark 2000000 C64Emulator\bin\x64\Release\benchmark.log
 ```
 
-`--trace-machine` writes structured JSONL samples for cycle-accuracy work, including CPU bus accesses, VIC pipeline state, BA/AEC state, and 1541 scheduler state. `--golden-run` executes an external manifest and writes JSON plus JUnit XML results. `--golden-accept` refreshes manifest expectations from an accepted run, and `--golden-compare` compares two result JSON files. The current cycle-accuracy implementation worklog is in `docs/cycle-accuracy-worklog.md`; the baseline workflow is described in `docs/golden-reference-workflow.md`.
+`--trace-machine` writes structured JSONL samples for cycle-accuracy work, including CPU bus accesses, VIC pipeline state, BA/AEC state, and 1541 scheduler state. `--golden-run` executes an external manifest and writes JSON plus JUnit XML results. `--golden-accept` refreshes manifest expectations from an accepted run, and `--golden-compare` compares two result JSON files. The probe commands are development helpers for PRG/SYS test programs, D64 boot/load behavior, savestate rendering, and EasyFlash input paths. The current cycle-accuracy implementation worklog is in `docs/cycle-accuracy-worklog.md`; the baseline workflow is described in `docs/golden-reference-workflow.md`.
 
-For local VIC-II accuracy work, the helper scripts in `scripts/` can run and compare imported VICE VIC-II reference tests. Keep the upstream `vice_VICII_tests` directory local; it is intentionally ignored by git.
+For local accuracy work, the helper scripts in `scripts/` can run and compare imported VICE VIC-II and C64 test programs. Keep upstream test-suite directories such as `vice_VICII_tests` and `vice_testprogs` local; they are test inputs, not source files to redistribute in this repository.
 
 ```powershell
 .\scripts\run-vice-vicii-tests.ps1 -IncludeDirectories border,D011Test,dentest,greydot -NoDiff
+.\scripts\run-vice-c64-exitcode-tests.ps1 -TestRoot .\vice_testprogs -IncludeGroups CPU
 .\scripts\compare-vicii-reference.ps1 -ReferenceFrame path\to\reference.png -EmulatorFrame path\to\frame.ppm -AutoAlign
 ```
 
@@ -325,11 +358,11 @@ The drive activity footer can be toggled through the `DRIVE OVERLAY` entry in th
 
 ## Media Handling
 
-PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM. EasyFlash `.crt` images are inserted through the cartridge expansion-port path and can be enabled, disabled, saved, or ejected from the settings overlay.
+PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM. EasyFlash `.crt` images are inserted through the cartridge expansion-port path and can be enabled, disabled, saved, or ejected from the settings overlay. Other CRT cartridge types are not treated as generic cartridges yet; the current cartridge loader expects EasyFlash CRT images.
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
 
-Media can be selected from the `MEDIA` entry in the `F10` main menu or dropped directly onto the emulator window. The default user media directory is `%USERPROFILE%\Documents\C64Emulator`; the emulator creates it on demand and remembers the last media browser directory. Dropped D64 images use the menu's current target drive.
+Media can be selected from the `MEDIA` entry in the `F10` main menu or dropped directly onto the emulator window. The default user media directory is `%USERPROFILE%\Documents\C64Emulator`; the emulator creates it on demand and remembers the last media browser directory. The media browser shows file sizes, includes a proportional scrollbar for long directories, supports page jumps, and supports first-letter navigation. Dropped D64 images use the menu's current target drive.
 
 The D64 parser handles the common 35-track layout and extended image sizes where supported by the image parser. Some copy-protected titles or custom fast loaders can still expose gaps in the current 1541 accuracy work.
 
@@ -341,7 +374,7 @@ Transfers run as DMA: the CPU is held while the REC consumes available CPU bus c
 
 ## Savestates
 
-Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay. Deleting a savestate always opens a `YES` / `NO` confirmation first.
+Savestates are stored as individual files in `%APPDATA%\C64Emulator\saves`. A savestate contains the C64 machine state, chip state, mounted drive state, metadata, and a screenshot preview used by the `F12` overlay. Deleting a savestate always opens a `YES` / `NO` confirmation first. If the delete leaves a per-title save folder empty, that folder is removed automatically while the top-level save root is kept.
 
 <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="403">
 
@@ -357,7 +390,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted media files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening disk/program files or rejoining a previous server.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
 
 ## ROM Files
 
