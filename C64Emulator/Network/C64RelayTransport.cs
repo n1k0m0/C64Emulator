@@ -46,6 +46,7 @@ namespace C64Emulator.Network
     /// </summary>
     public sealed class C64RelayServerListener : IDisposable
     {
+        private const int RelayHandshakeTimeoutMilliseconds = 8000;
         private readonly BlockingCollection<C64RelayAcceptedClient> _acceptedClients = new BlockingCollection<C64RelayAcceptedClient>();
         private readonly List<Task> _handshakeTasks = new List<Task>();
         private readonly object _syncRoot = new object();
@@ -190,7 +191,15 @@ namespace C64Emulator.Network
                 try
                 {
                     string fingerprint;
+                    rawStream.ReadTimeout = RelayHandshakeTimeoutMilliseconds;
+                    rawStream.WriteTimeout = RelayHandshakeTimeoutMilliseconds;
                     Stream encryptedStream = C64RelayE2EStream.CreateServer(rawStream, ConnectionId, out fingerprint);
+                    if (encryptedStream.CanTimeout)
+                    {
+                        encryptedStream.ReadTimeout = RelayHandshakeTimeoutMilliseconds;
+                        encryptedStream.WriteTimeout = RelayHandshakeTimeoutMilliseconds;
+                    }
+
                     var accepted = new C64RelayAcceptedClient(
                         encryptedStream,
                         "relay",
@@ -221,6 +230,27 @@ namespace C64Emulator.Network
         private static string NormalizeConnectionId(string connectionId)
         {
             return string.IsNullOrWhiteSpace(connectionId) ? "default" : connectionId.Trim();
+        }
+
+        private static bool IsTimeoutException(Exception exception)
+        {
+            while (exception != null)
+            {
+                if (exception is TimeoutException)
+                {
+                    return true;
+                }
+
+                if (exception.Message != null &&
+                    exception.Message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                exception = exception.InnerException;
+            }
+
+            return false;
         }
     }
 
@@ -260,6 +290,8 @@ namespace C64Emulator.Network
     /// </summary>
     public static class C64RelayClientConnector
     {
+        private const int RelayHandshakeTimeoutMilliseconds = 8000;
+
         /// <summary>
         /// Connects to a relay server and returns a C64Net-compatible encrypted stream.
         /// </summary>
@@ -291,9 +323,24 @@ namespace C64Emulator.Network
             {
                 relayFingerprint = connection.RelayFingerprint;
                 C64RelayRawStream rawStream = connection.GetClientChannel();
+                rawStream.ReadTimeout = RelayHandshakeTimeoutMilliseconds;
+                rawStream.WriteTimeout = RelayHandshakeTimeoutMilliseconds;
                 Stream encryptedStream = C64RelayE2EStream.CreateClient(rawStream, NormalizeConnectionId(connectionId), out sessionFingerprint);
+                if (encryptedStream.CanTimeout)
+                {
+                    encryptedStream.ReadTimeout = RelayHandshakeTimeoutMilliseconds;
+                    encryptedStream.WriteTimeout = RelayHandshakeTimeoutMilliseconds;
+                }
+
                 status = "RELAY CONNECTED";
                 return new C64RelayOwnedStream(encryptedStream, connection);
+            }
+            catch (IOException ex)
+            {
+                Debug.WriteLine(ex);
+                connection.Dispose();
+                status = IsTimeoutException(ex) ? "RELAY HOST TIMEOUT" : "RELAY E2E FAILED";
+                return null;
             }
             catch (Exception ex)
             {
@@ -307,6 +354,33 @@ namespace C64Emulator.Network
         private static string NormalizeConnectionId(string connectionId)
         {
             return string.IsNullOrWhiteSpace(connectionId) ? "default" : connectionId.Trim();
+        }
+
+        private static bool IsTimeoutException(Exception exception)
+        {
+            while (exception != null)
+            {
+                if (exception is TimeoutException)
+                {
+                    return true;
+                }
+
+                if (exception.Message != null &&
+                    exception.Message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                if (exception is SocketException socketException &&
+                    socketException.SocketErrorCode == SocketError.TimedOut)
+                {
+                    return true;
+                }
+
+                exception = exception.InnerException;
+            }
+
+            return false;
         }
     }
 
@@ -330,6 +404,8 @@ namespace C64Emulator.Network
 
     internal sealed class C64RelayConnection : IDisposable
     {
+        private const int TcpConnectTimeoutMilliseconds = 3000;
+        private const int RelayControlHandshakeTimeoutMilliseconds = 5000;
         private const int ProtocolVersion = 1;
         private const int HeaderLength = 16;
         private const int Magic = 0x52343643;
@@ -364,8 +440,9 @@ namespace C64Emulator.Network
             {
                 _tcpClient = new TcpClient();
                 _tcpClient.NoDelay = true;
+                ApplySocketTimeouts(_tcpClient, RelayControlHandshakeTimeoutMilliseconds);
                 Task connectTask = _tcpClient.ConnectAsync(host, port);
-                if (!connectTask.Wait(3000))
+                if (!connectTask.Wait(TcpConnectTimeoutMilliseconds))
                 {
                     status = "RELAY TIMEOUT";
                     return false;
@@ -373,6 +450,7 @@ namespace C64Emulator.Network
 
                 string tlsStatus;
                 _stream = C64NetTls.AuthenticateClient(_tcpClient, host, port, out tlsStatus);
+                ApplyStreamTimeouts(_stream, RelayControlHandshakeTimeoutMilliseconds);
                 RelayFingerprint = C64NetTls.GetTrustedServerShortFingerprint(host, port);
                 SendFrame(C64RelayFrameType.Register, 0, CreateRegisterPayload(role, connectionId));
                 C64RelayFrame response = ReadFrame(_stream);
@@ -407,6 +485,8 @@ namespace C64Emulator.Network
                 }
 
                 _shutdown = new CancellationTokenSource();
+                ApplyStreamTimeouts(_stream, Timeout.Infinite);
+                ApplySocketTimeouts(_tcpClient, Timeout.Infinite);
                 _receiveTask = Task.Run(() => ReceiveLoop(_shutdown.Token));
                 status = string.IsNullOrWhiteSpace(relayStatus) ? "RELAY CONNECTED" : relayStatus;
                 return true;
@@ -426,7 +506,7 @@ namespace C64Emulator.Network
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                status = "RELAY CONNECT FAILED";
+                status = IsTimeoutException(ex) ? "RELAY TIMEOUT" : "RELAY CONNECT FAILED";
                 return false;
             }
         }
@@ -696,6 +776,56 @@ namespace C64Emulator.Network
             return true;
         }
 
+        private static void ApplySocketTimeouts(TcpClient tcpClient, int timeoutMilliseconds)
+        {
+            if (tcpClient == null)
+            {
+                return;
+            }
+
+            int socketTimeout = timeoutMilliseconds == Timeout.Infinite ? 0 : timeoutMilliseconds;
+            tcpClient.ReceiveTimeout = socketTimeout;
+            tcpClient.SendTimeout = socketTimeout;
+        }
+
+        private static void ApplyStreamTimeouts(Stream stream, int timeoutMilliseconds)
+        {
+            if (stream == null || !stream.CanTimeout)
+            {
+                return;
+            }
+
+            stream.ReadTimeout = timeoutMilliseconds;
+            stream.WriteTimeout = timeoutMilliseconds;
+        }
+
+        private static bool IsTimeoutException(Exception exception)
+        {
+            while (exception != null)
+            {
+                if (exception is TimeoutException)
+                {
+                    return true;
+                }
+
+                if (exception.Message != null &&
+                    exception.Message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                if (exception is SocketException socketException &&
+                    socketException.SocketErrorCode == SocketError.TimedOut)
+                {
+                    return true;
+                }
+
+                exception = exception.InnerException;
+            }
+
+            return false;
+        }
+
         private static void WriteString(BinaryWriter writer, string value)
         {
             byte[] bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
@@ -761,6 +891,8 @@ namespace C64Emulator.Network
         private readonly Queue<byte[]> _incoming = new Queue<byte[]>();
         private byte[] _currentReadBuffer;
         private int _currentReadOffset;
+        private int _readTimeout = Timeout.Infinite;
+        private int _writeTimeout = Timeout.Infinite;
         private bool _closed;
         private bool _disposed;
 
@@ -785,6 +917,23 @@ namespace C64Emulator.Network
         public override bool CanWrite
         {
             get { return true; }
+        }
+
+        public override bool CanTimeout
+        {
+            get { return true; }
+        }
+
+        public override int ReadTimeout
+        {
+            get { return _readTimeout; }
+            set { _readTimeout = ValidateTimeout(value, nameof(value)); }
+        }
+
+        public override int WriteTimeout
+        {
+            get { return _writeTimeout; }
+            set { _writeTimeout = ValidateTimeout(value, nameof(value)); }
         }
 
         public override long Length
@@ -819,7 +968,7 @@ namespace C64Emulator.Network
             {
                 while (!_closed && !HasBufferedData())
                 {
-                    Monitor.Wait(_syncRoot);
+                    WaitForBufferedDataOrTimeout();
                 }
 
                 if (!HasBufferedData())
@@ -934,6 +1083,41 @@ namespace C64Emulator.Network
         {
             return (_currentReadBuffer != null && _currentReadOffset < _currentReadBuffer.Length) || _incoming.Count > 0;
         }
+
+        private void WaitForBufferedDataOrTimeout()
+        {
+            int timeout = _readTimeout;
+            if (timeout == Timeout.Infinite)
+            {
+                Monitor.Wait(_syncRoot);
+                return;
+            }
+
+            long deadlineTicks = DateTime.UtcNow.AddMilliseconds(timeout).Ticks;
+            while (!_closed && !HasBufferedData())
+            {
+                long remainingTicks = deadlineTicks - DateTime.UtcNow.Ticks;
+                if (remainingTicks <= 0)
+                {
+                    throw new IOException("Relay channel read timed out.");
+                }
+
+                int remainingMilliseconds = (int)Math.Min(
+                    int.MaxValue,
+                    Math.Max(1, remainingTicks / TimeSpan.TicksPerMillisecond));
+                Monitor.Wait(_syncRoot, remainingMilliseconds);
+            }
+        }
+
+        private static int ValidateTimeout(int timeout, string parameterName)
+        {
+            if (timeout < Timeout.Infinite)
+            {
+                throw new ArgumentOutOfRangeException(parameterName);
+            }
+
+            return timeout;
+        }
     }
 
     internal sealed class C64RelayOwnedStream : Stream
@@ -960,6 +1144,23 @@ namespace C64Emulator.Network
         public override bool CanWrite
         {
             get { return _inner.CanWrite; }
+        }
+
+        public override bool CanTimeout
+        {
+            get { return _inner.CanTimeout; }
+        }
+
+        public override int ReadTimeout
+        {
+            get { return _inner.ReadTimeout; }
+            set { _inner.ReadTimeout = value; }
+        }
+
+        public override int WriteTimeout
+        {
+            get { return _inner.WriteTimeout; }
+            set { _inner.WriteTimeout = value; }
         }
 
         public override long Length
@@ -1072,6 +1273,23 @@ namespace C64Emulator.Network
         public override bool CanWrite
         {
             get { return true; }
+        }
+
+        public override bool CanTimeout
+        {
+            get { return _inner.CanTimeout; }
+        }
+
+        public override int ReadTimeout
+        {
+            get { return _inner.ReadTimeout; }
+            set { _inner.ReadTimeout = value; }
+        }
+
+        public override int WriteTimeout
+        {
+            get { return _inner.WriteTimeout; }
+            set { _inner.WriteTimeout = value; }
         }
 
         public override long Length

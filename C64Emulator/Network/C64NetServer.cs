@@ -38,6 +38,7 @@ namespace C64Emulator.Network
     /// </remarks>
     public sealed class C64NetServer : IDisposable
     {
+        private const int ConnectionHandshakeTimeoutMilliseconds = 8000;
         /// <summary>
         /// Guards the listener, client list, ban list, and shared host status fields.
         /// </summary>
@@ -738,6 +739,7 @@ namespace C64Emulator.Network
             ClientConnection client = null;
             try
             {
+                ApplyStreamTimeouts(stream, ConnectionHandshakeTimeoutMilliseconds);
                 C64NetMessage hello = C64NetProtocol.ReadMessage(stream);
                 AddBytesReceived(hello != null ? hello.WireLength : 0);
                 if (hello == null || hello.Type != C64NetMessageType.ClientHello)
@@ -800,6 +802,7 @@ namespace C64Emulator.Network
                 AddBytesSent(C64NetProtocol.WriteMessage(stream, CreateMessage(
                     C64NetMessageType.ServerWelcome,
                     C64NetProtocol.CreateServerWelcomePayload(clientId, _videoWidth, _videoHeight, C64NetProtocol.DefaultAudioSampleRate, role, permission, client.KeyboardEnabled, IsRelayMode ? "RELAY CONNECTED E2E" : "TLS CONNECTED"))));
+                ApplyStreamTimeouts(stream, Timeout.Infinite);
 
                 // Add the client only after welcome was sent, so the UI never shows a
                 // half-handshaken socket.
@@ -859,6 +862,17 @@ namespace C64Emulator.Network
                 {
                 }
             }
+        }
+
+        private static void ApplyStreamTimeouts(Stream stream, int timeoutMilliseconds)
+        {
+            if (stream == null || !stream.CanTimeout)
+            {
+                return;
+            }
+
+            stream.ReadTimeout = timeoutMilliseconds;
+            stream.WriteTimeout = timeoutMilliseconds;
         }
 
         /// <summary>

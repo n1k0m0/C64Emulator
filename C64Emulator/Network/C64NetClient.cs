@@ -44,6 +44,7 @@ namespace C64Emulator.Network
         /// Time after which an unanswered latency probe may be retried.
         /// </summary>
         private const long LatencyPingTimeoutTicks = TimeSpan.TicksPerSecond * 3;
+        private const int ConnectionHandshakeTimeoutMilliseconds = 8000;
         /// <summary>
         /// Serializes writes from UI/input callbacks against ping/pong responses.
         /// </summary>
@@ -324,6 +325,7 @@ namespace C64Emulator.Network
             status = string.Empty;
             try
             {
+                ApplyStreamTimeouts(_stream, ConnectionHandshakeTimeoutMilliseconds);
                 // ClientHello is the only message the server accepts before welcome/reject.
                 AddBytesSent(C64NetProtocol.WriteMessage(_stream, new C64NetMessage
                 {
@@ -378,6 +380,7 @@ namespace C64Emulator.Network
                 KeyboardEnabled = keyboardEnabled;
                 StatusText = string.IsNullOrWhiteSpace(welcomeStatus) ? "CONNECTED" : welcomeStatus;
                 _connected = true;
+                ApplyStreamTimeouts(_stream, Timeout.Infinite);
 
                 try
                 {
@@ -401,10 +404,50 @@ namespace C64Emulator.Network
             catch (Exception ex)
             {
                 Debug.WriteLine(ex);
-                status = TransportMode == C64NetTransportMode.Relay ? "RELAY HOST FAILED" : "CONNECT FAILED";
+                status = TransportMode == C64NetTransportMode.Relay && IsTimeoutException(ex)
+                    ? "RELAY HOST TIMEOUT"
+                    : (TransportMode == C64NetTransportMode.Relay ? "RELAY HOST FAILED" : "CONNECT FAILED");
                 Disconnect();
                 return false;
             }
+        }
+
+        private static void ApplyStreamTimeouts(Stream stream, int timeoutMilliseconds)
+        {
+            if (stream == null || !stream.CanTimeout)
+            {
+                return;
+            }
+
+            stream.ReadTimeout = timeoutMilliseconds;
+            stream.WriteTimeout = timeoutMilliseconds;
+        }
+
+        private static bool IsTimeoutException(Exception exception)
+        {
+            while (exception != null)
+            {
+                if (exception is TimeoutException)
+                {
+                    return true;
+                }
+
+                if (exception.Message != null &&
+                    exception.Message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                if (exception is SocketException socketException &&
+                    socketException.SocketErrorCode == SocketError.TimedOut)
+                {
+                    return true;
+                }
+
+                exception = exception.InnerException;
+            }
+
+            return false;
         }
 
         /// <summary>
