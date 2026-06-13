@@ -261,6 +261,29 @@ namespace SharpPixels
     }
 
     /// <summary>
+    /// Selects the GPU-side source presentation filter used by the emulator fast path.
+    /// </summary>
+    public enum SharpPixelsGpuFilterMode
+    {
+        Sharp = 0,
+        Crt = 1,
+        Tv = 2
+    }
+
+    /// <summary>
+    /// Selects the optional GPU-side source upscaler applied before the presentation filter.
+    /// </summary>
+    public enum SharpPixelsGpuUpscaleMode
+    {
+        None = 0,
+        Scale2x = 1,
+        Scale3x = 2,
+        Hq2x = 3,
+        Hq3x = 4,
+        Hq4x = 5
+    }
+
+    /// <summary>
     /// Engine that allows to easily draw pixels on the screen
     /// </summary>
     public abstract unsafe class SharpPixelsWindow : GameWindow, IDisposable
@@ -314,8 +337,15 @@ namespace SharpPixels
         private int _vertexArrayObject;
         private int _vertexBufferObject;
         private int _textureHandle;
+        private int _sourceTextureHandle;
         private int _texCoordLocation;
         private int _textureUniformLocation;
+        private int _filterModeUniformLocation;
+        private int _upscaleModeUniformLocation;
+        private int _upscaleFactorUniformLocation;
+        private int _cropOriginUniformLocation;
+        private int _cropSizeUniformLocation;
+        private int _sourceTextureSizeUniformLocation;
         private Shader _shader;
         private byte[] _pixels;
         private readonly List<Bitmap> _expiredBitmapScratch = new List<Bitmap>();
@@ -329,6 +359,43 @@ namespace SharpPixels
         private int _stretchMapSourceHeight;
         private int _stretchMapTargetWidth;
         private int _stretchMapTargetHeight;
+        private int _sourceTextureWidth;
+        private int _sourceTextureHeight;
+        private uint[] _gpuSourcePixels;
+        private int _gpuSourceWidth;
+        private int _gpuSourceHeight;
+        private int _gpuSourceCropX;
+        private int _gpuSourceCropY;
+        private int _gpuSourceCropWidth;
+        private int _gpuSourceCropHeight;
+        private int _gpuDestinationX;
+        private int _gpuDestinationY;
+        private int _gpuDestinationWidth;
+        private int _gpuDestinationHeight;
+        private byte _gpuBorderRed;
+        private byte _gpuBorderGreen;
+        private byte _gpuBorderBlue;
+        private SharpPixelsGpuFilterMode _gpuFilterMode;
+        private SharpPixelsGpuUpscaleMode _gpuUpscaleMode;
+        private int _gpuUpscaleFactor = 1;
+        private bool _gpuSourcePresentationPending;
+        private bool _overlayLayerMode;
+        private bool _overlayTextureIsTransparent;
+        private bool _overlayUploadDirty;
+        private bool _overlayCurrentDirty;
+        private bool _overlayPreviousDirty;
+        private int _overlayUploadMinX;
+        private int _overlayUploadMinY;
+        private int _overlayUploadMaxX;
+        private int _overlayUploadMaxY;
+        private int _overlayCurrentMinX;
+        private int _overlayCurrentMinY;
+        private int _overlayCurrentMaxX;
+        private int _overlayCurrentMaxY;
+        private int _overlayPreviousMinX;
+        private int _overlayPreviousMinY;
+        private int _overlayPreviousMaxX;
+        private int _overlayPreviousMaxY;
         private Vector2i _windowedClientSize;
         private Vector2i _windowedLocation;
         private WindowState _windowedState = WindowState.Normal;
@@ -553,6 +620,7 @@ namespace SharpPixels
 
             _vertexBufferObject = GL.GenBuffer();
             _textureHandle = GL.GenTexture();
+            _sourceTextureHandle = GL.GenTexture();
             _shader = new Shader(Properties.Resources.vert, Properties.Resources.frag);
             if (!_shader.Compile())
             {
@@ -562,6 +630,12 @@ namespace SharpPixels
             _shader.Use();
             _texCoordLocation = GL.GetAttribLocation(_shader.Handle, "aTexCoord");
             _textureUniformLocation = GL.GetUniformLocation(_shader.Handle, "texture0");
+            _filterModeUniformLocation = GL.GetUniformLocation(_shader.Handle, "filterMode");
+            _upscaleModeUniformLocation = GL.GetUniformLocation(_shader.Handle, "upscaleMode");
+            _upscaleFactorUniformLocation = GL.GetUniformLocation(_shader.Handle, "upscaleFactor");
+            _cropOriginUniformLocation = GL.GetUniformLocation(_shader.Handle, "cropOrigin");
+            _cropSizeUniformLocation = GL.GetUniformLocation(_shader.Handle, "cropSize");
+            _sourceTextureSizeUniformLocation = GL.GetUniformLocation(_shader.Handle, "sourceTextureSize");
             if (_textureUniformLocation >= 0)
             {
                 GL.Uniform1(_textureUniformLocation, 0);
@@ -577,6 +651,12 @@ namespace SharpPixels
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, PixelsWidth, PixelsHeight, 0, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
+
+            GL.BindTexture(TextureTarget.Texture2D, _sourceTextureHandle);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
             GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
@@ -617,6 +697,11 @@ namespace SharpPixels
             if (_textureHandle != 0)
             {
                 GL.DeleteTexture(_textureHandle);
+            }
+
+            if (_sourceTextureHandle != 0)
+            {
+                GL.DeleteTexture(_sourceTextureHandle);
             }
 
             _shader.Dispose();
@@ -670,14 +755,14 @@ namespace SharpPixels
             //call the user update method where the user updates the graphics etc
             OnUserUpdate(frameEventArgs.Time);
 
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
-            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, _pixelBufferPointer);
-
-            _shader.Use();
-
-            GL.BindVertexArray(_vertexArrayObject);
-            GL.DrawArrays(PrimitiveType.Triangles, 0, vertices.Length / 5);
+            if (_gpuSourcePresentationPending)
+            {
+                RenderGpuSourcePresentation();
+            }
+            else
+            {
+                RenderPixelBufferPresentation();
+            }
 
             // Calls OnUserKeyPress method for all pressed keys
             var dateTimeNow = DateTime.Now;
@@ -720,6 +805,196 @@ namespace SharpPixels
             }
             SwapBuffers();
             base.OnRenderFrame(frameEventArgs);
+        }
+
+        /// <summary>
+        /// Presents the traditional full-window CPU pixel buffer.
+        /// </summary>
+        private void RenderPixelBufferPresentation()
+        {
+            _overlayTextureIsTransparent = false;
+            _overlayLayerMode = false;
+
+            SetFullClientViewport();
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
+            GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, PixelsWidth, PixelsHeight, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, _pixelBufferPointer);
+
+            _shader.Use();
+            SetShaderPresentationUniforms(SharpPixelsGpuFilterMode.Sharp, SharpPixelsGpuUpscaleMode.None, 1, 0.0f, 0.0f, PixelsWidth, PixelsHeight, PixelsWidth, PixelsHeight);
+            DrawTexturedQuad();
+        }
+
+        /// <summary>
+        /// Presents a small source texture through the GPU and blends the dirty overlay layer on top.
+        /// </summary>
+        private void RenderGpuSourcePresentation()
+        {
+            UploadGpuSourceTexture();
+
+            GL.Disable(EnableCap.Blend);
+            SetFullClientViewport();
+            GL.ClearColor(_gpuBorderRed / 255.0f, _gpuBorderGreen / 255.0f, _gpuBorderBlue / 255.0f, 1.0f);
+            GL.Clear(ClearBufferMask.ColorBufferBit);
+
+            SetLogicalViewport(_gpuDestinationX, _gpuDestinationY, _gpuDestinationWidth, _gpuDestinationHeight);
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _sourceTextureHandle);
+
+            _shader.Use();
+            SetShaderPresentationUniforms(
+                _gpuFilterMode,
+                _gpuUpscaleMode,
+                _gpuUpscaleFactor,
+                _gpuSourceCropX,
+                _gpuSourceCropY,
+                _gpuSourceCropWidth,
+                _gpuSourceCropHeight,
+                _gpuSourceWidth,
+                _gpuSourceHeight);
+            DrawTexturedQuad();
+
+            UploadOverlayTextureDirtyRegion();
+            if (_overlayCurrentDirty)
+            {
+                SetFullClientViewport();
+                GL.Enable(EnableCap.Blend);
+                GL.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+                GL.ActiveTexture(TextureUnit.Texture0);
+                GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
+                SetShaderPresentationUniforms(SharpPixelsGpuFilterMode.Sharp, SharpPixelsGpuUpscaleMode.None, 1, 0.0f, 0.0f, PixelsWidth, PixelsHeight, PixelsWidth, PixelsHeight);
+                DrawTexturedQuad();
+                GL.Disable(EnableCap.Blend);
+            }
+
+            _overlayPreviousDirty = _overlayCurrentDirty;
+            _overlayPreviousMinX = _overlayCurrentMinX;
+            _overlayPreviousMinY = _overlayCurrentMinY;
+            _overlayPreviousMaxX = _overlayCurrentMaxX;
+            _overlayPreviousMaxY = _overlayCurrentMaxY;
+            _overlayLayerMode = false;
+            _gpuSourcePresentationPending = false;
+        }
+
+        /// <summary>
+        /// Uploads the current C64 source pixels into the small GPU texture.
+        /// </summary>
+        private void UploadGpuSourceTexture()
+        {
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _sourceTextureHandle);
+            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+
+            if (_sourceTextureWidth != _gpuSourceWidth || _sourceTextureHeight != _gpuSourceHeight)
+            {
+                _sourceTextureWidth = _gpuSourceWidth;
+                _sourceTextureHeight = _gpuSourceHeight;
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, _sourceTextureWidth, _sourceTextureHeight, 0, OpenTK.Graphics.OpenGL4.PixelFormat.Bgra, PixelType.UnsignedByte, IntPtr.Zero);
+            }
+
+            fixed (uint* sourcePointer = _gpuSourcePixels)
+            {
+                GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, _gpuSourceWidth, _gpuSourceHeight, OpenTK.Graphics.OpenGL4.PixelFormat.Bgra, PixelType.UnsignedByte, (IntPtr)sourcePointer);
+            }
+        }
+
+        /// <summary>
+        /// Uploads only the overlay rectangle changed while drawing this frame.
+        /// </summary>
+        private void UploadOverlayTextureDirtyRegion()
+        {
+            if (!_overlayUploadDirty)
+            {
+                return;
+            }
+
+            int x = _overlayUploadMinX;
+            int y = _overlayUploadMinY;
+            int width = _overlayUploadMaxX - _overlayUploadMinX;
+            int height = _overlayUploadMaxY - _overlayUploadMinY;
+            if (width <= 0 || height <= 0)
+            {
+                _overlayUploadDirty = false;
+                return;
+            }
+
+            IntPtr uploadPointer = IntPtr.Add(_pixelBufferPointer, ((y * PixelsWidth) + x) << 2);
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _textureHandle);
+            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            GL.PixelStore(PixelStoreParameter.UnpackRowLength, PixelsWidth);
+            GL.TexSubImage2D(TextureTarget.Texture2D, 0, x, y, width, height, OpenTK.Graphics.OpenGL4.PixelFormat.Rgba, PixelType.UnsignedByte, uploadPointer);
+            GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+            _overlayUploadDirty = false;
+        }
+
+        /// <summary>
+        /// Configures the shared presentation shader for either direct or filtered output.
+        /// </summary>
+        private void SetShaderPresentationUniforms(SharpPixelsGpuFilterMode filterMode, SharpPixelsGpuUpscaleMode upscaleMode, int upscaleFactor, float cropX, float cropY, float cropWidth, float cropHeight, float sourceWidth, float sourceHeight)
+        {
+            if (_filterModeUniformLocation >= 0)
+            {
+                GL.Uniform1(_filterModeUniformLocation, (int)filterMode);
+            }
+
+            if (_upscaleModeUniformLocation >= 0)
+            {
+                GL.Uniform1(_upscaleModeUniformLocation, (int)upscaleMode);
+            }
+
+            if (_upscaleFactorUniformLocation >= 0)
+            {
+                GL.Uniform1(_upscaleFactorUniformLocation, Math.Max(1, upscaleFactor));
+            }
+
+            if (_cropOriginUniformLocation >= 0)
+            {
+                GL.Uniform2(_cropOriginUniformLocation, cropX, cropY);
+            }
+
+            if (_cropSizeUniformLocation >= 0)
+            {
+                GL.Uniform2(_cropSizeUniformLocation, cropWidth, cropHeight);
+            }
+
+            if (_sourceTextureSizeUniformLocation >= 0)
+            {
+                GL.Uniform2(_sourceTextureSizeUniformLocation, sourceWidth, sourceHeight);
+            }
+        }
+
+        /// <summary>
+        /// Draws the already-bound texture with the shared full-viewport quad.
+        /// </summary>
+        private void DrawTexturedQuad()
+        {
+            GL.BindVertexArray(_vertexArrayObject);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, vertices.Length / 5);
+        }
+
+        /// <summary>
+        /// Sets the OpenGL viewport to the whole current client area.
+        /// </summary>
+        private void SetFullClientViewport()
+        {
+            GL.Viewport(0, 0, Math.Max(1, ClientSize.X), Math.Max(1, ClientSize.Y));
+        }
+
+        /// <summary>
+        /// Maps a logical SharpPixels rectangle into the current OpenGL client viewport.
+        /// </summary>
+        private void SetLogicalViewport(int x, int y, int width, int height)
+        {
+            int clientWidth = Math.Max(1, ClientSize.X);
+            int clientHeight = Math.Max(1, ClientSize.Y);
+            int viewportX = (int)Math.Round((x * clientWidth) / (double)PixelsWidth);
+            int viewportY = (int)Math.Round(((PixelsHeight - y - height) * clientHeight) / (double)PixelsHeight);
+            int viewportWidth = Math.Max(1, (int)Math.Round((width * clientWidth) / (double)PixelsWidth));
+            int viewportHeight = Math.Max(1, (int)Math.Round((height * clientHeight) / (double)PixelsHeight));
+            GL.Viewport(viewportX, viewportY, viewportWidth, viewportHeight);
         }
 
         /// <summary>
@@ -1030,6 +1305,71 @@ namespace SharpPixels
         }
 
         /// <summary>
+        /// Schedules a GPU-side presentation of an ARGB source frame and switches the CPU buffer to overlay-only drawing for this frame.
+        /// </summary>
+        public bool DrawArgbPixelsGpuPresented(
+            uint[] sourcePixels,
+            int sourceWidth,
+            int sourceHeight,
+            int cropX,
+            int cropY,
+            int cropWidth,
+            int cropHeight,
+            int destinationX,
+            int destinationY,
+            int destinationWidth,
+            int destinationHeight,
+            SharpPixelsGpuFilterMode filterMode,
+            SharpPixelsGpuUpscaleMode upscaleMode,
+            int upscaleFactor,
+            byte borderRed,
+            byte borderGreen,
+            byte borderBlue)
+        {
+            if (sourcePixels == null || sourceWidth <= 0 || sourceHeight <= 0 || destinationWidth <= 0 || destinationHeight <= 0)
+            {
+                return false;
+            }
+
+            int requiredPixels = sourceWidth * sourceHeight;
+            if (sourcePixels.Length < requiredPixels)
+            {
+                return false;
+            }
+
+            int clampedCropX = ClampInt(cropX, 0, sourceWidth - 1);
+            int clampedCropY = ClampInt(cropY, 0, sourceHeight - 1);
+            int clampedCropRight = ClampInt(cropX + cropWidth, clampedCropX + 1, sourceWidth);
+            int clampedCropBottom = ClampInt(cropY + cropHeight, clampedCropY + 1, sourceHeight);
+            int clampedDestinationX = ClampInt(destinationX, 0, PixelsWidth - 1);
+            int clampedDestinationY = ClampInt(destinationY, 0, PixelsHeight - 1);
+            int clampedDestinationRight = ClampInt(destinationX + destinationWidth, clampedDestinationX + 1, PixelsWidth);
+            int clampedDestinationBottom = ClampInt(destinationY + destinationHeight, clampedDestinationY + 1, PixelsHeight);
+
+            _gpuSourcePixels = sourcePixels;
+            _gpuSourceWidth = sourceWidth;
+            _gpuSourceHeight = sourceHeight;
+            _gpuSourceCropX = clampedCropX;
+            _gpuSourceCropY = clampedCropY;
+            _gpuSourceCropWidth = clampedCropRight - clampedCropX;
+            _gpuSourceCropHeight = clampedCropBottom - clampedCropY;
+            _gpuDestinationX = clampedDestinationX;
+            _gpuDestinationY = clampedDestinationY;
+            _gpuDestinationWidth = clampedDestinationRight - clampedDestinationX;
+            _gpuDestinationHeight = clampedDestinationBottom - clampedDestinationY;
+            _gpuFilterMode = filterMode;
+            _gpuUpscaleMode = upscaleMode;
+            _gpuUpscaleFactor = Math.Max(1, Math.Min(4, upscaleFactor));
+            _gpuBorderRed = borderRed;
+            _gpuBorderGreen = borderGreen;
+            _gpuBorderBlue = borderBlue;
+            _gpuSourcePresentationPending = true;
+
+            BeginOverlayLayerForGpuSource();
+            return true;
+        }
+
+        /// <summary>
         /// Draws a pixel at x, y using the given color
         /// </summary>
         /// <param name="x">Target X coordinate in pixels.</param>
@@ -1068,6 +1408,7 @@ namespace SharpPixels
 
             uint* target = (uint*)_pixelBufferPointer.ToPointer();
             target[(y * PixelsWidth) + x] = PackRgba(red, green, blue);
+            MarkOverlayDirty(x, y, 1, 1);
         }
 
         /// <summary>
@@ -1092,7 +1433,142 @@ namespace SharpPixels
             address++;
             _pixels[address] = (byte)(_alphaMulTable[alpha, blue] + _oneMinusAlphaMulTable[alpha, _pixels[address]]);
             address++;
-            _pixels[address] = 255;
+            _pixels[address] = (byte)(alpha + _oneMinusAlphaMulTable[alpha, _pixels[address]]);
+            MarkOverlayDirty(x, y, 1, 1);
+        }
+
+        /// <summary>
+        /// Prepares the CPU buffer as a transparent overlay layer for a GPU-presented source frame.
+        /// </summary>
+        private void BeginOverlayLayerForGpuSource()
+        {
+            _overlayLayerMode = true;
+            _overlayCurrentDirty = false;
+            _overlayUploadDirty = false;
+
+            if (!_overlayTextureIsTransparent)
+            {
+                ClearPixelBufferRectangle(0, 0, PixelsWidth, PixelsHeight);
+                MarkOverlayUploadDirty(0, 0, PixelsWidth, PixelsHeight);
+                _overlayTextureIsTransparent = true;
+                _overlayPreviousDirty = false;
+                return;
+            }
+
+            if (_overlayPreviousDirty)
+            {
+                int width = _overlayPreviousMaxX - _overlayPreviousMinX;
+                int height = _overlayPreviousMaxY - _overlayPreviousMinY;
+                ClearPixelBufferRectangle(_overlayPreviousMinX, _overlayPreviousMinY, width, height);
+                MarkOverlayUploadDirty(_overlayPreviousMinX, _overlayPreviousMinY, width, height);
+            }
+        }
+
+        /// <summary>
+        /// Clears a rectangle in the CPU upload buffer to transparent black.
+        /// </summary>
+        private void ClearPixelBufferRectangle(int x, int y, int width, int height)
+        {
+            int startX = ClampInt(x, 0, PixelsWidth);
+            int startY = ClampInt(y, 0, PixelsHeight);
+            int endX = ClampInt(x + width, startX, PixelsWidth);
+            int endY = ClampInt(y + height, startY, PixelsHeight);
+            int clearBytes = (endX - startX) << 2;
+            if (clearBytes <= 0 || endY <= startY)
+            {
+                return;
+            }
+
+            for (int targetY = startY; targetY < endY; targetY++)
+            {
+                Array.Clear(_pixels, (targetY * _pixelStrideBytes) + (startX << 2), clearBytes);
+            }
+        }
+
+        /// <summary>
+        /// Marks a rectangle that should be visible in the overlay layer.
+        /// </summary>
+        private void MarkOverlayDirty(int x, int y, int width, int height)
+        {
+            if (!_overlayLayerMode || width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            int startX = ClampInt(x, 0, PixelsWidth);
+            int startY = ClampInt(y, 0, PixelsHeight);
+            int endX = ClampInt(x + width, startX, PixelsWidth);
+            int endY = ClampInt(y + height, startY, PixelsHeight);
+            if (startX >= endX || startY >= endY)
+            {
+                return;
+            }
+
+            if (!_overlayCurrentDirty)
+            {
+                _overlayCurrentMinX = startX;
+                _overlayCurrentMinY = startY;
+                _overlayCurrentMaxX = endX;
+                _overlayCurrentMaxY = endY;
+                _overlayCurrentDirty = true;
+            }
+            else
+            {
+                _overlayCurrentMinX = Math.Min(_overlayCurrentMinX, startX);
+                _overlayCurrentMinY = Math.Min(_overlayCurrentMinY, startY);
+                _overlayCurrentMaxX = Math.Max(_overlayCurrentMaxX, endX);
+                _overlayCurrentMaxY = Math.Max(_overlayCurrentMaxY, endY);
+            }
+
+            MarkOverlayUploadDirty(startX, startY, endX - startX, endY - startY);
+        }
+
+        /// <summary>
+        /// Marks a rectangle whose backing texture bytes must be refreshed, even if it only clears old overlay pixels.
+        /// </summary>
+        private void MarkOverlayUploadDirty(int x, int y, int width, int height)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            int startX = ClampInt(x, 0, PixelsWidth);
+            int startY = ClampInt(y, 0, PixelsHeight);
+            int endX = ClampInt(x + width, startX, PixelsWidth);
+            int endY = ClampInt(y + height, startY, PixelsHeight);
+            if (startX >= endX || startY >= endY)
+            {
+                return;
+            }
+
+            if (!_overlayUploadDirty)
+            {
+                _overlayUploadMinX = startX;
+                _overlayUploadMinY = startY;
+                _overlayUploadMaxX = endX;
+                _overlayUploadMaxY = endY;
+                _overlayUploadDirty = true;
+                return;
+            }
+
+            _overlayUploadMinX = Math.Min(_overlayUploadMinX, startX);
+            _overlayUploadMinY = Math.Min(_overlayUploadMinY, startY);
+            _overlayUploadMaxX = Math.Max(_overlayUploadMaxX, endX);
+            _overlayUploadMaxY = Math.Max(_overlayUploadMaxY, endY);
+        }
+
+        /// <summary>
+        /// Clamps an integer to the inclusive lower and upper-exclusive style ranges used by the drawing code.
+        /// </summary>
+        private static int ClampInt(int value, int min, int max)
+        {
+            if (value < min)
+            {
+                return min;
+            }
+
+            return value > max ? max : value;
         }
 
         /// <summary>
@@ -1982,6 +2458,7 @@ namespace SharpPixels
                 return;
             }
 
+            MarkOverlayDirty(startX, startY, endX - startX, endY - startY);
             uint packedColor = PackRgba(red, green, blue);
             uint* target = (uint*)_pixelBufferPointer.ToPointer();
             for (int targetY = startY; targetY < endY; targetY++)
@@ -2040,6 +2517,7 @@ namespace SharpPixels
                 return;
             }
 
+            MarkOverlayDirty(startX, startY, endX - startX, endY - startY);
             byte redAlpha = _alphaMulTable[alpha, red];
             byte greenAlpha = _alphaMulTable[alpha, green];
             byte blueAlpha = _alphaMulTable[alpha, blue];
@@ -2054,7 +2532,9 @@ namespace SharpPixels
                     _pixels[address] = (byte)(greenAlpha + _oneMinusAlphaMulTable[alpha, _pixels[address]]);
                     address++;
                     _pixels[address] = (byte)(blueAlpha + _oneMinusAlphaMulTable[alpha, _pixels[address]]);
-                    address += 2;
+                    address++;
+                    _pixels[address] = (byte)(alpha + _oneMinusAlphaMulTable[alpha, _pixels[address]]);
+                    address++;
                 }
             }
         }

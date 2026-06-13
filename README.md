@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.13](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.13), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.14](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.14), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -58,12 +58,12 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, configurable controller bindings, controller-driven emulator menus, keyboard cursor/control mapping, and EN/GER host keyboard layout selection.
-- Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
+- Optional sharp-pixel, CRT, and TV-grille video presentation filters, GPU-side `SCALE2X`/`SCALE3X`/`HQ2X`/`HQ3X`/`HQ4X` upscalers, and a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - REU/REC emulation with 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB capacities.
 - Startup update check against the latest GitHub Release with a setup download progress window, optional SHA-256 verification, and safe setup launch after the emulator exits.
-- Network multiplayer/remote-play sessions over mandatory TLS/TCP or optional Relay Mode: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/zoom, and can send host-approved joystick/keyboard input or watch as observers.
+- Network multiplayer/remote-play sessions over mandatory TLS/TCP or optional Relay Mode: one host runs the C64, clients receive compressed live video/audio, can apply their own local video filter/upscale/zoom, and can send host-approved joystick/keyboard input or watch as observers.
 - `SharpPixels`, a small pixel-buffer presentation library used by the emulator frontend.
 
 ## Controls
@@ -90,14 +90,14 @@ Open the main menu with `F10` and choose `NETWORK` to manage multiplayer. In hos
 
 <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="403">
 
-The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`), border-crop zoom, and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Clients may render more often than network frames arrive; the latest received frame is reused locally between network updates. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, compressed sparse-delta, XOR/RLE-delta, or compressed XOR/RLE-delta payload. Live SID audio is sent as self-contained 4-bit IMA ADPCM packets, with PCM kept as a protocol fallback. Slow clients keep only the latest pending video frame and bounded audio data, so they do not stall faster clients. The title bar and network overlay show current TLS traffic, network FPS, render FPS, and round-trip ping; the host also shows per-client latency in the client list.
+The server always starts from the raw sharp C64 framebuffer. Each client can still choose its own local presentation filter (`SHARP`, `CRT`, or `TV`), source upscaler (`NONE`, `SCALE2X`, `SCALE3X`, `HQ2X`, `HQ3X`, or `HQ4X`), border-crop zoom, and fullscreen mode. Network video is sent at most once per completed PAL C64 frame, so the practical maximum is about 50 FPS for the current PAL model. Clients may render more often than network frames arrive; the latest received frame is reused locally between network updates. Unchanged frames are skipped, and changed frames are encoded as the smallest available full, sparse-delta, compressed sparse-delta, XOR/RLE-delta, or compressed XOR/RLE-delta payload. Live SID audio is sent as self-contained 4-bit IMA ADPCM packets, with PCM kept as a protocol fallback. Slow clients keep only the latest pending video frame and bounded audio data, so they do not stall faster clients. The title bar and network overlay show current TLS traffic, network FPS, render FPS, and round-trip ping; the host also shows per-client latency in the client list.
 
 Transport details:
 
 | Area | Behavior |
 | --- | --- |
 | Security | Every C64Net session uses TLS. LAN Mode pins the C64 server certificate for the selected host/port. Relay Mode pins the relay certificate and additionally encrypts the C64 session end to end between host emulator and client emulator. Certificate changes are shown as explicit old/new fingerprint warnings before a pin can be replaced. |
-| Video source | The host sends the unfiltered sharp C64 image. Client-side `SHARP`, `CRT`, `TV`, fullscreen, and `VIDEO ZOOM` settings remain local. |
+| Video source | The host sends the unfiltered sharp C64 image. Client-side `SHARP`, `CRT`, `TV`, `VIDEO UPSCALE`, fullscreen, and `VIDEO ZOOM` settings remain local. |
 | Video compression | Frames are converted to the 16-color C64 palette and packed as 4-bit pixels. The protocol then picks the smallest full frame, sparse delta, Deflate-compressed sparse delta, XOR/RLE delta, or Deflate-compressed XOR/RLE delta. |
 | Audio compression | SID audio uses 4-bit IMA ADPCM network packets so audio bandwidth is far below raw 16-bit PCM. |
 | Flow control | The server reuses the prepared frame payload for all clients and each client queue keeps only the newest pending video frame. |
@@ -127,7 +127,8 @@ Client-side entries:
 | `CLIENT PASSWORD` | `NONE` or hidden text | Password sent to the host, if the session uses one. |
 | `CLIENT ROLE` | `PLAYER` / `OBSERVER` | Requested role. The host can still grant or remove joystick and keyboard rights after connection. |
 | `CLIENT` | `CLIENT JOIN` / `CLIENT LEAVE` | Joins or leaves the host session. |
-| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. The F10 `VIDEO ZOOM` setting is also local and remains available on clients. |
+| `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Local-only filter used for the received server image. |
+| `VIDEO UPSCALE` | `NONE`, `SCALE2X`, `SCALE3X`, `HQ2X`, `HQ3X`, `HQ4X` | Local-only GPU upscaler applied before the presentation filter. The F10 `VIDEO ZOOM` setting is also local and remains available on clients. |
 
 Network menu controls:
 
@@ -198,6 +199,7 @@ Menu entries:
 | `KEYBOARD` | `EN` / `GER` | Selects the host keyboard layout used before PC keys are mapped to C64 keys. In `GER` mode, `Y`/`Z` behave as expected on a German keyboard. Remote keyboard input is mapped on the client before it is sent to the host. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
+| `VIDEO UPSCALE` | `NONE`, `SCALE2X`, `SCALE3X`, `HQ2X`, `HQ3X`, `HQ4X` | Applies a GPU-side source upscaler before the selected `VIDEO FILTER`. This is local for normal, host, and network-client sessions. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
 | `TURBO` | `OFF` / `MAX` | Toggles uncapped emulation speed for fast loading, testing, or skipping waits. This is the same action as `F9`. |
 | `GAMEPAD` | `OFF`, `WAITING`, `ACTIVE` | Enables or disables host gamepad input. `Enter` opens the controller mapping submenu. The submenu can assign multiple buttons/axes to C64 joystick directions/fire, menu select/back, the main menu, turbo, and savestates. Freshly mapped or menu-used buttons are ignored for C64 gameplay until released, so menu input does not leak into the running game. |
@@ -297,7 +299,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.13`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.14`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -416,7 +418,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video upscale, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
 
 ## ROM Files
 

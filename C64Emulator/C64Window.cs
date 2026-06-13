@@ -55,6 +55,19 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Lists the optional source-image upscalers applied before the presentation filter.
+        /// </summary>
+        private enum VideoUpscaleMode
+        {
+            None,
+            Scale2x,
+            Scale3x,
+            Hq2x,
+            Hq3x,
+            Hq4x
+        }
+
+        /// <summary>
         /// Lists the supported reset behaviors.
         /// </summary>
         private enum ResetMode
@@ -122,7 +135,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 20;
+        private const int AudioOverlayItemCount = 21;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int ControllerMapActionCount = 10;
@@ -147,7 +160,7 @@ namespace C64Emulator
         private const int StandardC64ContentHeight = 200;
         // The network overlay is a single flat menu split visually into server rows and
         // client rows. The constants keep selection/wrapping independent of labels.
-        private const int NetworkOverlayItemCount = 16;
+        private const int NetworkOverlayItemCount = 17;
         private const int NetworkOverlayServerItemCount = 9;
         private const int NetworkOverlayVisibleClientRows = 2;
         // Remote clients resend unchanged joystick state periodically so the host can
@@ -197,6 +210,7 @@ namespace C64Emulator
         private bool _resetConfirmYesSelected = true;
         private ConfirmationAction _confirmationAction;
         private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
+        private VideoUpscaleMode _videoUpscaleMode = VideoUpscaleMode.None;
         private ResetMode _resetMode = ResetMode.Warm;
         private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
         private bool _videoZoomEnabled;
@@ -398,6 +412,7 @@ namespace C64Emulator
             _system.EnableInputInjection = settings.EnableInputInjection;
 
             _videoFilterMode = ParseEnum(settings.VideoFilterMode, VideoFilterMode.Sharp);
+            _videoUpscaleMode = ParseEnum(settings.VideoUpscaleMode, VideoUpscaleMode.None);
             _videoZoomEnabled = settings.VideoZoomEnabled;
             _resetMode = ParseEnum(settings.ResetMode, ResetMode.Warm);
             _turboMode = settings.TurboMode;
@@ -467,6 +482,7 @@ namespace C64Emulator
                 JoystickPort = _system.CurrentJoystickPort.ToString(),
                 HostKeyboardLayout = _system.CurrentHostKeyboardLayout.ToString(),
                 VideoFilterMode = _videoFilterMode.ToString(),
+                VideoUpscaleMode = _videoUpscaleMode.ToString(),
                 VideoZoomEnabled = _videoZoomEnabled,
                 ResetMode = _resetMode.ToString(),
                 TurboMode = _turboMode,
@@ -2423,6 +2439,37 @@ namespace C64Emulator
             }
 
             _overlayStatusText = "FILTER " + FormatVideoFilter(_videoFilterMode);
+            SaveSettings();
+        }
+
+        /// <summary>
+        /// Cycles the optional GPU-side source upscaler.
+        /// </summary>
+        private void CycleVideoUpscale()
+        {
+            switch (_videoUpscaleMode)
+            {
+                case VideoUpscaleMode.None:
+                    _videoUpscaleMode = VideoUpscaleMode.Scale2x;
+                    break;
+                case VideoUpscaleMode.Scale2x:
+                    _videoUpscaleMode = VideoUpscaleMode.Scale3x;
+                    break;
+                case VideoUpscaleMode.Scale3x:
+                    _videoUpscaleMode = VideoUpscaleMode.Hq2x;
+                    break;
+                case VideoUpscaleMode.Hq2x:
+                    _videoUpscaleMode = VideoUpscaleMode.Hq3x;
+                    break;
+                case VideoUpscaleMode.Hq3x:
+                    _videoUpscaleMode = VideoUpscaleMode.Hq4x;
+                    break;
+                default:
+                    _videoUpscaleMode = VideoUpscaleMode.None;
+                    break;
+            }
+
+            _overlayStatusText = "UPSCALE " + FormatVideoUpscale(_videoUpscaleMode);
             SaveSettings();
         }
 
@@ -4387,6 +4434,11 @@ namespace C64Emulator
             int zoomCropHeight;
             if (_videoZoomEnabled && TryGetVideoZoomCrop(width, height, out zoomCropX, out zoomCropY, out zoomCropWidth, out zoomCropHeight))
             {
+                if (DrawGpuPresentedFrame(pixels, width, height, zoomCropX, zoomCropY, zoomCropWidth, zoomCropHeight, borderRed, borderGreen, borderBlue))
+                {
+                    return;
+                }
+
                 DrawZoomedFrame(pixels, width, height, zoomCropX, zoomCropY, zoomCropWidth, zoomCropHeight, borderRed, borderGreen, borderBlue);
                 return;
             }
@@ -4400,6 +4452,11 @@ namespace C64Emulator
                 int scaledHeight = height * integerScale;
                 int offsetX = (PixelsWidth - scaledWidth) / 2;
                 int offsetY = (PixelsHeight - scaledHeight) / 2;
+                if (DrawGpuPresentedFrame(pixels, width, height, 0, 0, width, height, offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue))
+                {
+                    return;
+                }
+
                 DrawFrameMargins(offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
                 if (_videoFilterMode == VideoFilterMode.Tv)
                 {
@@ -4417,6 +4474,11 @@ namespace C64Emulator
                 return;
             }
 
+            if (DrawGpuPresentedFrame(pixels, width, height, 0, 0, width, height, 0, 0, PixelsWidth, PixelsHeight, borderRed, borderGreen, borderBlue))
+            {
+                return;
+            }
+
             if (_videoFilterMode == VideoFilterMode.Tv)
             {
                 DrawArgbPixelsStretchedTv(pixels, width, height);
@@ -4428,6 +4490,111 @@ namespace C64Emulator
             else
             {
                 DrawArgbPixelsStretched(pixels, width, height);
+            }
+        }
+
+        /// <summary>
+        /// Presents a cropped C64 frame through SharpPixels' GPU source renderer using the standard frame destination.
+        /// </summary>
+        private bool DrawGpuPresentedFrame(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, byte borderRed, byte borderGreen, byte borderBlue)
+        {
+            int integerScaleX = PixelsWidth / width;
+            int integerScaleY = PixelsHeight / height;
+            int integerScale = Math.Min(integerScaleX, integerScaleY);
+            if (integerScale >= 1)
+            {
+                int scaledWidth = width * integerScale;
+                int scaledHeight = height * integerScale;
+                int offsetX = (PixelsWidth - scaledWidth) / 2;
+                int offsetY = (PixelsHeight - scaledHeight) / 2;
+                return DrawGpuPresentedFrame(pixels, width, height, cropX, cropY, cropWidth, cropHeight, offsetX, offsetY, scaledWidth, scaledHeight, borderRed, borderGreen, borderBlue);
+            }
+
+            return DrawGpuPresentedFrame(pixels, width, height, cropX, cropY, cropWidth, cropHeight, 0, 0, PixelsWidth, PixelsHeight, borderRed, borderGreen, borderBlue);
+        }
+
+        /// <summary>
+        /// Presents a cropped C64 frame through SharpPixels' GPU source renderer.
+        /// </summary>
+        private bool DrawGpuPresentedFrame(uint[] pixels, int width, int height, int cropX, int cropY, int cropWidth, int cropHeight, int targetX, int targetY, int targetWidth, int targetHeight, byte borderRed, byte borderGreen, byte borderBlue)
+        {
+            return DrawArgbPixelsGpuPresented(
+                pixels,
+                width,
+                height,
+                cropX,
+                cropY,
+                cropWidth,
+                cropHeight,
+                targetX,
+                targetY,
+                targetWidth,
+                targetHeight,
+                GetGpuFilterMode(_videoFilterMode),
+                GetGpuUpscaleMode(_videoUpscaleMode),
+                GetGpuUpscaleFactor(_videoUpscaleMode),
+                borderRed,
+                borderGreen,
+                borderBlue);
+        }
+
+        /// <summary>
+        /// Maps the emulator's video filter setting to the SharpPixels presentation shader mode.
+        /// </summary>
+        private static SharpPixelsGpuFilterMode GetGpuFilterMode(VideoFilterMode videoFilterMode)
+        {
+            if (videoFilterMode == VideoFilterMode.Crt)
+            {
+                return SharpPixelsGpuFilterMode.Crt;
+            }
+
+            if (videoFilterMode == VideoFilterMode.Tv)
+            {
+                return SharpPixelsGpuFilterMode.Tv;
+            }
+
+            return SharpPixelsGpuFilterMode.Sharp;
+        }
+
+        /// <summary>
+        /// Maps the emulator's video upscale setting to the SharpPixels presentation shader mode.
+        /// </summary>
+        private static SharpPixelsGpuUpscaleMode GetGpuUpscaleMode(VideoUpscaleMode videoUpscaleMode)
+        {
+            switch (videoUpscaleMode)
+            {
+                case VideoUpscaleMode.Scale2x:
+                    return SharpPixelsGpuUpscaleMode.Scale2x;
+                case VideoUpscaleMode.Scale3x:
+                    return SharpPixelsGpuUpscaleMode.Scale3x;
+                case VideoUpscaleMode.Hq2x:
+                    return SharpPixelsGpuUpscaleMode.Hq2x;
+                case VideoUpscaleMode.Hq3x:
+                    return SharpPixelsGpuUpscaleMode.Hq3x;
+                case VideoUpscaleMode.Hq4x:
+                    return SharpPixelsGpuUpscaleMode.Hq4x;
+                default:
+                    return SharpPixelsGpuUpscaleMode.None;
+            }
+        }
+
+        /// <summary>
+        /// Gets the integer scale factor represented by an upscale setting.
+        /// </summary>
+        private static int GetGpuUpscaleFactor(VideoUpscaleMode videoUpscaleMode)
+        {
+            switch (videoUpscaleMode)
+            {
+                case VideoUpscaleMode.Scale2x:
+                case VideoUpscaleMode.Hq2x:
+                    return 2;
+                case VideoUpscaleMode.Scale3x:
+                case VideoUpscaleMode.Hq3x:
+                    return 3;
+                case VideoUpscaleMode.Hq4x:
+                    return 4;
+                default:
+                    return 1;
             }
         }
 
@@ -5686,6 +5853,11 @@ namespace C64Emulator
                     // Video filter is local presentation even during a remote session.
                     CycleVideoFilter();
                     break;
+                case 16:
+                    // Upscaling is a local presentation choice and does not affect the
+                    // server stream or other connected clients.
+                    CycleVideoUpscale();
+                    break;
             }
         }
 
@@ -5734,6 +5906,9 @@ namespace C64Emulator
                     break;
                 case 15:
                     CycleVideoFilter();
+                    break;
+                case 16:
+                    CycleVideoUpscale();
                     break;
             }
         }
@@ -6344,7 +6519,7 @@ namespace C64Emulator
                         return true;
                     }
 
-                    if (_audioOverlaySelection == 9)
+                    if (_audioOverlaySelection == 10)
                     {
                         OpenControllerMappingOverlay();
                         return true;
@@ -6437,77 +6612,83 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 7)
             {
-                ToggleVideoZoom();
+                CycleVideoUpscale();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                ToggleTurboMode();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleGamepadInput();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleLoadHack();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleSoftwareIecTransport();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                ToggleInputInjection();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                CycleResetMode();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 14)
             {
-                ToggleDriveOverlay();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 15)
             {
-                ToggleEasyFlash();
+                ToggleDriveOverlay();
                 return;
             }
 
             if (_audioOverlaySelection == 16)
             {
-                SaveEasyFlash();
+                ToggleEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 17)
             {
-                EjectEasyFlash();
+                SaveEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 18)
             {
-                ToggleReu();
+                EjectEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 19)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 20)
             {
                 CycleReuSize(direction);
                 return;
@@ -7028,16 +7209,16 @@ namespace C64Emulator
         {
             if (_networkMode == NetworkSessionMode.Client)
             {
-                // Remote clients may leave and change their local filter, but server-owned
-                // emulator/session settings are locked.
-                return index == 14 || index == 15;
+                // Remote clients may leave and change local presentation options, but
+                // server-owned emulator/session settings are locked.
+                return index == 14 || index == 15 || index == 16;
             }
 
             if (_networkMode == NetworkSessionMode.Host)
             {
-                // While hosting, server controls and the local filter remain available;
-                // joining another host from the same instance is disabled.
-                return index <= 8 || index == 15;
+                // While hosting, server controls and local presentation options remain
+                // available; joining another host from the same instance is disabled.
+                return index <= 8 || index == 15 || index == 16;
             }
 
             return true;
@@ -7084,6 +7265,8 @@ namespace C64Emulator
                     return "CLIENT";
                 case 15:
                     return "VIDEO FILTER";
+                case 16:
+                    return "VIDEO UPSCALE";
                 default:
                     return string.Empty;
             }
@@ -7136,6 +7319,8 @@ namespace C64Emulator
                     return _networkMode == NetworkSessionMode.Client ? "CLIENT LEAVE" : "CLIENT JOIN";
                 case 15:
                     return FormatVideoFilter(_videoFilterMode);
+                case 16:
+                    return FormatVideoUpscale(_videoUpscaleMode);
                 default:
                     return string.Empty;
             }
@@ -7155,7 +7340,7 @@ namespace C64Emulator
 
             // Remote clients can control only local display/presentation choices. The
             // server owns emulation-affecting settings such as SID, reset, and turbo.
-            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 9;
+            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 8 || menuIndex == 10;
         }
 
         /// <summary>
@@ -7476,42 +7661,45 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "HQ4X", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 15:
-                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 16:
-                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 18:
-                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 19:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 20:
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
@@ -7735,6 +7923,50 @@ namespace C64Emulator
                 case VideoFilterMode.Crt:
                     return 0.5f;
                 case VideoFilterMode.Tv:
+                    return 1.0f;
+                default:
+                    return 0.0f;
+            }
+        }
+
+        /// <summary>
+        /// Formats video upscaler mode.
+        /// </summary>
+        private static string FormatVideoUpscale(VideoUpscaleMode mode)
+        {
+            switch (mode)
+            {
+                case VideoUpscaleMode.Scale2x:
+                    return "SCALE2X";
+                case VideoUpscaleMode.Scale3x:
+                    return "SCALE3X";
+                case VideoUpscaleMode.Hq2x:
+                    return "HQ2X";
+                case VideoUpscaleMode.Hq3x:
+                    return "HQ3X";
+                case VideoUpscaleMode.Hq4x:
+                    return "HQ4X";
+                default:
+                    return "NONE";
+            }
+        }
+
+        /// <summary>
+        /// Gets the video upscaler fill value.
+        /// </summary>
+        private static float GetVideoUpscaleFill(VideoUpscaleMode mode)
+        {
+            switch (mode)
+            {
+                case VideoUpscaleMode.Scale2x:
+                    return 0.2f;
+                case VideoUpscaleMode.Scale3x:
+                    return 0.4f;
+                case VideoUpscaleMode.Hq2x:
+                    return 0.6f;
+                case VideoUpscaleMode.Hq3x:
+                    return 0.8f;
+                case VideoUpscaleMode.Hq4x:
                     return 1.0f;
                 default:
                     return 0.0f;
