@@ -14,9 +14,13 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 
 ## Screenshots
 
-| C64 boot screen | Settings overlay | Save/load overlay | Network overlay |
+| C64 boot screen | Main menu | Settings overlay | Controller mapping |
 | --- | --- | --- | --- |
-| <img src="docs/screenshots/c64-boot-screen.png" alt="C64 boot screen" width="220"> | <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="220"> | <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="220"> | <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="220"> |
+| <img src="docs/screenshots/c64-boot-screen.png" alt="C64 boot screen" width="220"> | <img src="docs/screenshots/main-menu.png" alt="Main menu overlay" width="220"> | <img src="docs/screenshots/settings-menu.png" alt="Settings overlay" width="220"> | <img src="docs/screenshots/controller-mapping-menu.png" alt="Controller mapping overlay" width="220"> |
+
+| Save/load overlay | Network overlay | Media browser |
+| --- | --- | --- |
+| <img src="docs/screenshots/save-load-menu.png" alt="Save/load overlay" width="260"> | <img src="docs/screenshots/network-menu.png" alt="Network multiplayer overlay" width="260"> | <img src="docs/screenshots/media-browser-menu.png" alt="Media browser overlay" width="260"> |
 
 | Giana Sisters: intro | Giana Sisters: level 1 | Giana Sisters: end boss fight |
 | --- | --- | --- |
@@ -29,6 +33,19 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | Zak McKracken: apartment | Zak McKracken: bakery | Zak McKracken: airplane |
 | --- | --- | --- |
 | <img src="docs/screenshots/zak-mckracken-1.png" alt="Zak McKracken apartment" width="260"> | <img src="docs/screenshots/zak-mckracken-2.png" alt="Zak McKracken bakery" width="260"> | <img src="docs/screenshots/zak-mckracken-3.png" alt="Zak McKracken airplane" width="260"> |
+
+| Sonic: title screen | Sonic: Green Hill | Arkanoid: title screen |
+| --- | --- | --- |
+| <img src="docs/screenshots/sonic-startscreen.png" alt="Sonic the Hedgehog C64 title screen" width="260"> | <img src="docs/screenshots/sonic-game-03.png" alt="Sonic the Hedgehog C64 in-game scene" width="260"> | <img src="docs/screenshots/arkanoid-startscreen.png" alt="Arkanoid title screen" width="260"> |
+
+| Bubble Bobble: title screen | Bubble Bobble: in-game | Doc Cosmos |
+| --- | --- | --- |
+| <img src="docs/screenshots/bubble-bobble-startscreen.png" alt="Bubble Bobble title screen" width="260"> | <img src="docs/screenshots/bubble-bobble-game-01.png" alt="Bubble Bobble in-game scene" width="260"> | <img src="docs/screenshots/doc-cosmos-game-01.png" alt="Doc Cosmos in-game scene" width="260"> |
+
+| Prince of Persia: cutscene | Prince of Persia: dungeon | Prince of Persia: palace | Prince of Persia: level 3 |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/pop-cutscene-01.png" alt="Prince of Persia cutscene" width="220"> | <img src="docs/screenshots/pop-game-01.png" alt="Prince of Persia dungeon scene" width="220"> | <img src="docs/screenshots/pop-game-03.png" alt="Prince of Persia palace scene" width="220"> | <img src="docs/screenshots/pop-game-02.png" alt="Prince of Persia level 3 scene" width="220"> |
+
 
 ## Current Features
 
@@ -61,6 +78,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | Drag `.prg` / `.d64` / `.crt` onto the window | Load PRG directly, mount D64 into the currently selected target drive, or insert an EasyFlash cartridge. |
 | Configured gamepad directions/buttons | C64 joystick direction/fire for the selected joystick port. |
 | Configured gamepad menu buttons | Open/navigate emulator menus, activate entries, go back, or open savestates. |
+| `Alt` + arrow keys | Send the C64 cursor keys without changing input modes. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
 | `Enter` / `L` in savestate menu | Load the selected savestate and close the menu. |
 | `Del` in savestate menu | Ask for confirmation and then delete the selected savestate. |
@@ -144,6 +162,8 @@ The Windows installer does not ship or install the relay server. The relay is in
 
 The `F10` overview contains `SETTINGS`, `NETWORK`, `MEDIA`, and `RESET`. The `MEDIA` row shows the currently mounted disk or media next to the entry. `Esc` from a submenu returns to this overview; `Esc` from the overview closes the emulator menu.
 
+<img src="docs/screenshots/main-menu.png" alt="Main menu overlay" width="403">
+
 Top-level entries:
 
 | Entry | Action |
@@ -192,7 +212,13 @@ Menu entries:
 | `REU` | `OFF` / `ON` | Enables or disables the emulated RAM Expansion Unit at I/O2 `$DF00-$DFFF`. |
 | `REU SIZE` | `128KB` to `16MB` | Selects the REU capacity. Supported sizes are 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB. |
 
+The controller mapping submenu opened from `GAMEPAD` shows all joystick and menu actions. Each action can have multiple button, axis, or hat bindings.
+
+<img src="docs/screenshots/controller-mapping-menu.png" alt="Controller mapping overlay" width="403">
+
 The `MEDIA` browser opened from the F10 overview has its own controls:
+
+<img src="docs/screenshots/media-browser-menu.png" alt="Media browser overlay" width="403">
 
 | Key | Action |
 | --- | --- |
