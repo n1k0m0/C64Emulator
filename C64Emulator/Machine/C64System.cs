@@ -931,6 +931,39 @@ namespace C64Emulator.Core
             }
         }
 
+        /// <summary>
+        /// Presses a host key as a C64 keyboard-matrix key without joystick side effects.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        public void KeyboardKeyDown(Key key)
+        {
+            lock (_syncRoot)
+            {
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Add(mappedKey);
+                _cia1.SetHostKeyState(mappedKey, true);
+            }
+        }
+
+        /// <summary>
+        /// Releases a host key previously pressed through KeyboardKeyDown.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        public void KeyboardKeyUp(Key key)
+        {
+            lock (_syncRoot)
+            {
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Remove(mappedKey);
+                _cia1.SetHostKeyState(mappedKey, false);
+                if (_lastMirroredPollKey == mappedKey)
+                {
+                    _lastMirroredPollKey = null;
+                    _pollMirrorRepeatDelayCycles = 0;
+                }
+            }
+        }
+
         public float SidMasterVolume
         {
             get

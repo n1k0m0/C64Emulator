@@ -100,6 +100,20 @@ namespace C64Emulator
             Reset = 3
         }
 
+        private enum ControllerMapAction
+        {
+            Up = 0,
+            Down = 1,
+            Left = 2,
+            Right = 3,
+            Fire = 4,
+            MenuSelect = 5,
+            MenuBack = 6,
+            MainMenu = 7,
+            Turbo = 8,
+            SaveStates = 9
+        }
+
         private const int MaxCycleBatch = 2048;
         private const int NormalCycleBatch = 512;
         private const long WaitCycleQuantum = 256;
@@ -111,6 +125,22 @@ namespace C64Emulator
         private const int AudioOverlayItemCount = 20;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
+        private const int ControllerMapActionCount = 10;
+        private const float GamepadAxisDeadZone = 0.45f;
+        private const string DefaultGamepadUpBindings = "Button2;Axis4-";
+        private const string DefaultGamepadDownBindings = "Axis4+";
+        private const string DefaultGamepadLeftBindings = "Axis0-";
+        private const string DefaultGamepadRightBindings = "Axis0+";
+        private const string DefaultGamepadFireBindings = "Button1";
+        private const string DefaultGamepadMenuSelectBindings = "Button1";
+        private const string DefaultGamepadMenuBackBindings = "Button2";
+        private const string DefaultGamepadMainMenuBindings = "Button7;Button9";
+        private const string DefaultGamepadTurboBindings = "";
+        private const string DefaultGamepadSaveStatesBindings = "Button6;Button8";
+        private const int ControllerMappingVisibleRows = 7;
+        private const int ControllerMappingRowSpacing = 14;
+        private const double ControllerActionInitialRepeatSeconds = 0.35;
+        private const double ControllerActionRepeatSeconds = 0.075;
         private const int StandardC64ContentLeft = 41;
         private const int StandardC64ContentTop = 37;
         private const int StandardC64ContentWidth = 320;
@@ -151,6 +181,9 @@ namespace C64Emulator
         private bool _mediaBrowserVisible;
         private bool _resetConfirmVisible;
         private bool _networkOverlayVisible;
+        private bool _controllerMappingVisible;
+        private bool _controllerMappingLearning;
+        private bool _controllerLearningBaselineReleased;
         private bool _networkTlsCertificatePromptVisible;
         private volatile bool _saveOverlayVisible;
         private volatile bool _turboMode;
@@ -158,6 +191,7 @@ namespace C64Emulator
         private bool _windowFullscreen;
         private bool _gamepadEnabled = true;
         private bool _gamepadConnected;
+        private bool _controllerGameInputSuppressedUntilRelease;
         private bool _driveOverlayEnabled = true;
         private bool _debugOverlayVisible;
         private bool _resetConfirmYesSelected = true;
@@ -172,9 +206,27 @@ namespace C64Emulator
         private byte _remoteKeyboardJoystickState = 0xFF;
         private byte _remoteGamepadJoystickState = 0xFF;
         private byte _lastRemoteJoystickState = 0xFF;
+        private readonly HashSet<Key> _localAltCursorKeys = new HashSet<Key>();
+        private readonly HashSet<Key> _remoteAltCursorKeys = new HashSet<Key>();
+        private readonly HashSet<string> _controllerLearningBaseline = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _controllerSuppressedUiBindings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly bool[] _controllerActionWasDown = new bool[ControllerMapActionCount];
+        private readonly long[] _controllerActionNextRepeatTicks = new long[ControllerMapActionCount];
+        private List<string> _gamepadUpBindings = ParseGamepadBindings(DefaultGamepadUpBindings, DefaultGamepadUpBindings);
+        private List<string> _gamepadDownBindings = ParseGamepadBindings(DefaultGamepadDownBindings, DefaultGamepadDownBindings);
+        private List<string> _gamepadLeftBindings = ParseGamepadBindings(DefaultGamepadLeftBindings, DefaultGamepadLeftBindings);
+        private List<string> _gamepadRightBindings = ParseGamepadBindings(DefaultGamepadRightBindings, DefaultGamepadRightBindings);
+        private List<string> _gamepadFireBindings = ParseGamepadBindings(DefaultGamepadFireBindings, DefaultGamepadFireBindings);
+        private List<string> _gamepadMenuSelectBindings = ParseGamepadBindings(DefaultGamepadMenuSelectBindings, DefaultGamepadMenuSelectBindings);
+        private List<string> _gamepadMenuBackBindings = ParseGamepadBindings(DefaultGamepadMenuBackBindings, DefaultGamepadMenuBackBindings);
+        private List<string> _gamepadMainMenuBindings = ParseGamepadBindings(DefaultGamepadMainMenuBindings, DefaultGamepadMainMenuBindings);
+        private List<string> _gamepadTurboBindings = ParseGamepadBindings(DefaultGamepadTurboBindings, DefaultGamepadTurboBindings);
+        private List<string> _gamepadSaveStatesBindings = ParseGamepadBindings(DefaultGamepadSaveStatesBindings, DefaultGamepadSaveStatesBindings);
         private int _mainMenuSelection;
         private int _audioOverlaySelection;
         private int _audioOverlayScroll;
+        private int _controllerMappingSelection;
+        private int _controllerMappingScroll;
         private int _networkOverlaySelection;
         private int _networkSelectedClientIndex;
         private NetworkTlsRetryAction _pendingNetworkTlsRetryAction;
@@ -351,6 +403,16 @@ namespace C64Emulator
             _turboMode = settings.TurboMode;
             _windowFullscreen = settings.Fullscreen;
             _gamepadEnabled = settings.GamepadEnabled;
+            _gamepadUpBindings = ParseGamepadBindings(settings.GamepadUpBindings, DefaultGamepadUpBindings);
+            _gamepadDownBindings = ParseGamepadBindings(settings.GamepadDownBindings, DefaultGamepadDownBindings);
+            _gamepadLeftBindings = ParseGamepadBindings(settings.GamepadLeftBindings, DefaultGamepadLeftBindings);
+            _gamepadRightBindings = ParseGamepadBindings(settings.GamepadRightBindings, DefaultGamepadRightBindings);
+            _gamepadFireBindings = ParseGamepadBindings(settings.GamepadFireBindings, DefaultGamepadFireBindings);
+            _gamepadMenuSelectBindings = ParseGamepadBindings(settings.GamepadMenuSelectBindings, DefaultGamepadMenuSelectBindings);
+            _gamepadMenuBackBindings = ParseGamepadBindings(settings.GamepadMenuBackBindings, DefaultGamepadMenuBackBindings);
+            _gamepadMainMenuBindings = ParseGamepadBindings(settings.GamepadMainMenuBindings, DefaultGamepadMainMenuBindings);
+            _gamepadTurboBindings = ParseGamepadBindings(settings.GamepadTurboBindings, DefaultGamepadTurboBindings);
+            _gamepadSaveStatesBindings = ParseGamepadBindings(settings.GamepadSaveStatesBindings, DefaultGamepadSaveStatesBindings);
             _driveOverlayEnabled = settings.DriveOverlayEnabled;
             _mediaBrowserTargetDrive = ClampInt(settings.MediaBrowserTargetDrive, 8, 11);
             _mediaBrowserLastDirectory = NormalizeExistingDirectory(settings.MediaBrowserDirectory);
@@ -371,6 +433,7 @@ namespace C64Emulator
             {
                 _lastGamepadJoystickState = 0x1F;
                 _gamepadConnected = false;
+                ResetControllerActionEdges();
                 _system.SetGamepadJoystickState(0x1F);
             }
         }
@@ -409,6 +472,16 @@ namespace C64Emulator
                 TurboMode = _turboMode,
                 Fullscreen = _windowFullscreen,
                 GamepadEnabled = _gamepadEnabled,
+                GamepadUpBindings = SerializeGamepadBindings(_gamepadUpBindings),
+                GamepadDownBindings = SerializeGamepadBindings(_gamepadDownBindings),
+                GamepadLeftBindings = SerializeGamepadBindings(_gamepadLeftBindings),
+                GamepadRightBindings = SerializeGamepadBindings(_gamepadRightBindings),
+                GamepadFireBindings = SerializeGamepadBindings(_gamepadFireBindings),
+                GamepadMenuSelectBindings = SerializeGamepadBindings(_gamepadMenuSelectBindings),
+                GamepadMenuBackBindings = SerializeGamepadBindings(_gamepadMenuBackBindings),
+                GamepadMainMenuBindings = SerializeGamepadBindings(_gamepadMainMenuBindings),
+                GamepadTurboBindings = SerializeGamepadBindings(_gamepadTurboBindings),
+                GamepadSaveStatesBindings = SerializeGamepadBindings(_gamepadSaveStatesBindings),
                 EnableLoadHack = _system.EnableLoadHack,
                 ForceSoftwareIecTransport = _system.ForceSoftwareIecTransport,
                 EnableInputInjection = _system.EnableInputInjection,
@@ -925,7 +998,17 @@ namespace C64Emulator
                 return;
             }
 
+            if (_controllerMappingVisible && HandleControllerMappingOverlayKeyDown(keyEventArgs.Key))
+            {
+                return;
+            }
+
             if (_audioOverlayVisible && HandleAudioOverlayKeyDown(keyEventArgs.Key))
+            {
+                return;
+            }
+
+            if (HandleLocalAltCursorKeyDown(keyEventArgs.Key, keyEventArgs.Modifiers))
             {
                 return;
             }
@@ -941,10 +1024,76 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Handles Alt+arrow as a local C64 cursor key chord.
+        /// </summary>
+        private bool HandleLocalAltCursorKeyDown(Key key, KeyModifiers modifiers)
+        {
+            if (!IsAltCursorChord(key, modifiers))
+            {
+                return false;
+            }
+
+            ReleaseLocalAltModifierKeys();
+            if (_localAltCursorKeys.Add(key))
+            {
+                _system.KeyboardKeyDown(key);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases a local C64 cursor key chord if it was started with Alt+arrow.
+        /// </summary>
+        private bool HandleLocalAltCursorKeyUp(Key key)
+        {
+            if (_localAltCursorKeys.Remove(key))
+            {
+                _system.KeyboardKeyUp(key);
+                return true;
+            }
+
+            if (IsAltKey(key))
+            {
+                ReleaseLocalAltCursorKeys();
+            }
+
+            return false;
+        }
+
+        private void ReleaseLocalAltCursorKeys()
+        {
+            foreach (Key key in _localAltCursorKeys.ToArray())
+            {
+                _system.KeyboardKeyUp(key);
+            }
+
+            _localAltCursorKeys.Clear();
+        }
+
+        private void ReleaseLocalAltModifierKeys()
+        {
+            _system.KeyUp(Key.AltLeft);
+            _system.KeyUp(Key.LAlt);
+        }
+
+        /// <summary>
         /// Handles the on user key up operation.
         /// </summary>
         public override void OnUserKeyUp(SharpPixels.KeyEventArgs keyEventArgs)
         {
+            if (_networkMode == NetworkSessionMode.Client)
+            {
+                if (HandleRemoteAltCursorKeyUp(keyEventArgs.Key))
+                {
+                    return;
+                }
+            }
+            else if (HandleLocalAltCursorKeyUp(keyEventArgs.Key))
+            {
+                return;
+            }
+
             if (_networkOverlayVisible || _mainMenuVisible)
             {
                 // Ignore releases for keys captured by emulator menus so they do not
@@ -956,6 +1105,11 @@ namespace C64Emulator
             {
                 if (!_networkOverlayVisible && !_saveOverlayVisible && !_audioOverlayVisible)
                 {
+                    if (HandleRemoteAltCursorKeyUp(keyEventArgs.Key))
+                    {
+                        return;
+                    }
+
                     SendRemoteClientKeyboardKey(keyEventArgs.Key, false);
                     HandleRemoteClientJoystickKey(keyEventArgs.Key, false);
                 }
@@ -983,7 +1137,17 @@ namespace C64Emulator
                 return;
             }
 
+            if (_controllerMappingVisible && CapturesControllerMappingOverlayKey(keyEventArgs.Key))
+            {
+                return;
+            }
+
             if (_audioOverlayVisible && CapturesAudioOverlayKey(keyEventArgs.Key))
+            {
+                return;
+            }
+
+            if (HandleLocalAltCursorKeyUp(keyEventArgs.Key))
             {
                 return;
             }
@@ -1074,6 +1238,10 @@ namespace C64Emulator
             _audioOverlayVisible = false;
             _saveOverlayVisible = false;
             _mediaBrowserVisible = false;
+            _controllerMappingVisible = false;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
             _resetConfirmVisible = false;
             _saveDeleteConfirmVisible = false;
             _pendingDeleteSavePath = null;
@@ -1089,6 +1257,10 @@ namespace C64Emulator
             _audioOverlayVisible = false;
             _saveOverlayVisible = false;
             _mediaBrowserVisible = false;
+            _controllerMappingVisible = false;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
             _resetConfirmVisible = false;
             _saveDeleteConfirmVisible = false;
             _overlayStatusText = "MAIN MENU";
@@ -1103,6 +1275,10 @@ namespace C64Emulator
             _networkOverlayVisible = false;
             _audioOverlayVisible = false;
             _mediaBrowserVisible = false;
+            _controllerMappingVisible = false;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
             _resetConfirmVisible = false;
             if (_networkMode != NetworkSessionMode.Client)
             {
@@ -1249,6 +1425,10 @@ namespace C64Emulator
         {
             _audioOverlayVisible = false;
             _mediaBrowserVisible = false;
+            _controllerMappingVisible = false;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
             _resetConfirmVisible = false;
             ResetEmulationTiming();
         }
@@ -1865,6 +2045,365 @@ namespace C64Emulator
             SaveSettings();
         }
 
+        private void OpenControllerMappingOverlay()
+        {
+            _controllerMappingVisible = true;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
+            _controllerMappingSelection = ClampInt(_controllerMappingSelection, 0, ControllerMapActionCount - 1);
+            ClampControllerMappingScroll();
+            _overlayStatusText = "CONTROLLER CONFIG";
+        }
+
+        private void CloseControllerMappingOverlay()
+        {
+            _controllerMappingVisible = false;
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
+            _overlayStatusText = "SETTINGS";
+        }
+
+        private bool HandleControllerMappingOverlayKeyDown(Key key)
+        {
+            switch (key)
+            {
+                case Key.Up:
+                    MoveControllerMappingSelection(-1);
+                    return true;
+                case Key.Down:
+                    MoveControllerMappingSelection(1);
+                    return true;
+                case Key.Enter:
+                    BeginControllerMappingLearning();
+                    return true;
+                case Key.Delete:
+                    ResetSelectedControllerBinding();
+                    return true;
+                case Key.BackSpace:
+                    ClearSelectedControllerBinding();
+                    return true;
+                case Key.Escape:
+                    CloseControllerMappingOverlay();
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        private static bool CapturesControllerMappingOverlayKey(Key key)
+        {
+            return true;
+        }
+
+        private void MoveControllerMappingSelection(int delta)
+        {
+            _controllerMappingSelection += delta;
+            if (_controllerMappingSelection < 0)
+            {
+                _controllerMappingSelection = ControllerMapActionCount - 1;
+            }
+
+            if (_controllerMappingSelection >= ControllerMapActionCount)
+            {
+                _controllerMappingSelection = 0;
+            }
+
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
+            ClampControllerMappingScroll();
+        }
+
+        private void ClampControllerMappingScroll()
+        {
+            int maxScroll = Math.Max(0, ControllerMapActionCount - ControllerMappingVisibleRows);
+            if (_controllerMappingSelection < _controllerMappingScroll)
+            {
+                _controllerMappingScroll = _controllerMappingSelection;
+            }
+
+            if (_controllerMappingSelection >= _controllerMappingScroll + ControllerMappingVisibleRows)
+            {
+                _controllerMappingScroll = _controllerMappingSelection - ControllerMappingVisibleRows + 1;
+            }
+
+            if (_controllerMappingScroll < 0)
+            {
+                _controllerMappingScroll = 0;
+            }
+
+            if (_controllerMappingScroll > maxScroll)
+            {
+                _controllerMappingScroll = maxScroll;
+            }
+        }
+
+        private void BeginControllerMappingLearning()
+        {
+            _controllerMappingLearning = true;
+            _controllerLearningBaseline.Clear();
+            foreach (string binding in CaptureActiveControllerInputs())
+            {
+                _controllerLearningBaseline.Add(binding);
+            }
+
+            _controllerLearningBaselineReleased = _controllerLearningBaseline.Count == 0;
+            _overlayStatusText = "ADD " + FormatControllerMapAction(GetSelectedControllerMapAction());
+        }
+
+        private void ResetSelectedControllerBinding()
+        {
+            ControllerMapAction action = GetSelectedControllerMapAction();
+            SetControllerBindings(action, ParseGamepadBindings(GetDefaultControllerBindings(action), GetDefaultControllerBindings(action)));
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
+            _overlayStatusText = FormatControllerMapAction(action) + " DEFAULT";
+            SaveSettings();
+        }
+
+        private void ClearSelectedControllerBinding()
+        {
+            ControllerMapAction action = GetSelectedControllerMapAction();
+            SetControllerBindings(action, new List<string>(), false);
+            _controllerMappingLearning = false;
+            _controllerLearningBaselineReleased = true;
+            _controllerLearningBaseline.Clear();
+            _overlayStatusText = FormatControllerMapAction(action) + " CLEARED";
+            SaveSettings();
+        }
+
+        private void UpdateControllerMappingLearning()
+        {
+            if (!_controllerMappingLearning)
+            {
+                return;
+            }
+
+            List<string> activeBindings = CaptureActiveControllerInputs();
+            if (!_controllerLearningBaselineReleased)
+            {
+                bool baselineStillPressed = activeBindings.Any(binding => _controllerLearningBaseline.Contains(binding));
+                if (baselineStillPressed)
+                {
+                    return;
+                }
+
+                _controllerLearningBaselineReleased = true;
+            }
+
+            foreach (string binding in activeBindings)
+            {
+                ControllerMapAction action = GetSelectedControllerMapAction();
+                SuppressControllerUiBindingUntilRelease(binding);
+                if (!AddControllerBinding(action, binding))
+                {
+                    _controllerMappingLearning = false;
+                    _controllerLearningBaselineReleased = true;
+                    _controllerLearningBaseline.Clear();
+                    _overlayStatusText = FormatControllerMapAction(action) + " ALREADY SET";
+                    return;
+                }
+
+                _controllerMappingLearning = false;
+                _controllerLearningBaselineReleased = true;
+                _controllerLearningBaseline.Clear();
+                _overlayStatusText = FormatControllerMapAction(action) + " ADD " + FormatGamepadBinding(binding);
+                SaveSettings();
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Temporarily suppresses a freshly learned controller input for menu actions.
+        /// </summary>
+        private void SuppressControllerUiBindingUntilRelease(string binding)
+        {
+            if (!string.IsNullOrWhiteSpace(binding))
+            {
+                _controllerSuppressedUiBindings.Add(binding.Trim());
+            }
+        }
+
+        private ControllerMapAction GetSelectedControllerMapAction()
+        {
+            return (ControllerMapAction)ClampInt(_controllerMappingSelection, 0, ControllerMapActionCount - 1);
+        }
+
+        /// <summary>
+        /// Gets the mutable binding list for one C64 joystick line.
+        /// </summary>
+        private List<string> GetControllerBindings(ControllerMapAction action)
+        {
+            switch (action)
+            {
+                case ControllerMapAction.Up:
+                    return _gamepadUpBindings;
+                case ControllerMapAction.Down:
+                    return _gamepadDownBindings;
+                case ControllerMapAction.Left:
+                    return _gamepadLeftBindings;
+                case ControllerMapAction.Right:
+                    return _gamepadRightBindings;
+                case ControllerMapAction.Fire:
+                    return _gamepadFireBindings;
+                case ControllerMapAction.MenuSelect:
+                    return _gamepadMenuSelectBindings;
+                case ControllerMapAction.MenuBack:
+                    return _gamepadMenuBackBindings;
+                case ControllerMapAction.MainMenu:
+                    return _gamepadMainMenuBindings;
+                case ControllerMapAction.Turbo:
+                    return _gamepadTurboBindings;
+                default:
+                    return _gamepadSaveStatesBindings;
+            }
+        }
+
+        /// <summary>
+        /// Replaces the binding list for one C64 joystick line.
+        /// </summary>
+        private void SetControllerBindings(ControllerMapAction action, List<string> bindings)
+        {
+            SetControllerBindings(action, bindings, true);
+        }
+
+        /// <summary>
+        /// Replaces the binding list for one controller action.
+        /// </summary>
+        private void SetControllerBindings(ControllerMapAction action, List<string> bindings, bool restoreDefaultWhenEmpty)
+        {
+            List<string> normalizedBindings = bindings == null
+                ? new List<string>()
+                : bindings
+                    .Where(binding => !string.IsNullOrWhiteSpace(binding))
+                    .Select(binding => binding.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            if (normalizedBindings.Count == 0 && restoreDefaultWhenEmpty)
+            {
+                normalizedBindings = ParseGamepadBindings(GetDefaultControllerBindings(action), GetDefaultControllerBindings(action));
+            }
+
+            switch (action)
+            {
+                case ControllerMapAction.Up:
+                    _gamepadUpBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.Down:
+                    _gamepadDownBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.Left:
+                    _gamepadLeftBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.Right:
+                    _gamepadRightBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.Fire:
+                    _gamepadFireBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.MenuSelect:
+                    _gamepadMenuSelectBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.MenuBack:
+                    _gamepadMenuBackBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.MainMenu:
+                    _gamepadMainMenuBindings = normalizedBindings;
+                    break;
+                case ControllerMapAction.Turbo:
+                    _gamepadTurboBindings = normalizedBindings;
+                    break;
+                default:
+                    _gamepadSaveStatesBindings = normalizedBindings;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Adds one binding token to the selected controller action.
+        /// </summary>
+        private bool AddControllerBinding(ControllerMapAction action, string binding)
+        {
+            if (string.IsNullOrWhiteSpace(binding))
+            {
+                return false;
+            }
+
+            List<string> bindings = new List<string>(GetControllerBindings(action));
+            if (bindings.Contains(binding, StringComparer.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            bindings.Add(binding.Trim());
+            SetControllerBindings(action, bindings, false);
+            return true;
+        }
+
+        /// <summary>
+        /// Gets the default binding string for one C64 joystick line.
+        /// </summary>
+        private static string GetDefaultControllerBindings(ControllerMapAction action)
+        {
+            switch (action)
+            {
+                case ControllerMapAction.Up:
+                    return DefaultGamepadUpBindings;
+                case ControllerMapAction.Down:
+                    return DefaultGamepadDownBindings;
+                case ControllerMapAction.Left:
+                    return DefaultGamepadLeftBindings;
+                case ControllerMapAction.Right:
+                    return DefaultGamepadRightBindings;
+                case ControllerMapAction.Fire:
+                    return DefaultGamepadFireBindings;
+                case ControllerMapAction.MenuSelect:
+                    return DefaultGamepadMenuSelectBindings;
+                case ControllerMapAction.MenuBack:
+                    return DefaultGamepadMenuBackBindings;
+                case ControllerMapAction.MainMenu:
+                    return DefaultGamepadMainMenuBindings;
+                case ControllerMapAction.Turbo:
+                    return DefaultGamepadTurboBindings;
+                default:
+                    return DefaultGamepadSaveStatesBindings;
+            }
+        }
+
+        /// <summary>
+        /// Formats one C64 joystick line for overlay text.
+        /// </summary>
+        private static string FormatControllerMapAction(ControllerMapAction action)
+        {
+            switch (action)
+            {
+                case ControllerMapAction.Up:
+                    return "UP";
+                case ControllerMapAction.Down:
+                    return "DOWN";
+                case ControllerMapAction.Left:
+                    return "LEFT";
+                case ControllerMapAction.Right:
+                    return "RIGHT";
+                case ControllerMapAction.Fire:
+                    return "FIRE";
+                case ControllerMapAction.MenuSelect:
+                    return "MENU SELECT";
+                case ControllerMapAction.MenuBack:
+                    return "MENU BACK";
+                case ControllerMapAction.MainMenu:
+                    return "MAIN MENU";
+                case ControllerMapAction.Turbo:
+                    return "TURBO";
+                default:
+                    return "SAVE STATES";
+            }
+        }
+
         /// <summary>
         /// Cycles the video presentation filter.
         /// </summary>
@@ -1924,14 +2463,53 @@ namespace C64Emulator
         /// </summary>
         private void PollGamepadInput()
         {
+            if (_controllerMappingLearning)
+            {
+                UpdateControllerMappingLearning();
+                return;
+            }
+
+            bool controllerUiActive = PollControllerUiActions();
+            bool menuVisible = IsControllerMenuContextActive();
+            if (controllerUiActive || menuVisible)
+            {
+                _controllerGameInputSuppressedUntilRelease = true;
+            }
+
             if (_networkMode == NetworkSessionMode.Client)
             {
+                if (controllerUiActive || menuVisible)
+                {
+                    _remoteGamepadJoystickState = 0xFF;
+                    SendRemoteClientJoystickInput(false, 0.0);
+                    return;
+                }
+
+                if (ShouldKeepControllerGameInputSuppressed())
+                {
+                    _remoteGamepadJoystickState = 0xFF;
+                    SendRemoteClientJoystickInput(false, 0.0);
+                    return;
+                }
+
                 PollRemoteClientGamepadInput();
                 return;
             }
 
             if (!_gamepadEnabled)
             {
+                return;
+            }
+
+            if (controllerUiActive || menuVisible)
+            {
+                ReleaseLocalGamepadJoystickState();
+                return;
+            }
+
+            if (ShouldKeepControllerGameInputSuppressed())
+            {
+                ReleaseLocalGamepadJoystickState();
                 return;
             }
 
@@ -1981,63 +2559,322 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Releases the local gamepad joystick lines while an emulator menu owns input.
+        /// </summary>
+        private void ReleaseLocalGamepadJoystickState()
+        {
+            _lastGamepadJoystickState = 0x1F;
+            _system.SetGamepadJoystickState(0x1F);
+        }
+
+        /// <summary>
+        /// Keeps game-facing controller input neutral until all menu-era inputs are released.
+        /// </summary>
+        private bool ShouldKeepControllerGameInputSuppressed()
+        {
+            if (!_controllerGameInputSuppressedUntilRelease)
+            {
+                return false;
+            }
+
+            if (CaptureActiveControllerInputs().Count == 0)
+            {
+                _controllerGameInputSuppressedUntilRelease = false;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Polls configured controller bindings that act like emulator/menu keys.
+        /// </summary>
+        /// <returns>True when a controller UI action was triggered this frame.</returns>
+        private bool PollControllerUiActions()
+        {
+            if (!_gamepadEnabled)
+            {
+                ResetControllerActionEdges();
+                return false;
+            }
+
+            List<string> activeBindings = CaptureActiveControllerInputs();
+            List<string> uiBindings = FilterSuppressedControllerUiBindings(activeBindings);
+            long nowTicks = DateTime.UtcNow.Ticks;
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.SaveStates, uiBindings, nowTicks, false))
+            {
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    ToggleRemoteSaveOverlay();
+                }
+                else
+                {
+                    ToggleSaveOverlay();
+                }
+
+                return true;
+            }
+
+            bool mainMenuTriggered = ShouldTriggerControllerAction(ControllerMapAction.MainMenu, uiBindings, nowTicks, false);
+            if (!_saveOverlayVisible && mainMenuTriggered)
+            {
+                ToggleMainMenu();
+                return true;
+            }
+
+            bool turboTriggered = ShouldTriggerControllerAction(ControllerMapAction.Turbo, uiBindings, nowTicks, false);
+            if (!_saveOverlayVisible && turboTriggered)
+            {
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    ShowNetworkStatus("TURBO DISABLED REMOTE");
+                }
+                else
+                {
+                    ToggleTurboMode();
+                }
+
+                return true;
+            }
+
+            if (!IsControllerMenuContextActive())
+            {
+                return false;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.MenuBack, uiBindings, nowTicks, false))
+            {
+                DispatchControllerMenuKey(Key.Escape);
+                return true;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.MenuSelect, uiBindings, nowTicks, false))
+            {
+                DispatchControllerMenuKey(Key.Enter);
+                return true;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.Up, uiBindings, nowTicks, true))
+            {
+                DispatchControllerMenuKey(Key.Up);
+                return true;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.Down, uiBindings, nowTicks, true))
+            {
+                DispatchControllerMenuKey(Key.Down);
+                return true;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.Left, uiBindings, nowTicks, true))
+            {
+                DispatchControllerMenuKey(Key.Left);
+                return true;
+            }
+
+            if (ShouldTriggerControllerAction(ControllerMapAction.Right, uiBindings, nowTicks, true))
+            {
+                DispatchControllerMenuKey(Key.Right);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Removes freshly learned controller inputs from UI processing until released.
+        /// </summary>
+        private List<string> FilterSuppressedControllerUiBindings(List<string> activeBindings)
+        {
+            if (_controllerSuppressedUiBindings.Count == 0)
+            {
+                return activeBindings;
+            }
+
+            _controllerSuppressedUiBindings.RemoveWhere(binding => !activeBindings.Contains(binding, StringComparer.OrdinalIgnoreCase));
+            if (_controllerSuppressedUiBindings.Count == 0)
+            {
+                return activeBindings;
+            }
+
+            return activeBindings
+                .Where(binding => !_controllerSuppressedUiBindings.Contains(binding))
+                .ToList();
+        }
+
+        /// <summary>
+        /// Checks one controller action with edge detection and optional menu repeat.
+        /// </summary>
+        private bool ShouldTriggerControllerAction(ControllerMapAction action, List<string> activeBindings, long nowTicks, bool repeat)
+        {
+            int actionIndex = (int)action;
+            bool pressed = IsControllerActionPressed(action, activeBindings);
+            if (!pressed)
+            {
+                _controllerActionWasDown[actionIndex] = false;
+                _controllerActionNextRepeatTicks[actionIndex] = 0;
+                return false;
+            }
+
+            if (!_controllerActionWasDown[actionIndex])
+            {
+                _controllerActionWasDown[actionIndex] = true;
+                _controllerActionNextRepeatTicks[actionIndex] = nowTicks + SecondsToTicks(ControllerActionInitialRepeatSeconds);
+                return true;
+            }
+
+            if (repeat && nowTicks >= _controllerActionNextRepeatTicks[actionIndex])
+            {
+                _controllerActionNextRepeatTicks[actionIndex] = nowTicks + SecondsToTicks(ControllerActionRepeatSeconds);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Clears debounced controller UI state when gamepad support is disabled.
+        /// </summary>
+        private void ResetControllerActionEdges()
+        {
+            Array.Clear(_controllerActionWasDown, 0, _controllerActionWasDown.Length);
+            Array.Clear(_controllerActionNextRepeatTicks, 0, _controllerActionNextRepeatTicks.Length);
+            _controllerSuppressedUiBindings.Clear();
+            _controllerGameInputSuppressedUntilRelease = false;
+        }
+
+        /// <summary>
+        /// Converts a duration in seconds to DateTime ticks.
+        /// </summary>
+        private static long SecondsToTicks(double seconds)
+        {
+            return (long)(seconds * TimeSpan.TicksPerSecond);
+        }
+
+        /// <summary>
+        /// Checks whether any currently active controller input matches one action.
+        /// </summary>
+        private bool IsControllerActionPressed(ControllerMapAction action, List<string> activeBindings)
+        {
+            if (activeBindings == null || activeBindings.Count == 0)
+            {
+                return false;
+            }
+
+            List<string> configuredBindings = GetControllerBindings(action);
+            if (configuredBindings == null || configuredBindings.Count == 0)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < activeBindings.Count; index++)
+            {
+                if (configuredBindings.Contains(activeBindings[index], StringComparer.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Returns true when an emulator overlay currently owns input.
+        /// </summary>
+        private bool IsControllerMenuContextActive()
+        {
+            return _mainMenuVisible ||
+                _networkOverlayVisible ||
+                _saveOverlayVisible ||
+                _audioOverlayVisible ||
+                _mediaBrowserVisible ||
+                _controllerMappingVisible ||
+                _resetConfirmVisible;
+        }
+
+        /// <summary>
+        /// Routes a synthetic menu key to the overlay that is currently active.
+        /// </summary>
+        private void DispatchControllerMenuKey(Key key)
+        {
+            if (_saveOverlayVisible)
+            {
+                if (_networkMode == NetworkSessionMode.Client)
+                {
+                    HandleRemoteSaveOverlayKeyDown(key);
+                }
+                else
+                {
+                    HandleSaveOverlayKeyDown(key);
+                }
+
+                return;
+            }
+
+            if (_mainMenuVisible)
+            {
+                HandleMainMenuKeyDown(key);
+                return;
+            }
+
+            if (_networkOverlayVisible)
+            {
+                HandleNetworkOverlayKeyDown(key, (KeyModifiers)0);
+                return;
+            }
+
+            if (_resetConfirmVisible)
+            {
+                HandleResetConfirmKeyDown(key);
+                return;
+            }
+
+            if (_mediaBrowserVisible)
+            {
+                HandleMediaBrowserKeyDown(key);
+                return;
+            }
+
+            if (_controllerMappingVisible)
+            {
+                HandleControllerMappingOverlayKeyDown(key);
+                return;
+            }
+
+            if (_audioOverlayVisible)
+            {
+                HandleAudioOverlayKeyDown(key);
+            }
+        }
+
+        /// <summary>
         /// Reads a C64 active-low joystick state from an OpenTK joystick snapshot.
         /// </summary>
-        private static byte ReadJoystickState(JoystickState joystick)
+        private byte ReadJoystickState(JoystickState joystick)
         {
-            const float deadZone = 0.45f;
             byte state = 0x1F;
-
-            if (joystick.AxisCount >= 2)
+            if (IsAnyGamepadBindingActive(joystick, _gamepadUpBindings))
             {
-                float xAxis = joystick.GetAxis(0);
-                float yAxis = joystick.GetAxis(1);
-                if (xAxis < -deadZone)
-                {
-                    state = (byte)(state & ~0x04);
-                }
-                else if (xAxis > deadZone)
-                {
-                    state = (byte)(state & ~0x08);
-                }
-
-                if (yAxis < -deadZone)
-                {
-                    state = (byte)(state & ~0x01);
-                }
-                else if (yAxis > deadZone)
-                {
-                    state = (byte)(state & ~0x02);
-                }
+                state = (byte)(state & ~0x01);
             }
 
-            if (joystick.HatCount > 0)
+            if (IsAnyGamepadBindingActive(joystick, _gamepadDownBindings))
             {
-                Hat hat = joystick.GetHat(0);
-                if (IsHatUp(hat))
-                {
-                    state = (byte)(state & ~0x01);
-                }
-
-                if (IsHatDown(hat))
-                {
-                    state = (byte)(state & ~0x02);
-                }
-
-                if (IsHatLeft(hat))
-                {
-                    state = (byte)(state & ~0x04);
-                }
-
-                if (IsHatRight(hat))
-                {
-                    state = (byte)(state & ~0x08);
-                }
+                state = (byte)(state & ~0x02);
             }
 
-            if (IsJoystickButtonDown(joystick, 0) ||
-                IsJoystickButtonDown(joystick, 1) ||
-                IsJoystickButtonDown(joystick, 5))
+            if (IsAnyGamepadBindingActive(joystick, _gamepadLeftBindings))
+            {
+                state = (byte)(state & ~0x04);
+            }
+
+            if (IsAnyGamepadBindingActive(joystick, _gamepadRightBindings))
+            {
+                state = (byte)(state & ~0x08);
+            }
+
+            if (IsAnyGamepadBindingActive(joystick, _gamepadFireBindings))
             {
                 state = (byte)(state & ~0x10);
             }
@@ -2045,9 +2882,316 @@ namespace C64Emulator
             return state;
         }
 
+        private static List<string> ParseGamepadBindings(string value, string fallback)
+        {
+            string source = string.IsNullOrWhiteSpace(value) ? fallback : value;
+            var bindings = new List<string>();
+            string[] parts = source.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int index = 0; index < parts.Length; index++)
+            {
+                string binding = parts[index].Trim();
+                if (!string.IsNullOrWhiteSpace(binding))
+                {
+                    bindings.Add(binding);
+                }
+            }
+
+            if (bindings.Count == 0 && !string.Equals(source, fallback, StringComparison.OrdinalIgnoreCase))
+            {
+                return ParseGamepadBindings(fallback, fallback);
+            }
+
+            return bindings;
+        }
+
+        private static string SerializeGamepadBindings(List<string> bindings)
+        {
+            return bindings == null || bindings.Count == 0 ? string.Empty : string.Join(";", bindings);
+        }
+
+        /// <summary>
+        /// Formats all bindings for one overlay row.
+        /// </summary>
+        private static string FormatGamepadBindings(List<string> bindings)
+        {
+            if (bindings == null || bindings.Count == 0)
+            {
+                return "NONE";
+            }
+
+            return string.Join(" / ", bindings.Select(FormatGamepadBinding));
+        }
+
+        /// <summary>
+        /// Formats one controller binding token for readable overlay output.
+        /// </summary>
+        private static string FormatGamepadBinding(string binding)
+        {
+            if (TryParseButtonBinding(binding, out int buttonIndex))
+            {
+                return "BUTTON " + buttonIndex.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (TryParseAxisBinding(binding, out int axisIndex, out int axisDirection))
+            {
+                return "AXIS " + axisIndex.ToString(CultureInfo.InvariantCulture) + " " + (axisDirection < 0 ? "-" : "+");
+            }
+
+            if (TryParseHatBinding(binding, out int hatIndex, out string hatDirection))
+            {
+                return "HAT " + hatIndex.ToString(CultureInfo.InvariantCulture) + " " + hatDirection.ToUpperInvariant();
+            }
+
+            return FormatOverlayValue(binding, 18);
+        }
+
+        private static bool IsAnyGamepadBindingActive(JoystickState joystick, List<string> bindings)
+        {
+            if (bindings == null)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < bindings.Count; index++)
+            {
+                if (IsGamepadBindingActive(joystick, bindings[index]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsGamepadBindingActive(JoystickState joystick, string binding)
+        {
+            if (joystick == null || string.IsNullOrWhiteSpace(binding))
+            {
+                return false;
+            }
+
+            if (TryParseButtonBinding(binding, out int buttonIndex))
+            {
+                return IsJoystickButtonDown(joystick, buttonIndex);
+            }
+
+            if (TryParseAxisBinding(binding, out int axisIndex, out int axisDirection))
+            {
+                if (axisIndex < 0 || axisIndex >= joystick.AxisCount)
+                {
+                    return false;
+                }
+
+                float value = joystick.GetAxis(axisIndex);
+                return axisDirection < 0 ? value < -GamepadAxisDeadZone : value > GamepadAxisDeadZone;
+            }
+
+            if (TryParseHatBinding(binding, out int hatIndex, out string hatDirection))
+            {
+                if (hatIndex < 0 || hatIndex >= joystick.HatCount)
+                {
+                    return false;
+                }
+
+                return IsHatDirectionActive(joystick.GetHat(hatIndex), hatDirection);
+            }
+
+            return false;
+        }
+
+        private List<string> CaptureActiveControllerInputs()
+        {
+            var inputs = new List<string>();
+            for (int index = 0; index < JoystickStates.Count; index++)
+            {
+                JoystickState joystick = JoystickStates[index];
+                if (joystick == null)
+                {
+                    continue;
+                }
+
+                AddActiveControllerInputs(joystick, inputs);
+            }
+
+            return inputs;
+        }
+
+        private static void AddActiveControllerInputs(JoystickState joystick, List<string> inputs)
+        {
+            if (joystick == null || inputs == null)
+            {
+                return;
+            }
+
+            for (int axis = 0; axis < joystick.AxisCount; axis++)
+            {
+                float value = joystick.GetAxis(axis);
+                if (value < -GamepadAxisDeadZone)
+                {
+                    AddUniqueBinding(inputs, "Axis" + axis + "-");
+                }
+                else if (value > GamepadAxisDeadZone)
+                {
+                    AddUniqueBinding(inputs, "Axis" + axis + "+");
+                }
+            }
+
+            for (int hatIndex = 0; hatIndex < joystick.HatCount; hatIndex++)
+            {
+                Hat hat = joystick.GetHat(hatIndex);
+                if (IsHatUp(hat))
+                {
+                    AddUniqueBinding(inputs, "Hat" + hatIndex + "Up");
+                }
+
+                if (IsHatDown(hat))
+                {
+                    AddUniqueBinding(inputs, "Hat" + hatIndex + "Down");
+                }
+
+                if (IsHatLeft(hat))
+                {
+                    AddUniqueBinding(inputs, "Hat" + hatIndex + "Left");
+                }
+
+                if (IsHatRight(hat))
+                {
+                    AddUniqueBinding(inputs, "Hat" + hatIndex + "Right");
+                }
+            }
+
+            for (int button = 0; button < joystick.ButtonCount; button++)
+            {
+                if (joystick.IsButtonDown(button))
+                {
+                    AddUniqueBinding(inputs, "Button" + button);
+                }
+            }
+        }
+
+        private static void AddUniqueBinding(List<string> inputs, string binding)
+        {
+            if (!inputs.Contains(binding, StringComparer.OrdinalIgnoreCase))
+            {
+                inputs.Add(binding);
+            }
+        }
+
+        /// <summary>
+        /// Parses a controller button binding such as Button0.
+        /// </summary>
+        private static bool TryParseButtonBinding(string binding, out int buttonIndex)
+        {
+            buttonIndex = 0;
+            const string prefix = "Button";
+            if (string.IsNullOrWhiteSpace(binding) || !binding.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string numberText = binding.Substring(prefix.Length);
+            return int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out buttonIndex) && buttonIndex >= 0;
+        }
+
+        /// <summary>
+        /// Parses a controller axis binding such as Axis1- or Axis0+.
+        /// </summary>
+        private static bool TryParseAxisBinding(string binding, out int axisIndex, out int axisDirection)
+        {
+            axisIndex = 0;
+            axisDirection = 0;
+            const string prefix = "Axis";
+            if (string.IsNullOrWhiteSpace(binding) || !binding.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            char directionCharacter = binding[binding.Length - 1];
+            if (directionCharacter == '-')
+            {
+                axisDirection = -1;
+            }
+            else if (directionCharacter == '+')
+            {
+                axisDirection = 1;
+            }
+            else
+            {
+                return false;
+            }
+
+            string numberText = binding.Substring(prefix.Length, binding.Length - prefix.Length - 1);
+            return int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out axisIndex) && axisIndex >= 0;
+        }
+
+        /// <summary>
+        /// Parses a controller hat binding such as Hat0Up.
+        /// </summary>
+        private static bool TryParseHatBinding(string binding, out int hatIndex, out string hatDirection)
+        {
+            hatIndex = 0;
+            hatDirection = string.Empty;
+            const string prefix = "Hat";
+            if (string.IsNullOrWhiteSpace(binding) || !binding.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            int directionStart = prefix.Length;
+            while (directionStart < binding.Length && char.IsDigit(binding[directionStart]))
+            {
+                directionStart++;
+            }
+
+            if (directionStart == prefix.Length || directionStart >= binding.Length)
+            {
+                return false;
+            }
+
+            string numberText = binding.Substring(prefix.Length, directionStart - prefix.Length);
+            if (!int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out hatIndex) || hatIndex < 0)
+            {
+                return false;
+            }
+
+            hatDirection = binding.Substring(directionStart);
+            return string.Equals(hatDirection, "Up", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(hatDirection, "Down", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(hatDirection, "Left", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(hatDirection, "Right", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsJoystickButtonDown(JoystickState joystick, int index)
         {
             return index >= 0 && index < joystick.ButtonCount && joystick.IsButtonDown(index);
+        }
+
+        /// <summary>
+        /// Checks whether a hat state contains the requested direction.
+        /// </summary>
+        private static bool IsHatDirectionActive(Hat hat, string direction)
+        {
+            if (string.Equals(direction, "Up", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsHatUp(hat);
+            }
+
+            if (string.Equals(direction, "Down", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsHatDown(hat);
+            }
+
+            if (string.Equals(direction, "Left", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsHatLeft(hat);
+            }
+
+            if (string.Equals(direction, "Right", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsHatRight(hat);
+            }
+
+            return false;
         }
 
         private static bool IsHatUp(Hat hat)
@@ -2732,6 +3876,7 @@ namespace C64Emulator
             _remoteKeyboardJoystickState = 0xFF;
             _remoteGamepadJoystickState = 0xFF;
             _lastRemoteJoystickState = 0xFF;
+            _remoteAltCursorKeys.Clear();
             _networkHostOverlayStatusText = string.Empty;
             Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
             _networkReceiveFps = 0;
@@ -2772,6 +3917,7 @@ namespace C64Emulator
             }
 
             _networkHostOverlayStatusText = string.Empty;
+            _remoteAltCursorKeys.Clear();
             Interlocked.Exchange(ref _networkFramesReceivedCounter, 0);
             _networkReceiveFps = 0;
             _networkReceiveFpsWindowStartTicks = 0;
@@ -2920,6 +4066,12 @@ namespace C64Emulator
                 return;
             }
 
+            if (_controllerMappingVisible)
+            {
+                HandleControllerMappingOverlayKeyDown(key);
+                return;
+            }
+
             if (_audioOverlayVisible)
             {
                 HandleAudioOverlayKeyDown(key);
@@ -2936,6 +4088,11 @@ namespace C64Emulator
             {
                 // Turbo is server-controlled because only the host runs emulation.
                 ShowNetworkStatus("TURBO DISABLED REMOTE");
+                return;
+            }
+
+            if (HandleRemoteAltCursorKeyDown(key, keyEventArgs.Modifiers))
+            {
                 return;
             }
 
@@ -2960,11 +4117,88 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Handles Alt+arrow as a remote C64 cursor key chord.
+        /// </summary>
+        private bool HandleRemoteAltCursorKeyDown(Key key, KeyModifiers modifiers)
+        {
+            if (!IsAltCursorChord(key, modifiers))
+            {
+                return false;
+            }
+
+            ReleaseRemoteAltModifierKeys();
+            if (_remoteAltCursorKeys.Add(key))
+            {
+                C64NetClient client = _networkClient;
+                if (client != null && client.IsConnected)
+                {
+                    client.SendKeyboardKey(_system.MapHostKeyboardLayoutKey(key), true);
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Releases a remote C64 cursor key chord if it was started with Alt+arrow.
+        /// </summary>
+        private bool HandleRemoteAltCursorKeyUp(Key key)
+        {
+            if (_remoteAltCursorKeys.Remove(key))
+            {
+                C64NetClient client = _networkClient;
+                if (client != null && client.IsConnected)
+                {
+                    client.SendKeyboardKey(_system.MapHostKeyboardLayoutKey(key), false);
+                }
+
+                return true;
+            }
+
+            if (IsAltKey(key))
+            {
+                ReleaseRemoteAltCursorKeys();
+            }
+
+            return false;
+        }
+
+        private void ReleaseRemoteAltCursorKeys()
+        {
+            foreach (Key key in _remoteAltCursorKeys.ToArray())
+            {
+                C64NetClient client = _networkClient;
+                if (client != null && client.IsConnected)
+                {
+                    client.SendKeyboardKey(_system.MapHostKeyboardLayoutKey(key), false);
+                }
+            }
+
+            _remoteAltCursorKeys.Clear();
+        }
+
+        private void ReleaseRemoteAltModifierKeys()
+        {
+            SendRemoteClientKeyboardKey(Key.AltLeft, false);
+            SendRemoteClientKeyboardKey(Key.LAlt, false);
+        }
+
+        private static bool IsAltCursorChord(Key key, KeyModifiers modifiers)
+        {
+            return IsArrowKey(key) && (modifiers & KeyModifiers.Alt) == KeyModifiers.Alt;
+        }
+
+        private static bool IsAltKey(Key key)
+        {
+            return key == Key.AltLeft || key == Key.LAlt;
+        }
+
+        /// <summary>
         /// Checks whether a key is reserved for the client window instead of the C64.
         /// </summary>
         /// <param name="key">Frontend key.</param>
         /// <returns>True for emulator control keys.</returns>
-        private static bool IsRemoteClientKeyboardReservedKey(Key key)
+        private bool IsRemoteClientKeyboardReservedKey(Key key)
         {
             byte joystickMask;
             if (TryGetJoystickMask(key, out joystickMask))
@@ -3125,6 +4359,11 @@ namespace C64Emulator
 
             mask = 0;
             return false;
+        }
+
+        private static bool IsArrowKey(Key key)
+        {
+            return key == Key.Up || key == Key.Down || key == Key.Left || key == Key.Right;
         }
 
         /// <summary>
@@ -5105,6 +6344,12 @@ namespace C64Emulator
                         return true;
                     }
 
+                    if (_audioOverlaySelection == 9)
+                    {
+                        OpenControllerMappingOverlay();
+                        return true;
+                    }
+
                     AdjustAudioSetting(1);
                     return true;
                 case Key.Escape:
@@ -6155,6 +7400,11 @@ namespace C64Emulator
                 DrawMediaBrowserOverlay(overlayX + 12, overlayY + 44, overlayWidth - 24, 158);
             }
 
+            if (_controllerMappingVisible)
+            {
+                DrawControllerMappingOverlay(overlayX + 12, overlayY + 44, overlayWidth - 24, 158);
+            }
+
             if (_resetConfirmVisible)
             {
                 DrawResetConfirmOverlay(overlayX + 42, overlayY + 80, 196, 84, mountedMediaInfo.HasMedia);
@@ -6265,6 +7515,71 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Draws the controller button/axis mapping submenu.
+        /// </summary>
+        private void DrawControllerMappingOverlay(int x, int y, int width, int height)
+        {
+            DrawFilledRectangleWithAlpha(x, y, width, height, 20, 24, 38, 242);
+            DrawLine(x, y, x + width - 1, y, 255, 243, 168);
+            DrawLine(x, y + height - 1, x + width - 1, y + height - 1, 255, 243, 168);
+            DrawLine(x, y, x, y + height - 1, 255, 243, 168);
+            DrawLine(x + width - 1, y, x + width - 1, y + height - 1, 255, 243, 168);
+
+            DrawOverlayText(x + 10, y + 8, "CONTROLLER", 2, 255, 243, 168);
+            DrawOverlayText(x + 10, y + 28, "ENTER ADD  BKSP CLEAR  DEL DEFAULT", 1, 192, 210, 225);
+
+            ClampControllerMappingScroll();
+            int rowY = y + 43;
+            for (int row = 0; row < ControllerMappingVisibleRows; row++)
+            {
+                int index = _controllerMappingScroll + row;
+                if (index >= ControllerMapActionCount)
+                {
+                    break;
+                }
+
+                ControllerMapAction action = (ControllerMapAction)index;
+                bool selected = index == _controllerMappingSelection;
+                byte labelRed = selected ? (byte)255 : (byte)210;
+                byte labelGreen = selected ? (byte)243 : (byte)220;
+                byte labelBlue = selected ? (byte)168 : (byte)210;
+                byte valueRed = selected ? (byte)240 : (byte)192;
+                byte valueGreen = selected ? (byte)248 : (byte)210;
+                byte valueBlue = selected ? (byte)255 : (byte)225;
+
+                string label = (selected ? "> " : "  ") + FormatControllerMapAction(action);
+                string value = selected && _controllerMappingLearning
+                    ? "PRESS CONTROL"
+                    : FormatGamepadBindings(GetControllerBindings(action));
+
+                int itemY = rowY + (row * ControllerMappingRowSpacing);
+                DrawOverlayText(x + 10, itemY, label, 1, labelRed, labelGreen, labelBlue);
+                DrawOverlayText(x + 100, itemY, FormatOverlayValue(value, 24), 1, valueRed, valueGreen, valueBlue);
+            }
+
+            if (ControllerMapActionCount > ControllerMappingVisibleRows)
+            {
+                DrawControllerMappingScrollBar(x + width - 8, rowY, (ControllerMappingVisibleRows * ControllerMappingRowSpacing) - 2);
+            }
+
+            DrawOverlayText(x + 10, y + height - 18, "GAMEPAD " + FormatGamepadState(), 1, 182, 214, 108);
+        }
+
+        /// <summary>
+        /// Draws the scroll bar for the controller mapping submenu.
+        /// </summary>
+        private void DrawControllerMappingScrollBar(int x, int y, int height)
+        {
+            DrawFilledRectangle(x, y, 3, height, 36, 46, 62);
+
+            int maxScroll = Math.Max(1, ControllerMapActionCount - ControllerMappingVisibleRows);
+            int thumbHeight = Math.Max(18, (height * ControllerMappingVisibleRows) / ControllerMapActionCount);
+            int thumbTravel = Math.Max(0, height - thumbHeight);
+            int thumbY = y + ((_controllerMappingScroll * thumbTravel) / maxScroll);
+            DrawFilledRectangle(x, thumbY, 3, thumbHeight, 182, 214, 108);
         }
 
         /// <summary>

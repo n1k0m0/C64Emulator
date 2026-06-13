@@ -49,6 +49,26 @@ namespace C64Emulator.Core
 
         public bool GamepadEnabled { get; set; } = true;
 
+        public string GamepadUpBindings { get; set; } = "Button2;Axis4-";
+
+        public string GamepadDownBindings { get; set; } = "Axis4+";
+
+        public string GamepadLeftBindings { get; set; } = "Axis0-";
+
+        public string GamepadRightBindings { get; set; } = "Axis0+";
+
+        public string GamepadFireBindings { get; set; } = "Button1";
+
+        public string GamepadMenuSelectBindings { get; set; } = "Button1";
+
+        public string GamepadMenuBackBindings { get; set; } = "Button2";
+
+        public string GamepadMainMenuBindings { get; set; } = "Button7;Button9";
+
+        public string GamepadTurboBindings { get; set; } = string.Empty;
+
+        public string GamepadSaveStatesBindings { get; set; } = "Button6;Button8";
+
         public bool EnableLoadHack { get; set; }
 
         public bool ForceSoftwareIecTransport { get; set; } = true;

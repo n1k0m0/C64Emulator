@@ -604,6 +604,16 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Sets a local host keyboard matrix key without touching joystick lines.
+        /// </summary>
+        /// <param name="key">Frontend key to map into the C64 keyboard matrix.</param>
+        /// <param name="pressed">True when the key is currently held.</param>
+        public void SetHostKeyState(Key key, bool pressed)
+        {
+            SetKeyState(key, pressed, _keyboardMatrix);
+        }
+
+        /// <summary>
         /// Releases all local host keyboard matrix keys.
         /// </summary>
         public void ClearHostKeyboardState()
@@ -1133,6 +1143,11 @@ namespace C64Emulator.Core
         private void SetKeyState(Key key, bool pressed, bool[,] matrix)
         {
             MatrixKey matrixKey;
+            if (SetC64CursorKeyState(key, pressed, matrix))
+            {
+                return;
+            }
+
             if (SetShiftedFunctionKeyState(key, pressed, matrix))
             {
                 return;
@@ -1234,6 +1249,44 @@ namespace C64Emulator.Core
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Maps PC arrow keys to the two physical C64 cursor keys.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <param name="pressed">True when the key is held.</param>
+        /// <param name="matrix">Keyboard matrix layer to update.</param>
+        /// <returns>True when the key was handled as a C64 cursor key.</returns>
+        private bool SetC64CursorKeyState(Key key, bool pressed, bool[,] matrix)
+        {
+            if (key == Key.Right)
+            {
+                matrix[2, 0] = pressed;
+                return true;
+            }
+
+            if (key == Key.Down)
+            {
+                matrix[7, 0] = pressed;
+                return true;
+            }
+
+            if (key == Key.Left)
+            {
+                matrix[2, 0] = pressed;
+                matrix[7, 1] = pressed;
+                return true;
+            }
+
+            if (key == Key.Up)
+            {
+                matrix[7, 0] = pressed;
+                matrix[7, 1] = pressed;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
