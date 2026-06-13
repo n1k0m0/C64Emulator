@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.12](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.12), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.13](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.13), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -40,7 +40,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - D64 disk image mounting, PRG direct loading, EasyFlash `.crt` cartridge mounting, editable EasyFlash flash saves, and optional REU expansion RAM.
 - Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
-- Host gamepad support for joystick input, alongside keyboard cursor/control mapping and EN/GER host keyboard layout selection.
+- Host gamepad support for joystick input, configurable controller bindings, controller-driven emulator menus, keyboard cursor/control mapping, and EN/GER host keyboard layout selection.
 - Optional sharp-pixel, CRT, and TV-grille video presentation filters plus a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
@@ -59,8 +59,8 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 | `F11` | Toggle fullscreen mode. |
 | `F12` | Open the savestate overlay. The emulator pauses while this menu is open. |
 | Drag `.prg` / `.d64` / `.crt` onto the window | Load PRG directly, mount D64 into the currently selected target drive, or insert an EasyFlash cartridge. |
-| Gamepad left stick / D-pad | C64 joystick direction for the selected joystick port. |
-| Gamepad A/B/RB | C64 joystick fire. |
+| Configured gamepad directions/buttons | C64 joystick direction/fire for the selected joystick port. |
+| Configured gamepad menu buttons | Open/navigate emulator menus, activate entries, go back, or open savestates. |
 | `S` / `F5` in savestate menu | Create a new savestate. |
 | `Enter` / `L` in savestate menu | Load the selected savestate and close the menu. |
 | `Del` in savestate menu | Ask for confirmation and then delete the selected savestate. |
@@ -180,7 +180,7 @@ Menu entries:
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
 | `TURBO` | `OFF` / `MAX` | Toggles uncapped emulation speed for fast loading, testing, or skipping waits. This is the same action as `F9`. |
-| `GAMEPAD` | `OFF`, `WAITING`, `ACTIVE` | Enables or disables host gamepad input. `WAITING` means gamepad support is on but no active pad input has been detected yet; `ACTIVE` means a pad is connected/seen. |
+| `GAMEPAD` | `OFF`, `WAITING`, `ACTIVE` | Enables or disables host gamepad input. `Enter` opens the controller mapping submenu. The submenu can assign multiple buttons/axes to C64 joystick directions/fire, menu select/back, the main menu, turbo, and savestates. Freshly mapped or menu-used buttons are ignored for C64 gameplay until released, so menu input does not leak into the running game. |
 | `LOAD HACK` | `OFF` / `ON` | Enables the direct KERNAL `LOAD` compatibility path. It improves convenience for simple loads, but is less hardware-faithful than pure IEC/drive behavior. |
 | `IEC SOFTWARE` | `OFF` / `ON` | Toggles the high-level software IEC/DOS transport for standard disk traffic. This can improve compatibility for normal file access, while low-level custom loaders may still need more accurate 1541 behavior. |
 | `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
@@ -271,7 +271,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.12`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.13`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -390,7 +390,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video zoom, fullscreen mode, turbo mode, gamepad input, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
 
 ## ROM Files
 

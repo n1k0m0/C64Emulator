@@ -48,6 +48,6 @@ using System.Runtime.Versioning;
 // Sie können alle Werte angeben oder die standardmäßigen Build- und Revisionsnummern 
 // übernehmen, indem Sie "*" eingeben:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("0.3.12.0")]
-[assembly: AssemblyFileVersion("0.3.12.0")]
+[assembly: AssemblyVersion("0.3.13.0")]
+[assembly: AssemblyFileVersion("0.3.13.0")]
 [assembly: SupportedOSPlatform("windows7.0")]
