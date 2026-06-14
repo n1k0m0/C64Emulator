@@ -37,6 +37,8 @@ namespace C64Emulator.Core
 
         public string HostKeyboardLayout { get; set; } = "En";
 
+        public string RenderFrameLimitMode { get; set; } = "Unlimited";
+
         public string VideoFilterMode { get; set; } = "Sharp";
 
         public string VideoUpscaleMode { get; set; } = "None";

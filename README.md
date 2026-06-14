@@ -58,7 +58,7 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - Drag-and-drop mounting for `.prg`, `.d64`, and `.crt` media files.
 - Multiple drive slots with per-drive activity LEDs in the footer overlay.
 - Host gamepad support for joystick input, configurable controller bindings, controller-driven emulator menus, keyboard cursor/control mapping, and EN/GER host keyboard layout selection.
-- Optional sharp-pixel, CRT, and TV-grille video presentation filters, GPU-side `SCALE2X`/`SCALE3X`/`HQ2X`/`HQ3X`/`HQ4X` upscalers, and a local border-crop zoom.
+- Optional sharp-pixel, CRT, and TV-grille video presentation filters, GPU-side `SCALE2X`/`SCALE3X`/`HQ2X`/`HQ3X`/`HQ4X` upscalers, a local render FPS cap, and a local border-crop zoom.
 - Savestates with complete emulator state, screenshot previews, load/delete support, and one-file save packages.
 - Windowed/fullscreen controls, turbo mode, joystick port switching, reset mode selection, and runtime settings overlay.
 - REU/REC emulation with 128 KB, 256 KB, 512 KB, 1 MB, 2 MB, 4 MB, 8 MB, and 16 MB capacities.
@@ -198,6 +198,7 @@ Menu entries:
 | `JOYSTICK` | `PORT 2`, `PORT 1`, `BOTH` | Selects which C64 joystick port receives keyboard/gamepad joystick input. Most C64 games use port 2, while some use port 1. `BOTH` mirrors input to both ports for convenience. |
 | `KEYBOARD` | `EN` / `GER` | Selects the host keyboard layout used before PC keys are mapped to C64 keys. In `GER` mode, `Y`/`Z` behave as expected on a German keyboard. Remote keyboard input is mapped on the client before it is sent to the host. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
+| `RENDER FPS` | `60 HZ`, `120 HZ`, `UNLIMITED` | Caps the frontend render loop. This changes only how often the latest frame is drawn; C64 PAL timing, audio, and network frame production remain independent. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
 | `VIDEO UPSCALE` | `NONE`, `SCALE2X`, `SCALE3X`, `HQ2X`, `HQ3X`, `HQ4X` | Applies a GPU-side source upscaler before the selected `VIDEO FILTER`. This is local for normal, host, and network-client sessions. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
@@ -418,7 +419,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, video filter, video upscale, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, render FPS cap, video filter, video upscale, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
 
 ## ROM Files
 
