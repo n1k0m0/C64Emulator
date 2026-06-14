@@ -61,6 +61,17 @@ bool sameColor(vec4 a, vec4 b)
     return distance(a.rgb, b.rgb) < 0.001 && abs(a.a - b.a) < 0.001;
 }
 
+float colorDistance(vec4 a, vec4 b)
+{
+    vec3 delta = abs(a.rgb - b.rgb);
+    return dot(delta, vec3(0.299, 0.587, 0.114)) + abs(a.a - b.a);
+}
+
+bool nearColor(vec4 a, vec4 b)
+{
+    return colorDistance(a, b) < 0.055;
+}
+
 vec2 sourcePixelFromUpscaled(vec2 upscaledPixel)
 {
     float factor = float(effectiveUpscaleFactor());
@@ -233,6 +244,159 @@ vec4 sampleHqPixel(vec2 upscaledPixel)
     return result;
 }
 
+vec4 blendCorner(vec4 baseColor, vec4 blendColor, vec2 local, vec2 corner, float strength)
+{
+    vec2 cornerSpace = abs(local - corner);
+    float diagonalDistance = cornerSpace.x + cornerSpace.y;
+    float edgeDistance = max(cornerSpace.x, cornerSpace.y);
+    float weight = smoothstep(1.05, 0.12, diagonalDistance) * smoothstep(0.92, 0.04, edgeDistance) * strength;
+    return blendToward(baseColor, blendColor, weight);
+}
+
+vec4 pickDiagonalColor(vec4 center, vec4 first, vec4 second)
+{
+    float firstDistance = colorDistance(center, first);
+    float secondDistance = colorDistance(center, second);
+    return firstDistance <= secondDistance ? first : second;
+}
+
+bool shouldXbrzBlend(vec4 center, vec4 first, vec4 second, vec4 diagonal, vec4 firstOpposite, vec4 secondOpposite)
+{
+    if (sameColor(center, first) && sameColor(center, second))
+    {
+        return false;
+    }
+
+    if (nearColor(first, second) && !nearColor(center, first))
+    {
+        return true;
+    }
+
+    float firstCenter = colorDistance(first, center);
+    float secondCenter = colorDistance(second, center);
+    float firstSecond = colorDistance(first, second);
+    float diagonalCenter = colorDistance(diagonal, center);
+    float oppositeBias = min(colorDistance(first, firstOpposite), colorDistance(second, secondOpposite));
+    float edgeStrength = min(firstCenter, secondCenter);
+
+    return edgeStrength > 0.075
+        && firstSecond < edgeStrength * 0.85
+        && diagonalCenter > firstSecond * 0.85
+        && oppositeBias > 0.025;
+}
+
+vec4 sampleXbrzPixel(vec2 upscaledPixel)
+{
+    float factor = float(effectiveUpscaleFactor());
+    vec2 clampedPixel = clampUpscaledPixel(floor(upscaledPixel));
+    vec2 sourcePixel = cropOrigin + floor(clampedPixel / factor);
+    vec2 local = (mod(clampedPixel, factor) + vec2(0.5, 0.5)) / factor;
+
+    vec4 a = fetchSourcePixel(sourcePixel + vec2(-1.0, -1.0));
+    vec4 b = fetchSourcePixel(sourcePixel + vec2(0.0, -1.0));
+    vec4 c = fetchSourcePixel(sourcePixel + vec2(1.0, -1.0));
+    vec4 d = fetchSourcePixel(sourcePixel + vec2(-1.0, 0.0));
+    vec4 e = fetchSourcePixel(sourcePixel);
+    vec4 f = fetchSourcePixel(sourcePixel + vec2(1.0, 0.0));
+    vec4 g = fetchSourcePixel(sourcePixel + vec2(-1.0, 1.0));
+    vec4 h = fetchSourcePixel(sourcePixel + vec2(0.0, 1.0));
+    vec4 i = fetchSourcePixel(sourcePixel + vec2(1.0, 1.0));
+
+    vec4 result = e;
+
+    if (shouldXbrzBlend(e, b, d, a, h, f))
+    {
+        result = blendCorner(result, pickDiagonalColor(e, b, d), local, vec2(0.0, 0.0), 0.92);
+    }
+
+    if (shouldXbrzBlend(e, b, f, c, h, d))
+    {
+        result = blendCorner(result, pickDiagonalColor(e, b, f), local, vec2(1.0, 0.0), 0.92);
+    }
+
+    if (shouldXbrzBlend(e, h, d, g, b, f))
+    {
+        result = blendCorner(result, pickDiagonalColor(e, h, d), local, vec2(0.0, 1.0), 0.92);
+    }
+
+    if (shouldXbrzBlend(e, h, f, i, b, d))
+    {
+        result = blendCorner(result, pickDiagonalColor(e, h, f), local, vec2(1.0, 1.0), 0.92);
+    }
+
+    float horizontalEdge = colorDistance(d, f);
+    float verticalEdge = colorDistance(b, h);
+    if (horizontalEdge > verticalEdge * 1.55 && horizontalEdge > 0.12)
+    {
+        vec4 side = local.x < 0.5 ? d : f;
+        result = blendToward(result, side, smoothstep(0.12, 0.5, abs(local.x - 0.5)) * 0.20);
+    }
+    else if (verticalEdge > horizontalEdge * 1.55 && verticalEdge > 0.12)
+    {
+        vec4 side = local.y < 0.5 ? b : h;
+        result = blendToward(result, side, smoothstep(0.12, 0.5, abs(local.y - 0.5)) * 0.20);
+    }
+
+    return result;
+}
+
+vec4 clean4EdgeBlend(vec4 baseColor, vec4 neighborColor, float distanceToEdge, bool edgeIsContinuous)
+{
+    if (!edgeIsContinuous || sameColor(baseColor, neighborColor))
+    {
+        return baseColor;
+    }
+
+    float weight = smoothstep(0.34, 0.03, distanceToEdge) * 0.34;
+    return blendToward(baseColor, neighborColor, weight);
+}
+
+vec4 sampleClean4Pixel(vec2 upscaledPixel)
+{
+    float factor = float(effectiveUpscaleFactor());
+    vec2 clampedPixel = clampUpscaledPixel(floor(upscaledPixel));
+    vec2 sourcePixel = cropOrigin + floor(clampedPixel / factor);
+    vec2 local = (mod(clampedPixel, factor) + vec2(0.5, 0.5)) / factor;
+
+    vec4 a = fetchSourcePixel(sourcePixel + vec2(-1.0, -1.0));
+    vec4 b = fetchSourcePixel(sourcePixel + vec2(0.0, -1.0));
+    vec4 c = fetchSourcePixel(sourcePixel + vec2(1.0, -1.0));
+    vec4 d = fetchSourcePixel(sourcePixel + vec2(-1.0, 0.0));
+    vec4 e = fetchSourcePixel(sourcePixel);
+    vec4 f = fetchSourcePixel(sourcePixel + vec2(1.0, 0.0));
+    vec4 g = fetchSourcePixel(sourcePixel + vec2(-1.0, 1.0));
+    vec4 h = fetchSourcePixel(sourcePixel + vec2(0.0, 1.0));
+    vec4 i = fetchSourcePixel(sourcePixel + vec2(1.0, 1.0));
+
+    vec4 result = e;
+    result = clean4EdgeBlend(result, b, local.y, nearColor(a, b) || nearColor(b, c) || nearColor(b, d) || nearColor(b, f));
+    result = clean4EdgeBlend(result, h, 1.0 - local.y, nearColor(g, h) || nearColor(h, i) || nearColor(h, d) || nearColor(h, f));
+    result = clean4EdgeBlend(result, d, local.x, nearColor(a, d) || nearColor(d, g) || nearColor(d, b) || nearColor(d, h));
+    result = clean4EdgeBlend(result, f, 1.0 - local.x, nearColor(c, f) || nearColor(f, i) || nearColor(f, b) || nearColor(f, h));
+
+    if (nearColor(b, d) && !nearColor(e, b))
+    {
+        result = blendCorner(result, b, local, vec2(0.0, 0.0), 0.38);
+    }
+
+    if (nearColor(b, f) && !nearColor(e, b))
+    {
+        result = blendCorner(result, b, local, vec2(1.0, 0.0), 0.38);
+    }
+
+    if (nearColor(h, d) && !nearColor(e, h))
+    {
+        result = blendCorner(result, h, local, vec2(0.0, 1.0), 0.38);
+    }
+
+    if (nearColor(h, f) && !nearColor(e, h))
+    {
+        result = blendCorner(result, h, local, vec2(1.0, 1.0), 0.38);
+    }
+
+    return result;
+}
+
 vec4 sampleUpscaledPixel(vec2 upscaledPixel)
 {
     if (upscaleMode == 1 && effectiveUpscaleFactor() == 2)
@@ -245,9 +409,19 @@ vec4 sampleUpscaledPixel(vec2 upscaledPixel)
         return sampleScale3xPixel(upscaledPixel);
     }
 
-    if (upscaleMode >= 3)
+    if (upscaleMode >= 3 && upscaleMode <= 5)
     {
         return sampleHqPixel(upscaledPixel);
+    }
+
+    if (upscaleMode == 6 && effectiveUpscaleFactor() == 4)
+    {
+        return sampleXbrzPixel(upscaledPixel);
+    }
+
+    if (upscaleMode == 7 && effectiveUpscaleFactor() == 4)
+    {
+        return sampleClean4Pixel(upscaledPixel);
     }
 
     return sampleRawUpscaledPixel(upscaledPixel);

@@ -64,7 +64,9 @@ namespace C64Emulator
             Scale3x,
             Hq2x,
             Hq3x,
-            Hq4x
+            Hq4x,
+            Xbrz,
+            Clean4
         }
 
         /// <summary>
@@ -2527,6 +2529,12 @@ namespace C64Emulator
                 case VideoUpscaleMode.Hq3x:
                     _videoUpscaleMode = VideoUpscaleMode.Hq4x;
                     break;
+                case VideoUpscaleMode.Hq4x:
+                    _videoUpscaleMode = VideoUpscaleMode.Xbrz;
+                    break;
+                case VideoUpscaleMode.Xbrz:
+                    _videoUpscaleMode = VideoUpscaleMode.Clean4;
+                    break;
                 default:
                     _videoUpscaleMode = VideoUpscaleMode.None;
                     break;
@@ -4636,6 +4644,10 @@ namespace C64Emulator
                     return SharpPixelsGpuUpscaleMode.Hq3x;
                 case VideoUpscaleMode.Hq4x:
                     return SharpPixelsGpuUpscaleMode.Hq4x;
+                case VideoUpscaleMode.Xbrz:
+                    return SharpPixelsGpuUpscaleMode.Xbrz;
+                case VideoUpscaleMode.Clean4:
+                    return SharpPixelsGpuUpscaleMode.Clean4;
                 default:
                     return SharpPixelsGpuUpscaleMode.None;
             }
@@ -4655,6 +4667,8 @@ namespace C64Emulator
                 case VideoUpscaleMode.Hq3x:
                     return 3;
                 case VideoUpscaleMode.Hq4x:
+                case VideoUpscaleMode.Xbrz:
+                case VideoUpscaleMode.Clean4:
                     return 4;
                 default:
                     return 1;
@@ -7733,7 +7747,7 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "HQ4X", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "CLEAN4", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
                     DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
@@ -8050,6 +8064,10 @@ namespace C64Emulator
                     return "HQ3X";
                 case VideoUpscaleMode.Hq4x:
                     return "HQ4X";
+                case VideoUpscaleMode.Xbrz:
+                    return "XBRZ";
+                case VideoUpscaleMode.Clean4:
+                    return "CLEAN4";
                 default:
                     return "NONE";
             }
@@ -8063,14 +8081,18 @@ namespace C64Emulator
             switch (mode)
             {
                 case VideoUpscaleMode.Scale2x:
-                    return 0.2f;
+                    return 1.0f / 7.0f;
                 case VideoUpscaleMode.Scale3x:
-                    return 0.4f;
+                    return 2.0f / 7.0f;
                 case VideoUpscaleMode.Hq2x:
-                    return 0.6f;
+                    return 3.0f / 7.0f;
                 case VideoUpscaleMode.Hq3x:
-                    return 0.8f;
+                    return 4.0f / 7.0f;
                 case VideoUpscaleMode.Hq4x:
+                    return 5.0f / 7.0f;
+                case VideoUpscaleMode.Xbrz:
+                    return 6.0f / 7.0f;
+                case VideoUpscaleMode.Clean4:
                     return 1.0f;
                 default:
                     return 0.0f;

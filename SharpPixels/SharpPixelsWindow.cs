@@ -280,7 +280,9 @@ namespace SharpPixels
         Scale3x = 2,
         Hq2x = 3,
         Hq3x = 4,
-        Hq4x = 5
+        Hq4x = 5,
+        Xbrz = 6,
+        Clean4 = 7
     }
 
     /// <summary>
