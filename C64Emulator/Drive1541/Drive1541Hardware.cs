@@ -26,6 +26,7 @@ namespace C64Emulator.Core
         private const int RomBootWarmupCycles = 20000000;
         private const int SynchronousRomBootProbeCycles = 250000;
         private const int CustomReceivePreambleResyncCycles = 96;
+        private const ushort MemoryExecuteReturnAddress = 0xC194;
         /// <summary>
         /// Stores execute context state.
         /// </summary>
@@ -35,12 +36,30 @@ namespace C64Emulator.Core
             /// Initializes a new ExecuteContext instance.
             /// </summary>
             public ExecuteContext(byte accumulator, byte x, byte y, byte stackPointer, byte status)
+                : this(accumulator, x, y, stackPointer, status, 0x0000, false)
+            {
+            }
+
+            /// <summary>
+            /// Initializes a new ExecuteContext instance.
+            /// </summary>
+            public ExecuteContext(byte accumulator, byte x, byte y, byte stackPointer, byte status, ushort returnAddress)
+                : this(accumulator, x, y, stackPointer, status, returnAddress, true)
+            {
+            }
+
+            /// <summary>
+            /// Initializes a new ExecuteContext instance.
+            /// </summary>
+            private ExecuteContext(byte accumulator, byte x, byte y, byte stackPointer, byte status, ushort returnAddress, bool hasReturnAddress)
             {
                 Accumulator = accumulator;
                 X = x;
                 Y = y;
                 StackPointer = stackPointer;
                 Status = status;
+                ReturnAddress = returnAddress;
+                HasReturnAddress = hasReturnAddress;
             }
 
             /// <summary>
@@ -67,9 +86,19 @@ namespace C64Emulator.Core
             /// Gets the status byte.
             /// </summary>
             public byte Status { get; }
+
+            /// <summary>
+            /// Gets the ROM address to resume at if the executed code returns with RTS.
+            /// </summary>
+            public ushort ReturnAddress { get; }
+
+            /// <summary>
+            /// Gets whether ReturnAddress should be placed on the emulated stack.
+            /// </summary>
+            public bool HasReturnAddress { get; }
         }
 
-        private static readonly ExecuteContext MemoryExecuteContext = new ExecuteContext(0x45, 0x00, 0x00, 0xFD, 0x24);
+        private static readonly ExecuteContext MemoryExecuteContext = new ExecuteContext(0x45, 0x00, 0x00, 0xFD, 0x24, 0xC194);
         private readonly Drive1541Bus _bus;
         private readonly Cpu6510 _cpu;
         private bool _customCodeActive;
@@ -212,6 +241,7 @@ namespace C64Emulator.Core
             _cpu.Y = context.Y;
             _cpu.SP = context.StackPointer;
             _cpu.SR = context.Status;
+            PrimeReturnAddress(context);
             _cpu.PC = address;
             _customCodeActive = true;
             _bootCyclesRemaining = 0;
@@ -263,6 +293,7 @@ namespace C64Emulator.Core
         {
             if (_runCpuContinuously || _customCodeActive || _bootCyclesRemaining > 0 || _bus.SerialOutputsEnabled)
             {
+                _bus.GeosSecondStageVectorReadRepairArmed = false;
                 _bus.Tick();
                 if (_bus.ConsumeSoPulse())
                 {
@@ -274,10 +305,29 @@ namespace C64Emulator.Core
                 // phase and restart the uploaded receiver while the C64 side
                 // was still reading a byte.
                 // ResyncManiacReceiveIfNeeded();
+                if (TryCompleteGeosFastLoaderExecution())
+                {
+                    return;
+                }
+
+                if (TryCompleteGeosSecondStageFastLoaderExecution())
+                {
+                    return;
+                }
+
+                ArmGeosSecondStageVectorRepairIfNeeded();
+
+                if (TryShortcutGeosRomDiskRoutine())
+                {
+                    _bus.GeosSecondStageVectorReadRepairArmed = false;
+                    return;
+                }
+
                 _cpu.Tick();
+                _bus.GeosSecondStageVectorReadRepairArmed = false;
                 if (!_customCodeActive && _bootCyclesRemaining > 0)
                 {
-                    if (_bus.HasSerialRomInitialization)
+                    if (_bus.HasRomInitialization)
                     {
                         CompleteRomBoot();
                     }
@@ -351,6 +401,210 @@ namespace C64Emulator.Core
         public bool IsMotorOn
         {
             get { return _bus.IsDiskMotorOn; }
+        }
+
+        /// <summary>
+        /// Mirrors the 1541 command dispatcher's stack state for M-E code that ends with RTS.
+        /// </summary>
+        private void PrimeReturnAddress(ExecuteContext context)
+        {
+            if (!context.HasReturnAddress)
+            {
+                return;
+            }
+
+            ushort rtsReturnAddress = (ushort)(context.ReturnAddress - 1);
+            byte stackLowAddress = (byte)(context.StackPointer + 1);
+            byte stackHighAddress = (byte)(context.StackPointer + 2);
+            _bus.CpuWrite((ushort)(0x0100 | stackLowAddress), (byte)(rtsReturnAddress & 0xFF));
+            _bus.CpuWrite((ushort)(0x0100 | stackHighAddress), (byte)(rtsReturnAddress >> 8));
+        }
+
+        /// <summary>
+        /// Short-circuits GEOS' drive-side 1541 ROM disk routines through the mounted D64 image.
+        /// </summary>
+        private bool TryShortcutGeosRomDiskRoutine()
+        {
+            if (!_customCodeActive || (!_bus.HasGeosFastLoaderStub && !_bus.HasGeosSecondStageFastLoaderStub))
+            {
+                return false;
+            }
+
+            if (_cpu.PC == 0xF4CA)
+            {
+                int track;
+                int sector;
+                if (_bus.HasGeosSecondStageFastLoaderStub)
+                {
+                    track = _bus.CpuRead(0x0604);
+                    sector = _bus.CpuRead(0x0605);
+                }
+                else
+                {
+                    track = _bus.CpuRead(0x0501);
+                    sector = _bus.CpuRead(0x0502);
+                }
+
+                ushort targetAddress = _bus.HasGeosSecondStageFastLoaderStub
+                    ? (ushort)0x0700
+                    : (ushort)0x0600;
+                bool ok = _bus.TryReadSectorToRam(track, sector, targetAddress);
+                if (ok && _bus.HasGeosSecondStageFastLoaderStub)
+                {
+                    _bus.CpuWrite(0x0018, (byte)track);
+                    _bus.CpuWrite(0x0019, (byte)sector);
+                    _bus.CpuWrite(0x0022, (byte)track);
+                }
+
+                _bus.CpuWrite(0x0000, ok ? (byte)0x01 : (byte)0x02);
+                _cpu.A = ok ? (byte)0x01 : (byte)0x02;
+                SetZeroAndNegativeFlags(_cpu.A);
+                ReturnFromSubroutine();
+                return true;
+            }
+
+            if (_bus.HasRecentGeosSectorShortcut && _cpu.PC == 0xF3B1)
+            {
+                // The requested sector has already been copied directly from
+                // the D64 image. GEOS still tail-calls the 1541 ROM header
+                // scanner, which relies on real GCR bytes and SO pulses from
+                // the disk controller. Skip that scanner and return to the
+                // uploaded GEOS routine with the current track variables that
+                // the ROM path would normally have refreshed.
+                _cpu.A = 0x00;
+                SetZeroAndNegativeFlags(_cpu.A);
+                ReturnFromSubroutine();
+                return true;
+            }
+
+            if (_cpu.PC == 0xF98F && GetStackedReturnAddress() == 0x0389)
+            {
+                _cpu.A = 0x00;
+                SetZeroAndNegativeFlags(_cpu.A);
+                ReturnFromSubroutine();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Finishes GEOS' uploaded M-E bootstrap routine when it returns to the DOS dispatcher.
+        /// </summary>
+        private bool TryCompleteGeosFastLoaderExecution()
+        {
+            if (!_customCodeActive || !_bus.HasGeosFastLoaderStub)
+            {
+                return false;
+            }
+
+            if (_cpu.PC != MemoryExecuteReturnAddress)
+            {
+                return false;
+            }
+
+            StopCustomCode();
+            return true;
+        }
+
+        /// <summary>
+        /// Finishes GEOS' second-stage drive routine if it has fallen through
+        /// into zero-page data after the last shortcut disk read.
+        /// </summary>
+        private bool TryCompleteGeosSecondStageFastLoaderExecution()
+        {
+            if (!_customCodeActive || !_bus.HasRecentGeosSectorShortcut)
+            {
+                return false;
+            }
+
+            if (_cpu.PC != 0x0013)
+            {
+                return false;
+            }
+
+            // $0013 is not executable GEOS drive code; it is zero-page RAM.
+            // When the second-stage loader reaches it after the desktop files
+            // have already streamed, the C64 is waiting for the drive to
+            // release IEC DATA. End the custom transport exactly as the DOS
+            // command dispatcher handoff would do after an M-E routine returns.
+            _bus.GeosSecondStageVectorReadRepairArmed = false;
+            StopCustomCode();
+            return true;
+        }
+
+        /// <summary>
+        /// Repairs GEOS' second-stage vector just before the uploaded loader
+        /// jumps through it, and keeps a read-side guard armed for the actual
+        /// indirect JMP operand fetch.
+        /// </summary>
+        private void ArmGeosSecondStageVectorRepairIfNeeded()
+        {
+            if (!_customCodeActive ||
+                !_bus.HasGeosSecondStageFastLoaderStub)
+            {
+                return;
+            }
+
+            if (_cpu.PC >= 0x0401 && _cpu.PC <= 0x040F)
+            {
+                _bus.RepairGeosSecondStageVectorIfNeeded();
+            }
+
+            if (_cpu.PC >= 0x040F && _cpu.PC <= 0x0412)
+            {
+                _bus.GeosSecondStageVectorReadRepairArmed = true;
+            }
+        }
+
+        /// <summary>
+        /// Performs the stack pop and PC increment normally done by an RTS instruction.
+        /// </summary>
+        private void ReturnFromSubroutine()
+        {
+            byte lowAddress = (byte)(_cpu.SP + 1);
+            byte highAddress = (byte)(_cpu.SP + 2);
+            byte returnLow = _bus.CpuRead((ushort)(0x0100 | lowAddress));
+            byte returnHigh = _bus.CpuRead((ushort)(0x0100 | highAddress));
+            _cpu.SP = (byte)(_cpu.SP + 2);
+            ushort stackedAddress = (ushort)(returnLow | (returnHigh << 8));
+            _cpu.PC = (ushort)(stackedAddress + 1);
+        }
+
+        /// <summary>
+        /// Reads the return address currently waiting on the emulated 6502 stack.
+        /// </summary>
+        private ushort GetStackedReturnAddress()
+        {
+            byte lowAddress = (byte)(_cpu.SP + 1);
+            byte highAddress = (byte)(_cpu.SP + 2);
+            byte returnLow = _bus.CpuRead((ushort)(0x0100 | lowAddress));
+            byte returnHigh = _bus.CpuRead((ushort)(0x0100 | highAddress));
+            return (ushort)(returnLow | (returnHigh << 8));
+        }
+
+        /// <summary>
+        /// Updates the emulated 6502 zero and negative flags for shortcut return values.
+        /// </summary>
+        private void SetZeroAndNegativeFlags(byte value)
+        {
+            if (value == 0)
+            {
+                _cpu.SR |= 0x02;
+            }
+            else
+            {
+                _cpu.SR &= 0xFD;
+            }
+
+            if ((value & 0x80) != 0)
+            {
+                _cpu.SR |= 0x80;
+            }
+            else
+            {
+                _cpu.SR &= 0x7F;
+            }
         }
 
         /// <summary>

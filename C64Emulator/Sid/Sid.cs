@@ -65,6 +65,8 @@ namespace C64Emulator.Core
         private double _sampleCycleAccumulator;
         private byte _oscillator3Value;
         private byte _envelope3Value;
+        private byte _potXValue = 0xFF;
+        private byte _potYValue = 0xFF;
         private float _masterVolume = 1.0f;
         private float _noiseLevel = 0.55f;
         private SidChipModel _chipModel = SidChipModel.Mos6581;
@@ -161,6 +163,17 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Sets the two analog paddle values exposed through SID POTX/POTY.
+        /// </summary>
+        /// <param name="potX">Current POTX register value.</param>
+        /// <param name="potY">Current POTY register value.</param>
+        public void SetPaddleValues(byte potX, byte potY)
+        {
+            _potXValue = potX;
+            _potYValue = potY;
+        }
+
+        /// <summary>
         /// Resets the component to its power-on or idle state.
         /// </summary>
         public void Reset()
@@ -172,6 +185,8 @@ namespace C64Emulator.Core
             _sampleCycleAccumulator = 0.0;
             _oscillator3Value = 0;
             _envelope3Value = 0;
+            _potXValue = 0xFF;
+            _potYValue = 0xFF;
             _filterLow = 0.0f;
             _filterBand = 0.0f;
             _volumeDacTarget = 0.0f;
@@ -246,8 +261,9 @@ namespace C64Emulator.Core
             switch (address)
             {
                 case 0x19:
+                    return _potXValue;
                 case 0x1A:
-                    return 0xFF;
+                    return _potYValue;
                 case 0x1B:
                     return _oscillator3Value;
                 case 0x1C:

@@ -145,7 +145,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 22;
+        private const int AudioOverlayItemCount = 23;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int ControllerMapActionCount = 10;
@@ -184,6 +184,9 @@ namespace C64Emulator
         private const double DriveFooterFadeOutSeconds = 0.6;
         private const double TurboToastHoldSeconds = 0.85;
         private const double TurboToastFadeSeconds = 0.35;
+        private const int Mouse1351CounterMask = 0x3F;
+        private const int Mouse1351MaxDeltaPerEvent = 31;
+        private const int Mouse1351MovementScale = 2;
         private static readonly Dictionary<char, byte[]> OverlayFont = CreateOverlayFont();
         private readonly C64Model _model;
         private C64System _system;
@@ -224,8 +227,16 @@ namespace C64Emulator
         private VideoUpscaleMode _videoUpscaleMode = VideoUpscaleMode.None;
         private ResetMode _resetMode = ResetMode.Warm;
         private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
+        private Mouse1351Port _mouse1351Port = Mouse1351Port.Off;
         private bool _videoZoomEnabled;
         private byte _lastGamepadJoystickState = 0x1F;
+        private byte _lastMouse1351JoystickState = 0x1F;
+        private int _mouse1351XCounter = 0x20;
+        private int _mouse1351YCounter = 0x20;
+        private int _lastMouseX;
+        private int _lastMouseY;
+        private bool _hasLastMousePosition;
+        private bool _mouse1351Captured;
         // Remote client input is kept separate by source and combined with active-low
         // AND semantics before it is sent to the host.
         private byte _remoteKeyboardJoystickState = 0xFF;
@@ -418,6 +429,8 @@ namespace C64Emulator
             _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
             _system.SetJoystickPort(ParseEnum(settings.JoystickPort, JoystickPort.Port2));
             _system.SetHostKeyboardLayout(ParseEnum(settings.HostKeyboardLayout, HostKeyboardLayout.En));
+            _mouse1351Port = ParseEnum(settings.Mouse1351Port, Mouse1351Port.Off);
+            ApplyMouse1351StateToSystem();
             _system.EnableLoadHack = settings.EnableLoadHack;
             _system.ForceSoftwareIecTransport = settings.ForceSoftwareIecTransport;
             _system.EnableInputInjection = settings.EnableInputInjection;
@@ -493,6 +506,7 @@ namespace C64Emulator
                 SidChipModel = _system.CurrentSidChipModel.ToString(),
                 JoystickPort = _system.CurrentJoystickPort.ToString(),
                 HostKeyboardLayout = _system.CurrentHostKeyboardLayout.ToString(),
+                Mouse1351Port = _mouse1351Port.ToString(),
                 RenderFrameLimitMode = _renderFrameLimitMode.ToString(),
                 VideoFilterMode = _videoFilterMode.ToString(),
                 VideoUpscaleMode = _videoUpscaleMode.ToString(),
@@ -716,6 +730,7 @@ namespace C64Emulator
             }
 
             PollGamepadInput();
+            PollMouse1351Input();
             if (_networkMode == NetworkSessionMode.Client)
             {
                 // Remote clients do not advance _system. They only draw the latest
@@ -907,6 +922,7 @@ namespace C64Emulator
             }
 
             ApplyRenderFrameLimit();
+            UpdateMouse1351CaptureState();
         }
 
         /// <summary>
@@ -914,6 +930,50 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserMouseMove(int x, int y)
         {
+            HandleMouse1351Move(x, y, 0, 0, false);
+        }
+
+        /// <summary>
+        /// Handles the on user mouse move operation including relative movement.
+        /// </summary>
+        public override void OnUserMouseMove(int x, int y, int deltaX, int deltaY)
+        {
+            HandleMouse1351Move(x, y, deltaX, deltaY, true);
+        }
+
+        /// <summary>
+        /// Converts host mouse move events into 1351 movement when mouse emulation is active.
+        /// </summary>
+        private void HandleMouse1351Move(int x, int y, int deltaX, int deltaY, bool hasEventDelta)
+        {
+            if (!IsMouse1351InputActive())
+            {
+                _hasLastMousePosition = false;
+                return;
+            }
+
+            if (hasEventDelta)
+            {
+                _lastMouseX = x;
+                _lastMouseY = y;
+                _hasLastMousePosition = true;
+                ApplyMouse1351Movement(deltaX, deltaY);
+                return;
+            }
+
+            if (!_hasLastMousePosition)
+            {
+                _lastMouseX = x;
+                _lastMouseY = y;
+                _hasLastMousePosition = true;
+                return;
+            }
+
+            int fallbackDeltaX = x - _lastMouseX;
+            int fallbackDeltaY = y - _lastMouseY;
+            _lastMouseX = x;
+            _lastMouseY = y;
+            ApplyMouse1351Movement(fallbackDeltaX, fallbackDeltaY);
         }
 
         /// <summary>
@@ -921,6 +981,10 @@ namespace C64Emulator
         /// </summary>
         public override void OnUserMouseClick(int x, int y, MouseState mouseState)
         {
+            if (IsMouse1351InputActive())
+            {
+                PollMouse1351ButtonState();
+            }
         }
 
         /// <summary>
@@ -1702,6 +1766,7 @@ namespace C64Emulator
             try
             {
                 SaveStateFile.Load(entry.Path, _system);
+                ApplyMouse1351StateToSystem();
                 lock (_system.SyncRoot)
                 {
                     Array.Copy(_system.FrameBuffer.CompletedPixels, _frameSnapshot, _frameSnapshot.Length);
@@ -2675,6 +2740,173 @@ namespace C64Emulator
         {
             _lastGamepadJoystickState = 0x1F;
             _system.SetGamepadJoystickState(0x1F);
+        }
+
+        /// <summary>
+        /// Polls host mouse buttons and keeps the window cursor captured for 1351 mode.
+        /// </summary>
+        private void PollMouse1351Input()
+        {
+            UpdateMouse1351CaptureState();
+            if (!IsMouse1351InputActive())
+            {
+                _hasLastMousePosition = false;
+                if (_lastMouse1351JoystickState != 0x1F)
+                {
+                    _lastMouse1351JoystickState = 0x1F;
+                    ApplyMouse1351StateToSystem();
+                }
+
+                return;
+            }
+
+            PollMouse1351ButtonState();
+        }
+
+        /// <summary>
+        /// Reads the current host mouse buttons and mirrors them to the 1351 control port.
+        /// </summary>
+        private void PollMouse1351ButtonState()
+        {
+            byte joystickState = ReadMouse1351JoystickState();
+            if (joystickState == _lastMouse1351JoystickState)
+            {
+                return;
+            }
+
+            _lastMouse1351JoystickState = joystickState;
+            ApplyMouse1351StateToSystem();
+        }
+
+        /// <summary>
+        /// Returns true when host mouse movement should reach the emulated C64.
+        /// </summary>
+        private bool IsMouse1351InputActive()
+        {
+            return _mouse1351Port != Mouse1351Port.Off
+                && _networkMode != NetworkSessionMode.Client
+                && !IsAnyEmulatorMenuVisible();
+        }
+
+        /// <summary>
+        /// Captures or releases the OS cursor according to the active 1351 mode.
+        /// </summary>
+        private void UpdateMouse1351CaptureState()
+        {
+            bool shouldCapture = IsMouse1351InputActive();
+            if (shouldCapture == _mouse1351Captured)
+            {
+                return;
+            }
+
+            _mouse1351Captured = shouldCapture;
+            _hasLastMousePosition = false;
+            try
+            {
+                CursorState = shouldCapture
+                    ? OpenTK.Windowing.Common.CursorState.Grabbed
+                    : OpenTK.Windowing.Common.CursorState.Hidden;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+        }
+
+        /// <summary>
+        /// Checks whether an emulator overlay currently owns mouse/game input.
+        /// </summary>
+        private bool IsAnyEmulatorMenuVisible()
+        {
+            return _mainMenuVisible
+                || _audioOverlayVisible
+                || _mediaBrowserVisible
+                || _resetConfirmVisible
+                || _networkOverlayVisible
+                || _controllerMappingVisible
+                || _networkTlsCertificatePromptVisible
+                || _saveOverlayVisible;
+        }
+
+        /// <summary>
+        /// Converts host mouse deltas into middle-aligned 6-bit Commodore 1351 counters.
+        /// </summary>
+        private void ApplyMouse1351Movement(int deltaX, int deltaY)
+        {
+            if (deltaX == 0 && deltaY == 0)
+            {
+                return;
+            }
+
+            int scaledX = ClampInt(deltaX * Mouse1351MovementScale, -Mouse1351MaxDeltaPerEvent, Mouse1351MaxDeltaPerEvent);
+            int scaledY = ClampInt(deltaY * Mouse1351MovementScale, -Mouse1351MaxDeltaPerEvent, Mouse1351MaxDeltaPerEvent);
+            if (scaledX == 0 && scaledY == 0)
+            {
+                return;
+            }
+
+            _mouse1351XCounter = (_mouse1351XCounter + scaledX) & Mouse1351CounterMask;
+            // A real 1351 reports positive POTY movement when the mouse moves up.
+            _mouse1351YCounter = (_mouse1351YCounter - scaledY) & Mouse1351CounterMask;
+            ApplyMouse1351StateToSystem();
+        }
+
+        /// <summary>
+        /// Reads the 1351 button lines from the current host mouse state.
+        /// </summary>
+        private byte ReadMouse1351JoystickState()
+        {
+            byte state = 0x1F;
+            try
+            {
+                OpenTK.Windowing.GraphicsLibraryFramework.MouseState mouseState = MouseState;
+                if (mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left))
+                {
+                    state = (byte)(state & ~0x10);
+                }
+
+                if (mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right))
+                {
+                    state = (byte)(state & ~0x01);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+
+            return state;
+        }
+
+        /// <summary>
+        /// Pushes the current 1351 POT counters and button lines into the emulated chips.
+        /// </summary>
+        private void ApplyMouse1351StateToSystem()
+        {
+            if (_system == null)
+            {
+                return;
+            }
+
+            if (_mouse1351Port == Mouse1351Port.Off)
+            {
+                _system.SetMouse1351State(Mouse1351Port.Off, 0xFF, 0xFF, 0x1F);
+                return;
+            }
+
+            _system.SetMouse1351State(
+                _mouse1351Port,
+                EncodeMouse1351Counter(_mouse1351XCounter),
+                EncodeMouse1351Counter(_mouse1351YCounter),
+                _lastMouse1351JoystickState);
+        }
+
+        /// <summary>
+        /// Encodes a 6-bit 1351 counter into the middle-aligned SID POT register layout.
+        /// </summary>
+        private static byte EncodeMouse1351Counter(int counter)
+        {
+            return (byte)((counter & Mouse1351CounterMask) << 1);
         }
 
         /// <summary>
@@ -6582,7 +6814,7 @@ namespace C64Emulator
                         return true;
                     }
 
-                    if (_audioOverlaySelection == 11)
+                    if (_audioOverlaySelection == 12)
                     {
                         OpenControllerMappingOverlay();
                         return true;
@@ -6663,101 +6895,107 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 5)
             {
-                ToggleDisplayMode();
+                CycleMouse1351Port();
                 return;
             }
 
             if (_audioOverlaySelection == 6)
             {
-                CycleRenderFrameLimit();
+                ToggleDisplayMode();
                 return;
             }
 
             if (_audioOverlaySelection == 7)
             {
-                CycleVideoFilter();
+                CycleRenderFrameLimit();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                CycleVideoUpscale();
+                CycleVideoFilter();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleVideoZoom();
+                CycleVideoUpscale();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleTurboMode();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleGamepadInput();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                ToggleLoadHack();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                ToggleSoftwareIecTransport();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 14)
             {
-                ToggleInputInjection();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 15)
             {
-                CycleResetMode();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 16)
             {
-                ToggleDriveOverlay();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 17)
             {
-                ToggleEasyFlash();
+                ToggleDriveOverlay();
                 return;
             }
 
             if (_audioOverlaySelection == 18)
             {
-                SaveEasyFlash();
+                ToggleEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 19)
             {
-                EjectEasyFlash();
+                SaveEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 20)
             {
-                ToggleReu();
+                EjectEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 21)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 22)
             {
                 CycleReuSize(direction);
                 return;
@@ -6859,6 +7097,32 @@ namespace C64Emulator
                 : HostKeyboardLayout.Ger;
             _system.SetHostKeyboardLayout(nextLayout);
             _overlayStatusText = "KEYBOARD " + FormatHostKeyboardLayout(nextLayout);
+            SaveSettings();
+        }
+
+        /// <summary>
+        /// Cycles the Commodore 1351 mouse emulation target port.
+        /// </summary>
+        private void CycleMouse1351Port()
+        {
+            switch (_mouse1351Port)
+            {
+                case Mouse1351Port.Off:
+                    _mouse1351Port = Mouse1351Port.Port1;
+                    break;
+                case Mouse1351Port.Port1:
+                    _mouse1351Port = Mouse1351Port.Port2;
+                    break;
+                default:
+                    _mouse1351Port = Mouse1351Port.Off;
+                    break;
+            }
+
+            _hasLastMousePosition = false;
+            _lastMouse1351JoystickState = 0x1F;
+            ApplyMouse1351StateToSystem();
+            UpdateMouse1351CaptureState();
+            _overlayStatusText = "1351 MOUSE " + FormatMouse1351Port(_mouse1351Port);
             SaveSettings();
         }
 
@@ -7409,7 +7673,7 @@ namespace C64Emulator
 
             // Remote clients can control only local display/presentation choices. The
             // server owns emulation-affecting settings such as SID, reset, and turbo.
-            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 8 || menuIndex == 9 || menuIndex == 11;
+            return menuIndex == 4 || menuIndex == 6 || menuIndex == 7 || menuIndex == 8 || menuIndex == 9 || menuIndex == 10 || menuIndex == 12;
         }
 
         /// <summary>
@@ -7724,54 +7988,57 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "KEYBOARD", GetHostKeyboardLayoutFill(_system.CurrentHostKeyboardLayout), FormatHostKeyboardLayout(_system.CurrentHostKeyboardLayout), "EN", "GER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 5:
-                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "1351 MOUSE", GetMouse1351PortFill(_mouse1351Port), FormatMouse1351Port(_mouse1351Port), "OFF", "PORT 2", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 6:
-                    DrawOverlayItem(x, y, "RENDER FPS", GetRenderFrameLimitFill(_renderFrameLimitMode), FormatRenderFrameLimit(_renderFrameLimitMode), "60 HZ", "UNLIMIT", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "DISPLAY", _windowFullscreen ? 1.0f : 0.0f, _windowFullscreen ? "FULLSCREEN" : "WINDOW", "WINDOW", "FULL", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RENDER FPS", GetRenderFrameLimitFill(_renderFrameLimitMode), FormatRenderFrameLimit(_renderFrameLimitMode), "60 HZ", "UNLIMIT", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "HQ4X", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "HQ4X", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 15:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 16:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 18:
-                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 19:
-                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 20:
-                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 21:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 22:
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
@@ -7918,6 +8185,38 @@ namespace C64Emulator
         private static float GetHostKeyboardLayoutFill(HostKeyboardLayout layout)
         {
             return layout == HostKeyboardLayout.Ger ? 1.0f : 0.0f;
+        }
+
+        /// <summary>
+        /// Formats the selected Commodore 1351 mouse port.
+        /// </summary>
+        private static string FormatMouse1351Port(Mouse1351Port mousePort)
+        {
+            switch (mousePort)
+            {
+                case Mouse1351Port.Port1:
+                    return "PORT 1";
+                case Mouse1351Port.Port2:
+                    return "PORT 2";
+                default:
+                    return "OFF";
+            }
+        }
+
+        /// <summary>
+        /// Gets the settings slider fill value for the selected 1351 mouse port.
+        /// </summary>
+        private static float GetMouse1351PortFill(Mouse1351Port mousePort)
+        {
+            switch (mousePort)
+            {
+                case Mouse1351Port.Port1:
+                    return 0.5f;
+                case Mouse1351Port.Port2:
+                    return 1.0f;
+                default:
+                    return 0.0f;
+            }
         }
 
         /// <summary>
@@ -8418,6 +8717,7 @@ namespace C64Emulator
             _system.EnableLoadHack = enableLoadHack;
             _system.ForceSoftwareIecTransport = forceSoftwareIecTransport;
             _system.EnableInputInjection = enableInputInjection;
+            ApplyMouse1351StateToSystem();
             _lastGamepadJoystickState = 0xFF;
             _turboTimingResetPending = true;
             return statusText;
@@ -8454,6 +8754,7 @@ namespace C64Emulator
             _system.EnableLoadHack = enableLoadHack;
             _system.ForceSoftwareIecTransport = forceSoftwareIecTransport;
             _system.EnableInputInjection = enableInputInjection;
+            ApplyMouse1351StateToSystem();
 
             _turboMode = false;
             _turboTimingResetPending = false;

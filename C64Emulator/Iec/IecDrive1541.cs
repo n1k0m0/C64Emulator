@@ -811,7 +811,7 @@ namespace C64Emulator.Core
         public string GetDebugInfo()
         {
             return string.Format(
-                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} deviceAttn={15} payloadRx={16} payloadTx={17} armRx={18} armTx={19} attn={20} probeHold={21}:{22} ch={23} listenSA={24:X2} talkSA={25:X2} talkIdx={26}/{27} sender={28} receiver={29} bus={30} recent={31} open0={32} open15={33} diskSet={34} autoDisk=\"{35}\" atnEdges={36}/{37} attnBeg={38} attnEnd={39} attnCmds={40} swClk={41} swData={42} pendArmed={43} pendWaitAtn={44} pendWait={45} pendIdle={46}",
+                "mounted={0} hwCustom={1} hwBoot={2} hwPc={3:X4} hwA={47:X2} hwX={48:X2} hwY={49:X2} hwSP={50:X2} hwSR={51:X2} status={4:X2}:\"{5}\" pending={6} lastExec={7:X4} lastCmd=\"{8}\" cmdHist=\"{9}\" mw={10}@{11:X4}+{12} listening={13} talking={14} deviceAttn={15} payloadRx={16} payloadTx={17} armRx={18} armTx={19} attn={20} probeHold={21}:{22} ch={23} listenSA={24:X2} talkSA={25:X2} talkIdx={26}/{27} sender={28} receiver={29} bus={30} recent={31} open0={32} open15={33} diskSet={34} autoDisk=\"{35}\" atnEdges={36}/{37} attnBeg={38} attnEnd={39} attnCmds={40} swClk={41} swData={42} pendArmed={43} pendWaitAtn={44} pendWait={45} pendIdle={46}",
                 _mountedImage != null,
                 _hardware.HasCustomCodeActive,
                 _hardware.IsBooting,
@@ -858,7 +858,12 @@ namespace C64Emulator.Core
                 _pendingCustomExecutionArmed,
                 _pendingCustomExecutionWaitForAtnRelease,
                 _pendingCustomExecutionWaitCycles,
-                _pendingCustomExecutionIdleCycles);
+                _pendingCustomExecutionIdleCycles,
+                _hardware.Cpu.A,
+                _hardware.Cpu.X,
+                _hardware.Cpu.Y,
+                _hardware.Cpu.SP,
+                _hardware.Cpu.SR);
         }
 
         /// <summary>
@@ -1164,12 +1169,17 @@ namespace C64Emulator.Core
         public void Tick()
         {
             TickLed();
+            bool hadCustomCodeActive = _hardware.HasCustomCodeActive;
             if (ShouldTickHardware())
             {
                 _hardware.Tick();
             }
 
             UpdateHardwareSerialTransportMode();
+            if (hadCustomCodeActive && !_hardware.HasCustomCodeActive)
+            {
+                HandleCustomHardwareTransportStopped();
+            }
 
             TickPassiveObserver();
 
@@ -1544,6 +1554,22 @@ namespace C64Emulator.Core
             _presenceProbeHoldCycles = 0;
             _continueAttentionCommandAfterRelease = false;
             _attentionPostReleaseWaitCycles = 0;
+        }
+
+        /// <summary>
+        /// Re-arms the software IEC state machine after uploaded drive code releases the bus.
+        /// </summary>
+        private void HandleCustomHardwareTransportStopped()
+        {
+            ResetSoftwareTransportStateForBridge();
+            ResetPassiveObserverState();
+            ReleaseLines();
+            // Custom drive code owns ATN observation while it is active. If it
+            // returns while the C64 already holds ATN low, synthesize the edge
+            // through the normal Tick() safety path so the software transport
+            // acknowledges the pending command instead of waiting forever for
+            // a transition that has already happened.
+            _lastAtnLow = false;
         }
 
         /// <summary>

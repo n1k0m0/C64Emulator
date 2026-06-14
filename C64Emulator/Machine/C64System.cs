@@ -1088,6 +1088,29 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Updates the emulated Commodore 1351 mouse state.
+        /// </summary>
+        /// <param name="mousePort">Control port containing the emulated 1351 mouse.</param>
+        /// <param name="potX">Middle-aligned 6-bit POTX counter exposed through SID $D419.</param>
+        /// <param name="potY">Middle-aligned 6-bit POTY counter exposed through SID $D41A.</param>
+        /// <param name="activeLowJoystickState">Active-low mouse button state on the control port.</param>
+        public void SetMouse1351State(Mouse1351Port mousePort, byte potX, byte potY, byte activeLowJoystickState)
+        {
+            lock (_syncRoot)
+            {
+                if (mousePort == Mouse1351Port.Off)
+                {
+                    _sid.SetPaddleValues(0xFF, 0xFF);
+                    _cia1.SetMouse1351JoystickState(Mouse1351Port.Off, 0x1F);
+                    return;
+                }
+
+                _sid.SetPaddleValues(potX, potY);
+                _cia1.SetMouse1351JoystickState(mousePort, activeLowJoystickState);
+            }
+        }
+
+        /// <summary>
         /// Sets network-controlled joystick input for the selected C64 port.
         /// </summary>
         /// <param name="joystickPort">C64 joystick port to update.</param>

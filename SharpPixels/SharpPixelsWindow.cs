@@ -1053,7 +1053,7 @@ namespace SharpPixels
         /// <param name="e">Event arguments.</param>
         private void SharpPixels_MouseMove(MouseMoveEventArgs e)
         {
-            OnUserMouseMove((int)e.Position.X, (int)e.Position.Y);
+            OnUserMouseMove((int)e.Position.X, (int)e.Position.Y, (int)e.DeltaX, (int)e.DeltaY);
         }
 
         /// <summary>
@@ -1269,6 +1269,13 @@ namespace SharpPixels
         /// Handles the on user mouse move operation.
         /// </summary>
         public abstract void OnUserMouseMove(int x, int y);
+        /// <summary>
+        /// Handles the on user mouse move operation including relative event movement.
+        /// </summary>
+        public virtual void OnUserMouseMove(int x, int y, int deltaX, int deltaY)
+        {
+            OnUserMouseMove(x, y);
+        }
         /// <summary>
         /// Handles the on user mouse click operation.
         /// </summary>

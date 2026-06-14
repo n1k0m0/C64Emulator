@@ -253,7 +253,13 @@ namespace C64Emulator
                 string logPath = args.Length >= 3
                     ? args[2]
                     : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "probe_run_d64.log");
-                RunD64RunProbe(args[1], logPath);
+                int maxCycles = args.Length >= 4 && int.TryParse(args[3], out int parsedMaxCycles) && parsedMaxCycles > 0
+                    ? parsedMaxCycles
+                    : 120000000;
+                string framePath = args.Length >= 5
+                    ? args[4]
+                    : string.Empty;
+                RunD64RunProbe(args[1], logPath, maxCycles, framePath);
                 return;
             }
 
@@ -702,12 +708,15 @@ namespace C64Emulator
         /// <summary>
         /// Runs the d64 run probe routine.
         /// </summary>
-        private static void RunD64RunProbe(string d64Path, string logPath)
+        private static void RunD64RunProbe(string d64Path, string logPath, int maxCycles, string framePath)
         {
             var log = new StringBuilder();
             log.AppendLine("D64 RUN PROBE");
             log.AppendLine("D64=" + d64Path);
+            log.AppendLine("MaxCycles=" + maxCycles);
+            log.AppendLine("Frame=" + framePath);
             log.AppendLine("Started=" + DateTime.Now.ToString("O"));
+            bool isGeosProbe = Path.GetFileName(d64Path).IndexOf("geos", StringComparison.OrdinalIgnoreCase) >= 0;
 
             try
             {
@@ -725,8 +734,32 @@ namespace C64Emulator
                     bool loadCompleted = false;
                     string lastDriveDebug = string.Empty;
                     string lastIecDebug = string.Empty;
+                    byte lastGeosPortTemplate = system.Peek(0x000F);
+                    byte lastGeosReleaseTemplate = system.Peek(0x0010);
+                    int geosZeroPageWatchLines = 0;
+                    bool loggedGeosDriveTerminator = false;
+                    int geosBlockLengthLines = 0;
+                    int lastGeosBlockLengthCycle = -1024;
+                    int geosReceiveSampleLines = 0;
+                    int lastGeosReceiveSampleCycle = -1024;
+                    int driveDebugChangeLines = 0;
+                    int iecDebugChangeLines = 0;
+                    string lastTightIecDebug = string.Empty;
+                    string lastTightDriveDebug = string.Empty;
+                    int tightDebugLines = 0;
+                    int geosDriveCustomPcLines = 0;
+                    int lastGeosDriveCustomPcCycle = -1024;
+                    int geosSecondStageLines = 0;
+                    int lastGeosSecondStageCycle = -1024;
+                    const int MaxDebugChangeLines = 512;
+                    const int MaxGeosZeroPageWatchLines = 128;
+                    const int MaxGeosBlockLengthLines = 96;
+                    const int MaxGeosReceiveSampleLines = 160;
+                    const int MaxTightDebugLines = 512;
+                    const int MaxGeosDriveCustomPcLines = 256;
+                    const int MaxGeosSecondStageLines = 512;
 
-                    for (int cycle = 0; cycle <= 120000000; cycle++)
+                    for (int cycle = 0; cycle <= maxCycles; cycle++)
                     {
                         system.Tick();
 
@@ -744,7 +777,21 @@ namespace C64Emulator
                             system.EnqueuePetsciiText("RUN\r");
                         }
 
-                        if (loadCompleted && cycle > 0 && (cycle % 4000000) == 2000000)
+                        if (!loadCompleted &&
+                            cycle >= 3500000 &&
+                            system.Peek(0x0090) == 0x40)
+                        {
+                            loadCompleted = true;
+                            log.AppendFormat(
+                                "LOAD-DONE-FALLBACK cycle={0} pc={1:X4} st={2:X2}",
+                                cycle,
+                                system.Cpu.PC,
+                                system.Peek(0x0090));
+                            log.AppendLine();
+                            system.EnqueuePetsciiText("RUN\r");
+                        }
+
+                        if (!isGeosProbe && loadCompleted && cycle > 0 && (cycle % 4000000) == 2000000)
                         {
                             // Periodic CONTROL taps skip many intro pauses in common
                             // disk games, allowing the probe to reach gameplay frames
@@ -752,17 +799,198 @@ namespace C64Emulator
                             system.KeyDown(OpenTK.Input.Key.ControlLeft);
                         }
 
-                        if (loadCompleted && cycle > 0 && (cycle % 4000000) == 2001000)
+                        if (!isGeosProbe && loadCompleted && cycle > 0 && (cycle % 4000000) == 2001000)
                         {
                             system.KeyUp(OpenTK.Input.Key.ControlLeft);
+                        }
+
+                        if (geosZeroPageWatchLines < MaxGeosZeroPageWatchLines)
+                        {
+                            byte currentGeosPortTemplate = system.Peek(0x000F);
+                            byte currentGeosReleaseTemplate = system.Peek(0x0010);
+                            if (currentGeosPortTemplate != lastGeosPortTemplate ||
+                                currentGeosReleaseTemplate != lastGeosReleaseTemplate)
+                            {
+                                lastGeosPortTemplate = currentGeosPortTemplate;
+                                lastGeosReleaseTemplate = currentGeosReleaseTemplate;
+                                geosZeroPageWatchLines++;
+                                log.AppendFormat(
+                                    "GEOS-ZP cycle={0} pc={1:X4} zp0e={2:X2} zp0f={3:X2} zp10={4:X2} dd00={5:X2} dd02={6:X2}",
+                                    cycle,
+                                    system.Cpu.PC,
+                                    system.Peek(0x000E),
+                                    currentGeosPortTemplate,
+                                    currentGeosReleaseTemplate,
+                                    system.Peek(0xDD00),
+                                    system.Peek(0xDD02));
+                                log.AppendLine();
+                                log.AppendLine("GEOS-ZP-IEC=" + system.GetIecDebugInfo());
+                                log.AppendLine("GEOS-ZP-DRIVE8=" + system.GetDriveDebugInfo(8));
+                                log.AppendLine("GEOS-ZP-PC-BYTES=" + FormatMemoryBytes(system, system.Cpu.PC, 16));
+                            }
+                        }
+
+                        if (geosBlockLengthLines < MaxGeosBlockLengthLines &&
+                            (system.Cpu.PC == 0x118E || system.Cpu.PC == 0x118F) &&
+                            cycle - lastGeosBlockLengthCycle > 32)
+                        {
+                            lastGeosBlockLengthCycle = cycle;
+                            geosBlockLengthLines++;
+                            log.AppendFormat(
+                                "GEOS-BLOCK-LEN cycle={0} pc={1:X4} a={2:X2} y={3:X2} target={4:X2}{5:X2} zp0e={6:X2} zp0f={7:X2} zp10={8:X2} dd00={9:X2}",
+                                cycle,
+                                system.Cpu.PC,
+                                system.Cpu.A,
+                                system.Cpu.Y,
+                                system.Peek(0x0005),
+                                system.Peek(0x0004),
+                                system.Peek(0x000E),
+                                system.Peek(0x000F),
+                                system.Peek(0x0010),
+                                system.Peek(0xDD00));
+                            log.AppendLine();
+                            log.AppendLine("GEOS-BLOCK-LEN-IEC=" + system.GetIecDebugInfo());
+                            log.AppendLine("GEOS-BLOCK-LEN-DRIVE8=" + system.GetDriveDebugInfo(8));
+                        }
+
+                        if (geosReceiveSampleLines < MaxGeosReceiveSampleLines &&
+                            cycle > 6900000 &&
+                            (system.Cpu.PC == 0x1043 ||
+                             system.Cpu.PC == 0x1049 ||
+                             system.Cpu.PC == 0x1050 ||
+                             system.Cpu.PC == 0x1057) &&
+                            cycle - lastGeosReceiveSampleCycle > 1)
+                        {
+                            lastGeosReceiveSampleCycle = cycle;
+                            geosReceiveSampleLines++;
+                            log.AppendFormat(
+                                "GEOS-RX-SAMPLE cycle={0} pc={1:X4} a={2:X2} x={3:X2} y={4:X2} zp0e={5:X2} dd00={6:X2}",
+                                cycle,
+                                system.Cpu.PC,
+                                system.Cpu.A,
+                                system.Cpu.X,
+                                system.Cpu.Y,
+                                system.Peek(0x000E),
+                                system.Peek(0xDD00));
+                            log.AppendLine();
+                            log.AppendLine("GEOS-RX-SAMPLE-IEC=" + system.GetIecDebugInfo());
+                            log.AppendLine("GEOS-RX-SAMPLE-DRIVE8=" + system.GetDriveDebugInfo(8));
+                        }
+
+                        if (!loggedGeosDriveTerminator)
+                        {
+                            ushort drivePc = system.GetDriveProgramCounter(8);
+                            if (drivePc >= 0x04F7 && drivePc <= 0x0500)
+                            {
+                                loggedGeosDriveTerminator = true;
+                                log.AppendFormat(
+                                    "GEOS-DRIVE-TERMINATOR cycle={0} pc={1:X4} drivePc={2:X4} a={3:X2} x={4:X2} y={5:X2} zp04={6:X2} zp05={7:X2} zp0f={8:X2} zp10={9:X2} dd00={10:X2}",
+                                    cycle,
+                                    system.Cpu.PC,
+                                    drivePc,
+                                    system.Cpu.A,
+                                    system.Cpu.X,
+                                    system.Cpu.Y,
+                                    system.Peek(0x0004),
+                                    system.Peek(0x0005),
+                                    system.Peek(0x000F),
+                                    system.Peek(0x0010),
+                                    system.Peek(0xDD00));
+                                log.AppendLine();
+                                log.AppendLine("GEOS-DRIVE-TERMINATOR-IEC=" + system.GetIecDebugInfo());
+                                log.AppendLine("GEOS-DRIVE-TERMINATOR-DRIVE8=" + system.GetDriveDebugInfo(8));
+                                log.AppendLine("GEOS-DRIVE-TERMINATOR-0600=" + FormatDriveMemoryBytes(system, 8, 0x0600, 0x80));
+                            }
+                        }
+
+                        if (geosDriveCustomPcLines < MaxGeosDriveCustomPcLines)
+                        {
+                            ushort drivePc = system.GetDriveProgramCounter(8);
+                            bool inGeosSender =
+                                (drivePc >= 0x0313 && drivePc <= 0x0430) ||
+                                (drivePc >= 0x0475 && drivePc <= 0x0610);
+                            if (inGeosSender && cycle - lastGeosDriveCustomPcCycle > 1)
+                            {
+                                lastGeosDriveCustomPcCycle = cycle;
+                                geosDriveCustomPcLines++;
+                                log.AppendFormat(
+                                    "GEOS-DRIVE-PC cycle={0} c64pc={1:X4} drivePc={2:X4} dd00={3:X2}",
+                                    cycle,
+                                    system.Cpu.PC,
+                                    drivePc,
+                                    system.Peek(0xDD00));
+                                log.AppendLine();
+                                log.AppendLine("GEOS-DRIVE-PC-IEC=" + system.GetIecDebugInfo());
+                                log.AppendLine("GEOS-DRIVE-PC-BUS=" + ExtractDriveBusDebug(system.GetDriveDebugInfo(8)));
+                                if (drivePc >= 0x0378 && drivePc <= 0x0412)
+                                {
+                                    log.AppendLine("GEOS-DRIVE-PC-0600=" + FormatDriveMemoryBytes(system, 8, 0x0600, 0x40));
+                                }
+                            }
+                        }
+
+                        if (geosSecondStageLines < MaxGeosSecondStageLines &&
+                            cycle >= 11000000)
+                        {
+                            ushort drivePc = system.GetDriveProgramCounter(8);
+                            bool inSecondStage =
+                                (drivePc >= 0x0378 && drivePc <= 0x0412) ||
+                                drivePc < 0x0080 ||
+                                (drivePc >= 0x0475 && drivePc <= 0x04FF);
+                            if (inSecondStage && cycle - lastGeosSecondStageCycle > 8)
+                            {
+                                lastGeosSecondStageCycle = cycle;
+                                geosSecondStageLines++;
+                                log.AppendFormat(
+                                    "GEOS2 cycle={0} c64pc={1:X4} drivePc={2:X4} a={3:X2} x={4:X2} y={5:X2} dd00={6:X2}",
+                                    cycle,
+                                    system.Cpu.PC,
+                                    drivePc,
+                                    system.Cpu.A,
+                                    system.Cpu.X,
+                                    system.Cpu.Y,
+                                    system.Peek(0xDD00));
+                                log.AppendLine();
+                                log.AppendLine("GEOS2-IEC=" + system.GetIecDebugInfo());
+                                log.AppendLine("GEOS2-DRIVE8=" + ExtractDriveBusDebug(system.GetDriveDebugInfo(8)));
+                                log.AppendLine("GEOS2-C64-PC=" + FormatMemoryBytes(system, system.Cpu.PC, 48));
+                                log.AppendLine("GEOS2-C64-C500=" + FormatMemoryBytes(system, 0xC500, 0x180));
+                                log.AppendLine("GEOS2-C64-A100=" + FormatMemoryBytes(system, 0xA100, 0x120));
+                                log.AppendLine("GEOS2-DRIVE-0000=" + FormatDriveMemoryBytes(system, 8, 0x0000, 0x80));
+                                log.AppendLine("GEOS2-DRIVE-0300=" + FormatDriveMemoryBytes(system, 8, 0x0300, 0x220));
+                                log.AppendLine("GEOS2-DRIVE-0520=" + FormatDriveMemoryBytes(system, 8, 0x0520, 0x100));
+                                log.AppendLine("GEOS2-DRIVE-0600=" + FormatDriveMemoryBytes(system, 8, 0x0600, 0x100));
+                            }
+                        }
+
+                        if (tightDebugLines < MaxTightDebugLines &&
+                            cycle >= 6989000 &&
+                            cycle <= 6991300)
+                        {
+                            string tightIecDebug = system.GetIecDebugInfo();
+                            string tightDriveDebug = ExtractDriveBusDebug(system.GetDriveDebugInfo(8));
+                            if (!string.Equals(tightIecDebug, lastTightIecDebug, StringComparison.Ordinal) ||
+                                !string.Equals(tightDriveDebug, lastTightDriveDebug, StringComparison.Ordinal))
+                            {
+                                lastTightIecDebug = tightIecDebug;
+                                lastTightDriveDebug = tightDriveDebug;
+                                tightDebugLines++;
+                                log.AppendFormat("GEOS-TIGHT cycle={0} pc={1:X4} drivePc={2:X4}", cycle, system.Cpu.PC, system.GetDriveProgramCounter(8));
+                                log.AppendLine();
+                                log.AppendLine("GEOS-TIGHT-IEC=" + tightIecDebug);
+                                log.AppendLine("GEOS-TIGHT-DRIVE8-BUS=" + tightDriveDebug);
+                            }
                         }
 
                         if ((cycle % 1000000) == 0)
                         {
                             log.AppendFormat(
-                                "cycle={0} pc={1:X4} a={2:X2} x={3:X2} y={4:X2} sp={5:X2} sr={6:X2} st={7:X2} active={8}",
+                                "cycle={0} pc={1:X4} opPc={2:X4} opcode={3:X2} state={4} a={5:X2} x={6:X2} y={7:X2} sp={8:X2} sr={9:X2} st={10:X2} active={11}",
                                 cycle,
                                 system.Cpu.PC,
+                                system.Cpu.LastOpcodeAddress,
+                                system.Cpu.CurrentOpcode,
+                                system.Cpu.State,
                                 system.Cpu.A,
                                 system.Cpu.X,
                                 system.Cpu.Y,
@@ -771,22 +999,58 @@ namespace C64Emulator
                                 system.Peek(0x0090),
                                 system.IsDriveActive(8));
                             log.AppendLine();
+                            log.AppendLine("IEC-SNAPSHOT=" + system.GetIecDebugInfo());
                             log.AppendLine("DRIVE8-SNAPSHOT=" + system.GetDriveDebugInfo(8));
+                            log.AppendLine("PC-BYTES=" + FormatMemoryBytes(system, system.Cpu.PC, 32));
+                            log.AppendLine("C64-0000=" + FormatMemoryBytes(system, 0x0000, 0x40));
+                            log.AppendLine("C64-1000=" + FormatMemoryBytes(system, 0x1000, 0x80));
+                            log.AppendLine("C64-1080=" + FormatMemoryBytes(system, 0x1080, 0x120));
+                            log.AppendLine("C64-C000=" + FormatMemoryBytes(system, 0xC000, 0x180));
+                            log.AppendLine("C64-C500=" + FormatMemoryBytes(system, 0xC500, 0x180));
+                            log.AppendLine("C64-A100=" + FormatMemoryBytes(system, 0xA100, 0x120));
+                            log.AppendFormat(
+                                "READ-DD00={0:X2} READ-DD02={1:X2}",
+                                system.Peek(0xDD00),
+                                system.Peek(0xDD02));
+                            log.AppendLine();
+                            ushort drivePc = system.GetDriveProgramCounter(8);
+                            log.AppendLine("DRIVE8-PC-BYTES=" + FormatDriveMemoryBytes(system, 8, drivePc, 32));
+                            log.AppendLine("DRIVE8-0000=" + FormatDriveMemoryBytes(system, 8, 0x0000, 0x80));
+                            log.AppendLine("DRIVE8-0300=" + FormatDriveMemoryBytes(system, 8, 0x0300, 0x240));
                         }
 
-                        string iecDebug = system.GetIecDebugInfo();
-                        if (!string.Equals(iecDebug, lastIecDebug, StringComparison.Ordinal))
+                        if ((cycle % 5000) != 0)
                         {
-                            lastIecDebug = iecDebug;
-                            log.AppendLine("IEC=" + iecDebug);
+                            continue;
                         }
 
-                        string driveDebug = system.GetDriveDebugInfo(8);
-                        if (!string.Equals(driveDebug, lastDriveDebug, StringComparison.Ordinal))
+                        if (iecDebugChangeLines < MaxDebugChangeLines)
                         {
-                            lastDriveDebug = driveDebug;
-                            log.AppendLine("DRIVE8=" + driveDebug);
+                            string iecDebug = system.GetIecDebugInfo();
+                            if (!string.Equals(iecDebug, lastIecDebug, StringComparison.Ordinal))
+                            {
+                                lastIecDebug = iecDebug;
+                                iecDebugChangeLines++;
+                                log.AppendLine("IEC=" + iecDebug);
+                            }
                         }
+
+                        if (driveDebugChangeLines < MaxDebugChangeLines)
+                        {
+                            string driveDebug = system.GetDriveDebugInfo(8);
+                            if (!string.Equals(driveDebug, lastDriveDebug, StringComparison.Ordinal))
+                            {
+                                lastDriveDebug = driveDebug;
+                                driveDebugChangeLines++;
+                                log.AppendLine("DRIVE8=" + driveDebug);
+                            }
+                        }
+                    }
+
+                    log.AppendLine("FinalFrameSHA256=" + DevTraceExporter.ComputeFrameHash(system.FrameBuffer));
+                    if (!string.IsNullOrWhiteSpace(framePath))
+                    {
+                        DevTraceExporter.WriteFrameBufferPpm(system.FrameBuffer, framePath);
                     }
                 }
             }
@@ -797,6 +1061,83 @@ namespace C64Emulator
             }
 
             File.WriteAllText(logPath, log.ToString());
+        }
+
+        /// <summary>
+        /// Formats a small C64 memory window for headless probes.
+        /// </summary>
+        private static string FormatMemoryBytes(C64System system, ushort startAddress, int count)
+        {
+            if (system == null || count <= 0)
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(count * 3);
+            for (int index = 0; index < count; index++)
+            {
+                if (index > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                ushort address = (ushort)(startAddress + index);
+                builder.Append(system.Peek(address).ToString("X2"));
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
+        /// Extracts the compact serial bus portion from the verbose drive probe line.
+        /// </summary>
+        private static string ExtractDriveBusDebug(string driveDebugInfo)
+        {
+            if (string.IsNullOrEmpty(driveDebugInfo))
+            {
+                return string.Empty;
+            }
+
+            const string marker = " bus=";
+            int start = driveDebugInfo.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return driveDebugInfo;
+            }
+
+            start += marker.Length;
+            int end = driveDebugInfo.IndexOf(" diskA=", start, StringComparison.Ordinal);
+            if (end < 0)
+            {
+                end = driveDebugInfo.Length;
+            }
+
+            return driveDebugInfo.Substring(start, end - start);
+        }
+
+        /// <summary>
+        /// Formats a small 1541 memory window for headless probes.
+        /// </summary>
+        private static string FormatDriveMemoryBytes(C64System system, int deviceNumber, ushort startAddress, int count)
+        {
+            if (system == null || count <= 0)
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(count * 3);
+            for (int index = 0; index < count; index++)
+            {
+                if (index > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                ushort address = (ushort)(startAddress + index);
+                builder.Append(system.PeekDriveMemory(deviceNumber, address).ToString("X2"));
+            }
+
+            return builder.ToString();
         }
     }
 }

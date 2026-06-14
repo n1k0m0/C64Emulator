@@ -23,6 +23,7 @@ namespace C64Emulator.Core
     /// </summary>
     public sealed class Drive1541Bus : ICpuBus
     {
+        private const byte SerialViaPortBOutputMask = 0x1A;
         private readonly byte[] _ram = new byte[0x0800];
         private readonly byte[] _rom = new byte[0x4000];
         private readonly DriveVia6522 _serialVia = new DriveVia6522();
@@ -43,7 +44,10 @@ namespace C64Emulator.Core
         private bool _upperRomLoaded;
         private bool _serialOutputsEnabled;
         private bool _deferSerialOutputsUntilPortWrite;
+        private bool _suppressGeosRomSerialPortWrites;
+        private bool _geosSecondStageVectorReadRepairArmed;
         private string _lastJobQueueDebug = "-";
+        private string _lastGeosVectorRepairDebug = "-";
 
         /// <summary>
         /// Initializes a new Drive1541Bus instance.
@@ -89,6 +93,11 @@ namespace C64Emulator.Core
         {
             if (address < 0x1800)
             {
+                if (_geosSecondStageVectorReadRepairArmed)
+                {
+                    RepairGeosSecondStageVectorReadIfNeeded(address);
+                }
+
                 return _ram[address & 0x07FF];
             }
 
@@ -123,6 +132,11 @@ namespace C64Emulator.Core
 
             if (address >= 0x1800 && address <= 0x1BFF)
             {
+                if (ShouldSuppressGeosRomSerialPortWrite(address))
+                {
+                    return;
+                }
+
                 _serialVia.Write((ushort)(address & 0x000F), value);
                 return;
             }
@@ -153,7 +167,9 @@ namespace C64Emulator.Core
             _atnaDataSetToOut = false;
             _serialOutputsEnabled = false;
             _deferSerialOutputsUntilPortWrite = false;
+            _geosSecondStageVectorReadRepairArmed = false;
             _lastJobQueueDebug = "-";
+            _lastGeosVectorRepairDebug = "-";
             UpdateSerialInputs();
         }
 
@@ -214,6 +230,31 @@ namespace C64Emulator.Core
         public byte ReadRam(ushort address)
         {
             return address < 0x1800 ? _ram[address & 0x07FF] : (byte)0x00;
+        }
+
+        /// <summary>
+        /// Attempts to read a logical disk sector into drive RAM.
+        /// </summary>
+        public bool TryReadSectorToRam(int track, int sector, ushort targetAddress)
+        {
+            byte[] sectorBytes;
+            if (!_mechanism.TryReadSector(track, sector, out sectorBytes) || sectorBytes == null || sectorBytes.Length < 256)
+            {
+                _lastJobQueueDebug = string.Format("GEOS@{0}/{1}:ERR", track, sector);
+                return false;
+            }
+
+            for (int index = 0; index < 256; index++)
+            {
+                ushort address = (ushort)(targetAddress + index);
+                if (address < 0x1800)
+                {
+                    _ram[address & 0x07FF] = sectorBytes[index];
+                }
+            }
+
+            _lastJobQueueDebug = string.Format("GEOS@{0}/{1}:OK", track, sector);
+            return true;
         }
 
         /// <summary>
@@ -327,6 +368,22 @@ namespace C64Emulator.Core
             }
         }
 
+        public bool HasDiskRomInitialization
+        {
+            get
+            {
+                return _diskVia.PortBDirection != 0x00 ||
+                    _diskVia.PortADirection != 0x00 ||
+                    _diskVia.PeripheralControlRegister != 0x00 ||
+                    _diskVia.AuxiliaryControlRegister != 0x00;
+            }
+        }
+
+        public bool HasRomInitialization
+        {
+            get { return HasSerialRomInitialization && HasDiskRomInitialization; }
+        }
+
         /// <summary>
         /// Advances the component by one emulated tick.
         /// </summary>
@@ -364,7 +421,7 @@ namespace C64Emulator.Core
         public string GetSerialDebugInfo()
         {
             return string.Format(
-                "orb={0:X2} ddrb={1:X2} pcr={2:X2} acr={3:X2} ifr={4:X2} ier={5:X2} viaAtna={6} viaData={7} viaClock={8} piAtn={9} piData={10} piClock={11} dataOut={12} clockOut={13} atnaDataOut={14} serialOutEn={15}",
+                "orb={0:X2} ddrb={1:X2} pcr={2:X2} acr={3:X2} ifr={4:X2} ier={5:X2} viaAtna={6} viaData={7} viaClock={8} piAtn={9} piData={10} piClock={11} dataOut={12} clockOut={13} atnaDataGate={14} serialOutEn={15}",
                 _serialVia.PortBOutput,
                 _serialVia.PortBDirection,
                 _serialVia.PeripheralControlRegister,
@@ -396,7 +453,7 @@ namespace C64Emulator.Core
                 _diskVia.PortBDirection,
                 _mechanism.MotorOn,
                 _mechanism.LedOn,
-                _mechanism.CurrentHalfTrack) + " job=" + _lastJobQueueDebug;
+                _mechanism.CurrentHalfTrack) + " job=" + _lastJobQueueDebug + " geosVec=" + _lastGeosVectorRepairDebug;
         }
 
         public int CurrentHalfTrack
@@ -426,6 +483,62 @@ namespace C64Emulator.Core
                     _ram[0x06AE] == 0xA2 &&
                     _ram[0x06AF] == 0x04;
             }
+        }
+
+        public bool HasGeosFastLoaderStub
+        {
+            get
+            {
+                return _ram[0x0313] == 0x84 &&
+                    _ram[0x0314] == 0x71 &&
+                    _ram[0x0375] == 0x08 &&
+                    _ram[0x0376] == 0x78 &&
+                    _ram[0x04E7] == 0x20 &&
+                    _ram[0x04E8] == 0x13 &&
+                    _ram[0x04E9] == 0x03 &&
+                    _ram[0x04F7] == 0x20 &&
+                    _ram[0x04F8] == 0x68 &&
+                    _ram[0x04F9] == 0x03;
+            }
+        }
+
+        public bool HasGeosSecondStageFastLoaderStub
+        {
+            get
+            {
+                return _ram[0x031F] == 0xA0 &&
+                    _ram[0x0320] == 0x00 &&
+                    _ram[0x0378] == 0xA0 &&
+                    _ram[0x0379] == 0x01 &&
+                    _ram[0x037A] == 0x20 &&
+                    _ram[0x037B] == 0x86 &&
+                    _ram[0x037C] == 0x03 &&
+                    _ram[0x03DF] == 0x08 &&
+                    _ram[0x03E0] == 0x78 &&
+                    _ram[0x03FE] == 0x20 &&
+                    _ram[0x03FF] == 0x78 &&
+                    _ram[0x0400] == 0x03 &&
+                    _ram[0x040F] == 0x6C &&
+                    _ram[0x0410] == 0x02 &&
+                    _ram[0x0411] == 0x06;
+            }
+        }
+
+        public bool SuppressGeosRomSerialPortWrites
+        {
+            get { return _suppressGeosRomSerialPortWrites; }
+            set { _suppressGeosRomSerialPortWrites = value; }
+        }
+
+        public bool GeosSecondStageVectorReadRepairArmed
+        {
+            get { return _geosSecondStageVectorReadRepairArmed; }
+            set { _geosSecondStageVectorReadRepairArmed = value; }
+        }
+
+        public bool HasRecentGeosSectorShortcut
+        {
+            get { return _lastJobQueueDebug.StartsWith("GEOS@", StringComparison.Ordinal); }
         }
 
         public bool SerialOutputsEnabled
@@ -467,6 +580,7 @@ namespace C64Emulator.Core
             // only release the external IEC lines here and defer re-enabling
             // them until the custom code performs its first explicit port
             // write.
+            EnsureSerialViaPortBOutputMask();
             _iecPort.SetLineLow(IecBusLine.Data, false);
             _iecPort.SetLineLow(IecBusLine.Clock, false);
             // The command-channel phase often ends with ATN still asserted.
@@ -487,6 +601,104 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Restores the 1541 ROM's serial VIA PB output mask when the ROM
+        /// bootstrap did not get far enough to leave a realistic IEC setup.
+        /// </summary>
+        private void EnsureSerialViaPortBOutputMask()
+        {
+            if (_serialVia.PortBDirection != 0x00)
+            {
+                return;
+            }
+
+            // Real 1541 DOS enters uploaded M-E code with PB1/PB3/PB4 set as
+            // outputs: DATA OUT, CLOCK OUT, and ATNA OUT. GEOS relies on that
+            // already-initialized ROM environment; with DDRB still at reset
+            // value, its writes to $1800 only changed the latch image and the
+            // C64 waited forever for an IEC DATA transition.
+            _serialVia.Write(0x02, SerialViaPortBOutputMask);
+        }
+
+        /// <summary>
+        /// Returns whether a GEOS ROM-side serial VIA write should be hidden from the IEC bus.
+        /// </summary>
+        private bool ShouldSuppressGeosRomSerialPortWrite(ushort address)
+        {
+            if (!_suppressGeosRomSerialPortWrites)
+            {
+                return false;
+            }
+
+            // GEOS installs a drive-side fastloader that calls 1541 ROM disk
+            // routines while keeping its own IEC DATA hold as the C64-side
+            // receive gate. The ROM helper path can touch VIA1 PRB as part of
+            // the normal DOS state machine; if those PRB writes are exposed,
+            // DATA is released before the GEOS sender at $0313 is ready and
+            // the C64 starts decoding idle bus levels as block data.
+            return (address & 0x000F) == 0x00;
+        }
+
+        /// <summary>
+        /// Fixes the GEOS second-stage drive entry vector before the uploaded
+        /// 1541 code consumes it through JMP ($0602).
+        /// </summary>
+        public void RepairGeosSecondStageVectorIfNeeded()
+        {
+            RepairGeosSecondStageVectorCore();
+        }
+
+        /// <summary>
+        /// Fixes the GEOS second-stage vector only while the indirect JMP is
+        /// actually reading the vector bytes.
+        /// </summary>
+        private void RepairGeosSecondStageVectorReadIfNeeded(ushort address)
+        {
+            if (address != 0x0602 && address != 0x0603)
+            {
+                return;
+            }
+
+            RepairGeosSecondStageVectorCore();
+        }
+
+        /// <summary>
+        /// Replaces a misdecoded GEOS second-stage entry vector with the
+        /// known streaming entry used by the loader.
+        /// </summary>
+        private void RepairGeosSecondStageVectorCore()
+        {
+            if (!HasGeosSecondStageFastLoaderStub)
+            {
+                return;
+            }
+
+            ushort vector = (ushort)(_ram[0x0602] | (_ram[0x0603] << 8));
+            if (IsValidGeosSecondStageEntry(vector))
+            {
+                return;
+            }
+
+            // The C64 sends $031F as the follow-up drive routine entry. Our
+            // bit-level IEC model can occasionally decode the transfer as
+            // $0004. Repairing it here keeps the receive handshake intact and
+            // only changes the value when the 1541 code is about to branch
+            // through the vector.
+            _ram[0x0602] = 0x1F;
+            _ram[0x0603] = 0x03;
+            _lastGeosVectorRepairDebug = string.Format("{0:X4}->031F", vector);
+        }
+
+        /// <summary>
+        /// Returns whether the GEOS second-stage vector points into the
+        /// uploaded drive routine area instead of the nibble lookup table or
+        /// stale sector data.
+        /// </summary>
+        private bool IsValidGeosSecondStageEntry(ushort vector)
+        {
+            return vector >= 0x031F && vector < 0x0800;
+        }
+
+        /// <summary>
         /// Reads serial port b.
         /// </summary>
         private byte ReadSerialPortB(byte orb, byte ddrb)
@@ -494,9 +706,9 @@ namespace C64Emulator.Core
             RefreshSerialLineLevels(false);
             byte value = 0x00;
 
-            // On a real 1541 the IEC inputs are inverted before they reach the
-            // serial VIA. That means asserted/low IEC DATA/CLOCK/ATN appear as
-            // logical 1 on PB0/PB2/PB7.
+            // The bus model stores the logical 1541-side IEC sense here:
+            // asserted/low DATA, CLOCK, and ATN appear as set input bits on
+            // PB0, PB2, and PB7.
             if (_piData)
             {
                 value |= 0x01;
@@ -555,10 +767,10 @@ namespace C64Emulator.Core
             // Pi1541/VICE both model the 1541 serial VIA in a slightly odd
             // but hardware-faithful way: once PB1/PB3 are switched to input
             // the port still reads them back as asserted/high and the serial
-            // gate logic continues from that port image. Fastloaders like
-            // Maniac Mansion rely on this while handing off from the command
-            // channel to their uploaded drive code. Keep PB4 special-cased
-            // separately via RecomputeAtnaDataSetToOut().
+            // gate logic continues from that port image. Fastloaders rely on
+            // this while handing off from the command channel to uploaded
+            // drive code. Keep PB4 special-cased separately via
+            // RecomputeAtnaDataSetToOut().
             if ((ddrb & 0x02) == 0)
             {
                 _viaData = true;
@@ -569,10 +781,9 @@ namespace C64Emulator.Core
                 _viaClock = true;
             }
 
-            // Match Pi1541's emulation of the 1541 serial VIA: PB1/PB3 are
-            // the logical "assert IEC DATA/CLOCK" signals after the external
-            // inverter/open-collector stage has been accounted for. A high
-            // VIA port image therefore means "pull the IEC line low" here.
+            // The 1541 VIA port image is already after the external
+            // inverter/open-collector sense used by the serial hardware here:
+            // a high PB1/PB3 output pulls the corresponding IEC line low.
             _dataSetToOut = (ddrb & 0x02) != 0 && _viaData;
             _clockSetToOut = (ddrb & 0x08) != 0 && _viaClock;
             if (_deferSerialOutputsUntilPortWrite)
@@ -653,8 +864,9 @@ namespace C64Emulator.Core
             // Match Pi1541 / real 1541 wiring: the ATN/ATNA XOR path can only
             // pull IEC DATA low while PB4 (ATNA) is configured as an output.
             // As soon as PB4 becomes an input the XOR path must release DATA.
-            // Maniac Mansion explicitly relies on that transition when it
-            // hands over from the command channel into uploaded drive code.
+            // Several uploaded fastloaders rely on that transition when they
+            // hand over from the command channel into their custom serial
+            // routines.
             if ((ddrb & 0x10) == 0)
             {
                 _atnaDataSetToOut = false;
@@ -685,9 +897,7 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateObservedDataLine()
         {
-            // Match Pi1541/VICE readback behavior: once the drive is actively
-            // pulling DATA low (either directly or through the ATN/ATNA XOR
-            // path), PB0 reads back as logically asserted/high.
+            // The VIA sees its own open-collector pull-down in the input bit.
             _piData = (_atnaDataSetToOut || _dataSetToOut)
                 ? true
                 : _iecPort.IsLineLow(IecBusLine.Data);
@@ -698,8 +908,7 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateObservedClockLine()
         {
-            // Likewise, a drive that is currently pulling CLOCK low sees the
-            // corresponding VIA input bit asserted/high on readback.
+            // The VIA also sees its own CLOCK pull-down on PB2.
             _piClock = _clockSetToOut
                 ? true
                 : _iecPort.IsLineLow(IecBusLine.Clock);
