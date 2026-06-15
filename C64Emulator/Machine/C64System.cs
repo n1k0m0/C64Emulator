@@ -37,6 +37,21 @@ namespace C64Emulator.Core
             public bool VicCanAccess;
         }
 
+        /// <summary>
+        /// Describes a C64 key and whether the C64 shift key must be held with it.
+        /// </summary>
+        private struct C64KeyChord
+        {
+            public Key Key;
+            public bool Shift;
+
+            public C64KeyChord(Key key, bool shift)
+            {
+                Key = key;
+                Shift = shift;
+            }
+        }
+
         private readonly C64Model _model;
         private readonly FrameBuffer _frameBuffer;
         private readonly SystemBus _bus;
@@ -55,6 +70,8 @@ namespace C64Emulator.Core
         private const ushort KernalCursorBlinkSwitchAddress = 0x00CC;
         private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
         private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
+        private readonly HashSet<Key> _pressedKeyboardOnlyHostKeys = new HashSet<Key>();
+        private readonly List<Key> _mappedHostKeyboardKeys = new List<Key>();
         private readonly Queue<byte> _queuedPetsciiInput = new Queue<byte>();
         private readonly object _syncRoot = new object();
         private readonly C64AccuracyOptions _accuracyOptions;
@@ -219,6 +236,9 @@ namespace C64Emulator.Core
                 _bus.Reu?.Reset();
                 _iecKernalBridge.Reset();
                 _pressedHostKeys.Clear();
+                _pressedKeyboardOnlyHostKeys.Clear();
+                _mappedHostKeyboardKeys.Clear();
+                _cia1.ClearHostKeyboardState();
                 _lastMirroredPollKey = null;
                 _pollMirrorRepeatDelayCycles = 0;
                 _catchingUpDrivesForIecAccess = false;
@@ -907,9 +927,14 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 Key mappedKey = MapHostKeyboardLayoutKey(key);
-                _pressedHostKeys.Add(mappedKey);
+                _pressedHostKeys.Add(key);
                 TryEnqueueHostKeyToKeyboardBuffer(mappedKey);
-                _cia1.KeyDown(mappedKey);
+                if (IsJoystickKey(mappedKey))
+                {
+                    _cia1.KeyDown(mappedKey);
+                }
+
+                RefreshHostKeyboardMatrix();
             }
         }
 
@@ -921,8 +946,13 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 Key mappedKey = MapHostKeyboardLayoutKey(key);
-                _pressedHostKeys.Remove(mappedKey);
-                _cia1.KeyUp(mappedKey);
+                _pressedHostKeys.Remove(key);
+                if (IsJoystickKey(mappedKey))
+                {
+                    _cia1.KeyUp(mappedKey);
+                }
+
+                RefreshHostKeyboardMatrix();
                 if (_lastMirroredPollKey == mappedKey)
                 {
                     _lastMirroredPollKey = null;
@@ -939,9 +969,9 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
-                Key mappedKey = MapHostKeyboardLayoutKey(key);
-                _pressedHostKeys.Add(mappedKey);
-                _cia1.SetHostKeyState(mappedKey, true);
+                _pressedKeyboardOnlyHostKeys.Add(key);
+                _pressedHostKeys.Add(key);
+                RefreshHostKeyboardMatrix();
             }
         }
 
@@ -954,8 +984,9 @@ namespace C64Emulator.Core
             lock (_syncRoot)
             {
                 Key mappedKey = MapHostKeyboardLayoutKey(key);
-                _pressedHostKeys.Remove(mappedKey);
-                _cia1.SetHostKeyState(mappedKey, false);
+                _pressedKeyboardOnlyHostKeys.Remove(key);
+                _pressedHostKeys.Remove(key);
+                RefreshHostKeyboardMatrix();
                 if (_lastMirroredPollKey == mappedKey)
                 {
                     _lastMirroredPollKey = null;
@@ -1067,6 +1098,8 @@ namespace C64Emulator.Core
 
                 _hostKeyboardLayout = layout;
                 _pressedHostKeys.Clear();
+                _pressedKeyboardOnlyHostKeys.Clear();
+                _mappedHostKeyboardKeys.Clear();
                 _lastMirroredPollKey = null;
                 _pollMirrorRepeatDelayCycles = 0;
                 _cia1.ClearHostKeyboardState();
@@ -1541,6 +1574,8 @@ namespace C64Emulator.Core
             _mountedDrivePaths.Clear();
             _lastMountedMedia = MountedMediaInfo.None;
             _pressedHostKeys.Clear();
+            _pressedKeyboardOnlyHostKeys.Clear();
+            _mappedHostKeyboardKeys.Clear();
             _queuedPetsciiInput.Clear();
             _lastMirroredPollKey = null;
             _pollMirrorRepeatDelayCycles = 0;
@@ -2269,6 +2304,275 @@ namespace C64Emulator.Core
             }
 
             return key;
+        }
+
+        /// <summary>
+        /// Rebuilds the local C64 keyboard matrix from the currently held host keys.
+        /// </summary>
+        private void RefreshHostKeyboardMatrix()
+        {
+            _mappedHostKeyboardKeys.Clear();
+
+            bool hostShiftHeld = ContainsShift(_pressedHostKeys) || ContainsShift(_pressedKeyboardOnlyHostKeys);
+            bool anyNonShiftKey = false;
+            bool allNonShiftKeysConsumeHostShift = true;
+            bool c64ShiftRequired = false;
+
+            foreach (Key key in _pressedHostKeys)
+            {
+                if (IsShiftKey(key) || IsJoystickKey(MapHostKeyboardLayoutKey(key)))
+                {
+                    continue;
+                }
+
+                anyNonShiftKey = true;
+                if (!AddHostKeyToC64KeyboardState(key, hostShiftHeld, ref c64ShiftRequired))
+                {
+                    allNonShiftKeysConsumeHostShift = false;
+                }
+            }
+
+            foreach (Key key in _pressedKeyboardOnlyHostKeys)
+            {
+                if (IsShiftKey(key))
+                {
+                    continue;
+                }
+
+                anyNonShiftKey = true;
+                if (!AddHostKeyToC64KeyboardState(key, hostShiftHeld, ref c64ShiftRequired))
+                {
+                    allNonShiftKeysConsumeHostShift = false;
+                }
+            }
+
+            if (c64ShiftRequired || (hostShiftHeld && (!anyNonShiftKey || !allNonShiftKeysConsumeHostShift)))
+            {
+                AddMappedHostKeyboardKey(Key.ShiftLeft);
+            }
+
+            _cia1.SetHostKeyboardState(_mappedHostKeyboardKeys);
+        }
+
+        /// <summary>
+        /// Adds the C64 key or key chord represented by one host key.
+        /// </summary>
+        /// <returns>True when host shift was consumed to select a layout-specific symbol.</returns>
+        private bool AddHostKeyToC64KeyboardState(Key hostKey, bool hostShiftHeld, ref bool c64ShiftRequired)
+        {
+            C64KeyChord chord;
+            bool consumesHostShift;
+            if (TryMapHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift))
+            {
+                AddMappedHostKeyboardKey(chord.Key);
+                c64ShiftRequired |= chord.Shift;
+                return consumesHostShift;
+            }
+
+            Key mappedKey = MapHostKeyboardLayoutKey(hostKey);
+            if (mappedKey != Key.Unknown)
+            {
+                AddMappedHostKeyboardKey(mappedKey);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Maps layout-specific printable host symbols to C64 matrix keys.
+        /// </summary>
+        private bool TryMapHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            if (_hostKeyboardLayout == HostKeyboardLayout.Ger)
+            {
+                return TryMapGermanHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift);
+            }
+
+            return TryMapEnglishHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift);
+        }
+
+        /// <summary>
+        /// Maps symbols on a US/English host keyboard to C64 matrix keys.
+        /// </summary>
+        private static bool TryMapEnglishHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            chord = default(C64KeyChord);
+            consumesHostShift = hostShiftHeld;
+
+            if (hostShiftHeld)
+            {
+                switch (hostKey)
+                {
+                    case Key.Number2:
+                        chord = new C64KeyChord(Key.Quote, false); // @
+                        return true;
+                    case Key.Number6:
+                        chord = new C64KeyChord(Key.C64ArrowUp, false); // ^
+                        return true;
+                    case Key.Number7:
+                        chord = new C64KeyChord(Key.Number6, true); // &
+                        return true;
+                    case Key.Number8:
+                        chord = new C64KeyChord(Key.KeypadMultiply, false); // *
+                        return true;
+                    case Key.Number9:
+                        chord = new C64KeyChord(Key.Number8, true); // (
+                        return true;
+                    case Key.Number0:
+                        chord = new C64KeyChord(Key.Number9, true); // )
+                        return true;
+                    case Key.Plus:
+                        chord = new C64KeyChord(Key.Plus, false); // +
+                        return true;
+                    case Key.Semicolon:
+                        chord = new C64KeyChord(Key.Semicolon, false); // :
+                        return true;
+                    case Key.Quote:
+                        chord = new C64KeyChord(Key.Number2, true); // "
+                        return true;
+                    case Key.Slash:
+                        chord = new C64KeyChord(Key.Slash, true); // ?
+                        return true;
+                    default:
+                        consumesHostShift = false;
+                        return false;
+                }
+            }
+
+            consumesHostShift = false;
+            switch (hostKey)
+            {
+                case Key.Plus:
+                    chord = new C64KeyChord(Key.BracketRight, false); // =
+                    return true;
+                case Key.Semicolon:
+                    chord = new C64KeyChord(Key.BracketLeft, false); // ;
+                    return true;
+                case Key.Quote:
+                    chord = new C64KeyChord(Key.Number7, true); // '
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Maps symbols on a German host keyboard to C64 matrix keys.
+        /// </summary>
+        private static bool TryMapGermanHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            chord = default(C64KeyChord);
+            consumesHostShift = hostShiftHeld;
+
+            if (hostShiftHeld)
+            {
+                switch (hostKey)
+                {
+                    case Key.Number0:
+                        chord = new C64KeyChord(Key.BracketRight, false); // =
+                        return true;
+                    case Key.Number3:
+                        chord = new C64KeyChord(Key.Unknown, false); // Section sign has no direct C64 key here.
+                        return true;
+                    case Key.Number7:
+                        chord = new C64KeyChord(Key.Slash, false); // /
+                        return true;
+                    case Key.BracketRight:
+                        chord = new C64KeyChord(Key.KeypadMultiply, false); // *
+                        return true;
+                    case Key.Minus:
+                        chord = new C64KeyChord(Key.Slash, true); // ?
+                        return true;
+                    case Key.Comma:
+                        chord = new C64KeyChord(Key.BracketLeft, false); // ;
+                        return true;
+                    case Key.Period:
+                        chord = new C64KeyChord(Key.Semicolon, false); // :
+                        return true;
+                    case Key.BackSlash:
+                        chord = new C64KeyChord(Key.Number7, true); // '
+                        return true;
+                    case Key.Slash:
+                    case Key.Plus:
+                    case Key.BracketLeft:
+                    case Key.Semicolon:
+                    case Key.Quote:
+                        chord = new C64KeyChord(Key.Unknown, false);
+                        return true;
+                    default:
+                        consumesHostShift = false;
+                        return false;
+                }
+            }
+
+            consumesHostShift = false;
+            switch (hostKey)
+            {
+                case Key.BracketRight:
+                    chord = new C64KeyChord(Key.Plus, false); // +
+                    return true;
+                case Key.Slash:
+                    chord = new C64KeyChord(Key.Minus, false); // -
+                    return true;
+                case Key.BackSlash:
+                    chord = new C64KeyChord(Key.Number3, true); // #
+                    return true;
+                case Key.Minus:
+                case Key.Plus:
+                case Key.BracketLeft:
+                case Key.Semicolon:
+                case Key.Quote:
+                    chord = new C64KeyChord(Key.Unknown, false);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Adds a key to the rebuilt C64 matrix key set.
+        /// </summary>
+        private void AddMappedHostKeyboardKey(Key key)
+        {
+            if (key != Key.Unknown && !_mappedHostKeyboardKeys.Contains(key))
+            {
+                _mappedHostKeyboardKeys.Add(key);
+            }
+        }
+
+        /// <summary>
+        /// Returns whether any shift key is held in the supplied set.
+        /// </summary>
+        private static bool ContainsShift(HashSet<Key> keys)
+        {
+            return keys.Contains(Key.ShiftLeft) ||
+                keys.Contains(Key.LShift) ||
+                keys.Contains(Key.ShiftRight) ||
+                keys.Contains(Key.RShift);
+        }
+
+        /// <summary>
+        /// Returns whether the key is a host shift key.
+        /// </summary>
+        private static bool IsShiftKey(Key key)
+        {
+            return key == Key.ShiftLeft ||
+                key == Key.LShift ||
+                key == Key.ShiftRight ||
+                key == Key.RShift;
+        }
+
+        /// <summary>
+        /// Returns whether the key is routed to joystick input in normal play.
+        /// </summary>
+        private static bool IsJoystickKey(Key key)
+        {
+            return key == Key.Up ||
+                key == Key.Down ||
+                key == Key.Left ||
+                key == Key.Right ||
+                key == Key.ControlLeft ||
+                key == Key.LControl;
         }
 
         /// <summary>

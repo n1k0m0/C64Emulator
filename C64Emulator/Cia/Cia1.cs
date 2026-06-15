@@ -614,6 +614,19 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Replaces the complete local host keyboard-matrix state without touching joystick lines.
+        /// </summary>
+        /// <param name="keys">Frontend keys that should currently be held in the C64 keyboard matrix.</param>
+        public void SetHostKeyboardState(IEnumerable<Key> keys)
+        {
+            System.Array.Clear(_keyboardMatrix, 0, _keyboardMatrix.Length);
+            foreach (Key key in keys)
+            {
+                SetKeyState(key, true, _keyboardMatrix);
+            }
+        }
+
+        /// <summary>
         /// Releases all local host keyboard matrix keys.
         /// </summary>
         public void ClearHostKeyboardState()
@@ -1357,6 +1370,7 @@ namespace C64Emulator.Core
             Add(Key.RShift, 4, 6);
             Add(Key.BracketRight, 5, 6);
             Add(Key.Up, 6, 6);
+            Add(Key.C64ArrowUp, 6, 6);
             Add(Key.Slash, 7, 6);
 
             Add(Key.Number1, 0, 7);

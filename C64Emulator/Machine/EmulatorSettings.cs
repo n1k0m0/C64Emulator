@@ -39,6 +39,8 @@ namespace C64Emulator.Core
 
         public string RenderFrameLimitMode { get; set; } = "Unlimited";
 
+        public bool PresentationVSyncEnabled { get; set; }
+
         public string VideoFilterMode { get; set; } = "Sharp";
 
         public string VideoUpscaleMode { get; set; } = "None";

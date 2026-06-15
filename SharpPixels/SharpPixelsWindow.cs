@@ -381,6 +381,7 @@ namespace SharpPixels
         private SharpPixelsGpuUpscaleMode _gpuUpscaleMode;
         private int _gpuUpscaleFactor = 1;
         private bool _gpuSourcePresentationPending;
+        private bool _presentationVSyncEnabled;
         private bool _overlayLayerMode;
         private bool _overlayTextureIsTransparent;
         private bool _overlayUploadDirty;
@@ -590,11 +591,11 @@ namespace SharpPixels
             WindowsRenderScheduling.Apply();
 
             GL.ClearColor(0f, 0f, 0f, 1.0f);
-            // Let OpenTK run freely and keep driver VSync out of the timing path. Remote
-            // clients may receive 50 images per second but can present the latest one faster.
+            // Let OpenTK run freely; presentation VSync remains a user-controlled
+            // swap mode rather than a fixed render-loop throttle.
             UpdateFrequency = 0.0;
             IsEventDriven = false;
-            VSync = VSyncMode.Off;
+            ApplyPresentationVSync();
             AutoIconify = false;
             
             CursorState = CursorState.Hidden;
@@ -735,8 +736,29 @@ namespace SharpPixels
         private void SharpPixels_FocusedChanged(FocusedChangedEventArgs e)
         {
             IsEventDriven = false;
-            VSync = VSyncMode.Off;
+            ApplyPresentationVSync();
             ResetFpsCounter();
+        }
+
+        /// <summary>
+        /// Gets or sets whether buffer swaps should wait for monitor vertical blank.
+        /// </summary>
+        public bool PresentationVSyncEnabled
+        {
+            get { return _presentationVSyncEnabled; }
+            set
+            {
+                _presentationVSyncEnabled = value;
+                ApplyPresentationVSync();
+            }
+        }
+
+        /// <summary>
+        /// Applies the configured presentation sync mode to the OpenTK window.
+        /// </summary>
+        private void ApplyPresentationVSync()
+        {
+            VSync = _presentationVSyncEnabled ? VSyncMode.On : VSyncMode.Off;
         }
 
         /// <summary>

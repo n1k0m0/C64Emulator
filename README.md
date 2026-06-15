@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.14](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.14), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.15](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.15), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -196,9 +196,10 @@ Menu entries:
 | `NOISE LEVEL` | Soft to harsh | Adjusts the generated SID noise amount. Lower values are cleaner; higher values make noise-heavy effects more aggressive. |
 | `SID MODEL` | `6581` / `8580` | Switches the SID character model. `6581` is the older, rougher sounding chip family; `8580` is cleaner and behaves differently for some filters and digi tricks. |
 | `JOYSTICK` | `PORT 2`, `PORT 1`, `BOTH` | Selects which C64 joystick port receives keyboard/gamepad joystick input. Most C64 games use port 2, while some use port 1. `BOTH` mirrors input to both ports for convenience. |
-| `KEYBOARD` | `EN` / `GER` | Selects the host keyboard layout used before PC keys are mapped to C64 keys. In `GER` mode, `Y`/`Z` behave as expected on a German keyboard. Remote keyboard input is mapped on the client before it is sent to the host. |
+| `KEYBOARD` | `EN` / `GER` | Selects the host keyboard layout used before PC keys are mapped to C64 keys. In `GER` mode, `Y`/`Z` and common German symbol chords such as `Shift+0` for `=` are mapped to the matching C64 matrix keys. Remote keyboard input is mapped on the client before it is sent to the host. |
 | `DISPLAY` | `WINDOW` / `FULLSCREEN` | Toggles between windowed and fullscreen display mode. This is the same action as `F11`. |
-| `RENDER FPS` | `60 HZ`, `120 HZ`, `UNLIMITED` | Caps the frontend render loop. This changes only how often the latest frame is drawn; C64 PAL timing, audio, and network frame production remain independent. |
+| `RENDER FPS` | `60 HZ`, `120 HZ`, `UNLIMITED` | Caps the frontend render loop when `VSYNC` is off. This changes only how often the latest frame is drawn; C64 PAL timing, audio, and network frame production remain independent. |
+| `VSYNC` | `OFF` / `ON` | Waits for the monitor vertical blank before swapping OpenGL buffers. This can remove horizontal tearing. While `VSYNC` is on, `RENDER FPS` is disabled because the display refresh controls presentation timing. |
 | `VIDEO FILTER` | `SHARP`, `CRT`, `TV` | Selects the presentation filter. `SHARP` keeps crisp pixels, `CRT` adds subtle scanline/composite softness, and `TV` adds a very light grille-style texture. |
 | `VIDEO UPSCALE` | `NONE`, `SCALE2X`, `SCALE3X`, `HQ2X`, `HQ3X`, `HQ4X` | Applies a GPU-side source upscaler before the selected `VIDEO FILTER`. This is local for normal, host, and network-client sessions. |
 | `VIDEO ZOOM` | `OFF` / `ON` | Crops away the C64 border locally and scales the 320x200 inner display through the selected presentation filter. Hosts, clients, and local-only sessions can use different zoom settings. |
@@ -300,7 +301,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.14`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.15`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 

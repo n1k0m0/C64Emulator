@@ -147,7 +147,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 22;
+        private const int AudioOverlayItemCount = 23;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int ControllerMapActionCount = 10;
@@ -222,6 +222,7 @@ namespace C64Emulator
         private bool _resetConfirmYesSelected = true;
         private ConfirmationAction _confirmationAction;
         private RenderFrameLimitMode _renderFrameLimitMode = RenderFrameLimitMode.Unlimited;
+        private bool _presentationVSyncEnabled;
         private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
         private VideoUpscaleMode _videoUpscaleMode = VideoUpscaleMode.None;
         private ResetMode _resetMode = ResetMode.Warm;
@@ -425,6 +426,8 @@ namespace C64Emulator
             _system.EnableInputInjection = settings.EnableInputInjection;
 
             _renderFrameLimitMode = ParseEnum(settings.RenderFrameLimitMode, RenderFrameLimitMode.Unlimited);
+            _presentationVSyncEnabled = settings.PresentationVSyncEnabled;
+            PresentationVSyncEnabled = _presentationVSyncEnabled;
             _videoFilterMode = ParseEnum(settings.VideoFilterMode, VideoFilterMode.Sharp);
             _videoUpscaleMode = ParseEnum(settings.VideoUpscaleMode, VideoUpscaleMode.None);
             _videoZoomEnabled = settings.VideoZoomEnabled;
@@ -496,6 +499,7 @@ namespace C64Emulator
                 JoystickPort = _system.CurrentJoystickPort.ToString(),
                 HostKeyboardLayout = _system.CurrentHostKeyboardLayout.ToString(),
                 RenderFrameLimitMode = _renderFrameLimitMode.ToString(),
+                PresentationVSyncEnabled = _presentationVSyncEnabled,
                 VideoFilterMode = _videoFilterMode.ToString(),
                 VideoUpscaleMode = _videoUpscaleMode.ToString(),
                 VideoZoomEnabled = _videoZoomEnabled,
@@ -2054,12 +2058,24 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Toggles presentation VSync for the OpenGL buffer swap.
+        /// </summary>
+        private void TogglePresentationVSync()
+        {
+            _presentationVSyncEnabled = !_presentationVSyncEnabled;
+            PresentationVSyncEnabled = _presentationVSyncEnabled;
+            ApplyRenderFrameLimit();
+            _overlayStatusText = _presentationVSyncEnabled ? "VSYNC ON" : "VSYNC OFF";
+            SaveSettings();
+        }
+
+        /// <summary>
         /// Applies the selected frontend render-loop frame cap to the SharpPixels window.
         /// </summary>
         private void ApplyRenderFrameLimit()
         {
             IsEventDriven = false;
-            UpdateFrequency = GetRenderFrameFrequency(_renderFrameLimitMode);
+            UpdateFrequency = _presentationVSyncEnabled ? 0.0 : GetRenderFrameFrequency(_renderFrameLimitMode);
         }
 
         /// <summary>
@@ -6567,9 +6583,7 @@ namespace C64Emulator
                 case Key.Minus:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
-                        // Remote clients may change only local presentation settings. SID,
-                        // media, reset, and joystick source are owned by the server.
-                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        ShowAudioOverlayBlockedStatus(_audioOverlaySelection);
                         return true;
                     }
 
@@ -6579,9 +6593,7 @@ namespace C64Emulator
                 case Key.Plus:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
-                        // Keep the feedback in the network toast so it is visible in both
-                        // local and remote presentation paths.
-                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        ShowAudioOverlayBlockedStatus(_audioOverlaySelection);
                         return true;
                     }
 
@@ -6590,13 +6602,11 @@ namespace C64Emulator
                 case Key.Enter:
                     if (!CanAdjustAudioOverlayItem(_audioOverlaySelection))
                     {
-                        // Enter on a server-controlled item is blocked for the same reason
-                        // as left/right adjustment.
-                        ShowNetworkStatus("SETTING SERVER CONTROLLED");
+                        ShowAudioOverlayBlockedStatus(_audioOverlaySelection);
                         return true;
                     }
 
-                    if (_audioOverlaySelection == 11)
+                    if (_audioOverlaySelection == 12)
                     {
                         OpenControllerMappingOverlay();
                         return true;
@@ -6689,89 +6699,95 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 7)
             {
-                CycleVideoFilter();
+                TogglePresentationVSync();
                 return;
             }
 
             if (_audioOverlaySelection == 8)
             {
-                CycleVideoUpscale();
+                CycleVideoFilter();
                 return;
             }
 
             if (_audioOverlaySelection == 9)
             {
-                ToggleVideoZoom();
+                CycleVideoUpscale();
                 return;
             }
 
             if (_audioOverlaySelection == 10)
             {
-                ToggleTurboMode();
+                ToggleVideoZoom();
                 return;
             }
 
             if (_audioOverlaySelection == 11)
             {
-                ToggleGamepadInput();
+                ToggleTurboMode();
                 return;
             }
 
             if (_audioOverlaySelection == 12)
             {
-                ToggleLoadHack();
+                ToggleGamepadInput();
                 return;
             }
 
             if (_audioOverlaySelection == 13)
             {
-                ToggleSoftwareIecTransport();
+                ToggleLoadHack();
                 return;
             }
 
             if (_audioOverlaySelection == 14)
             {
-                ToggleInputInjection();
+                ToggleSoftwareIecTransport();
                 return;
             }
 
             if (_audioOverlaySelection == 15)
             {
-                CycleResetMode();
+                ToggleInputInjection();
                 return;
             }
 
             if (_audioOverlaySelection == 16)
             {
-                ToggleDriveOverlay();
+                CycleResetMode();
                 return;
             }
 
             if (_audioOverlaySelection == 17)
             {
-                ToggleEasyFlash();
+                ToggleDriveOverlay();
                 return;
             }
 
             if (_audioOverlaySelection == 18)
             {
-                SaveEasyFlash();
+                ToggleEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 19)
             {
-                EjectEasyFlash();
+                SaveEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 20)
             {
-                ToggleReu();
+                EjectEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 21)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 22)
             {
                 CycleReuSize(direction);
                 return;
@@ -7416,6 +7432,11 @@ namespace C64Emulator
         /// <returns>True when the current mode allows local adjustment.</returns>
         private bool CanAdjustAudioOverlayItem(int menuIndex)
         {
+            if (menuIndex == 6 && _presentationVSyncEnabled)
+            {
+                return false;
+            }
+
             if (_networkMode != NetworkSessionMode.Client)
             {
                 return true;
@@ -7423,7 +7444,22 @@ namespace C64Emulator
 
             // Remote clients can control only local display/presentation choices. The
             // server owns emulation-affecting settings such as SID, reset, and turbo.
-            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 8 || menuIndex == 9 || menuIndex == 11;
+            return menuIndex == 4 || menuIndex == 5 || menuIndex == 6 || menuIndex == 7 || menuIndex == 8 || menuIndex == 9 || menuIndex == 10 || menuIndex == 12;
+        }
+
+        /// <summary>
+        /// Shows why the selected settings row cannot currently be changed.
+        /// </summary>
+        /// <param name="menuIndex">Settings menu row index.</param>
+        private void ShowAudioOverlayBlockedStatus(int menuIndex)
+        {
+            if (menuIndex == 6 && _presentationVSyncEnabled)
+            {
+                _overlayStatusText = "RENDER FPS BY VSYNC";
+                return;
+            }
+
+            ShowNetworkStatus("SETTING SERVER CONTROLLED");
         }
 
         /// <summary>
@@ -7744,48 +7780,51 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "RENDER FPS", GetRenderFrameLimitFill(_renderFrameLimitMode), FormatRenderFrameLimit(_renderFrameLimitMode), "60 HZ", "UNLIMIT", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 7:
-                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VSYNC", _presentationVSyncEnabled ? 1.0f : 0.0f, _presentationVSyncEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 8:
-                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "CLEAN4", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO FILTER", GetVideoFilterFill(_videoFilterMode), FormatVideoFilter(_videoFilterMode), "SHARP", "TV", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 9:
-                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO UPSCALE", GetVideoUpscaleFill(_videoUpscaleMode), FormatVideoUpscale(_videoUpscaleMode), "NONE", "CLEAN4", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 10:
-                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "VIDEO ZOOM", _videoZoomEnabled ? 1.0f : 0.0f, _videoZoomEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 11:
-                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "TURBO", _turboMode ? 1.0f : 0.0f, _turboMode ? "ON" : "OFF", "OFF", "MAX", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 12:
-                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "GAMEPAD", GetGamepadFill(), FormatGamepadState(), "OFF", "ACTIVE", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 13:
-                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "LOAD HACK", enableLoadHack ? 1.0f : 0.0f, enableLoadHack ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 14:
-                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "IEC SOFTWARE", forceSoftwareIecTransport ? 1.0f : 0.0f, forceSoftwareIecTransport ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 15:
-                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "INPUT INJECT", enableInputInjection ? 1.0f : 0.0f, enableInputInjection ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 16:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 18:
-                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 19:
-                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 20:
-                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 21:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 22:
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }

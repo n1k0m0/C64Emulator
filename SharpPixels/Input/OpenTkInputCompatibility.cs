@@ -100,7 +100,8 @@ namespace OpenTK.Input
         Comma = 126,
         Period = 127,
         Slash = 128,
-        BackSlash = 129
+        BackSlash = 129,
+        C64ArrowUp = 130
     }
 
     /// <summary>
