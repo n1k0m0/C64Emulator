@@ -43,6 +43,14 @@ namespace C64Emulator.Core
         private bool _upperRomLoaded;
         private bool _serialOutputsEnabled;
         private bool _deferSerialOutputsUntilPortWrite;
+#pragma warning disable CS0414
+        // Legacy savestates from the GEOS loader repair pass contain this field.
+        // It is no longer used by the drive bus, but keeping it preserves loadability.
+        private bool _geosSecondStageVectorReadRepairArmed;
+        private bool _suppressGeosRomSerialPortWrites;
+        // Kept for the same legacy GEOS savestate shape as the repair flag above.
+        private string _lastGeosVectorRepairDebug = "-";
+#pragma warning restore CS0414
         private string _lastJobQueueDebug = "-";
 
         /// <summary>
@@ -153,6 +161,9 @@ namespace C64Emulator.Core
             _atnaDataSetToOut = false;
             _serialOutputsEnabled = false;
             _deferSerialOutputsUntilPortWrite = false;
+            _geosSecondStageVectorReadRepairArmed = false;
+            _suppressGeosRomSerialPortWrites = false;
+            _lastGeosVectorRepairDebug = "-";
             _lastJobQueueDebug = "-";
             UpdateSerialInputs();
         }

@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.15](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.15), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.16](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.16), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -301,7 +301,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.15`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.16`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -364,7 +364,13 @@ For local accuracy work, the helper scripts in `scripts/` can run and compare im
 .\scripts\run-vice-vicii-tests.ps1 -IncludeDirectories border,D011Test,dentest,greydot -NoDiff
 .\scripts\run-vice-c64-exitcode-tests.ps1 -TestRoot .\vice_testprogs -IncludeGroups CPU
 .\scripts\compare-vicii-reference.ps1 -ReferenceFrame path\to\reference.png -EmulatorFrame path\to\frame.ppm -AutoAlign
+.\scripts\run-savestate-golden-tests.ps1 -Accept -BaselinePath artifacts\savestate-golden-baseline.json
+.\scripts\run-savestate-golden-tests.ps1 -BaselinePath artifacts\savestate-golden-baseline.json
 ```
+
+`run-savestate-golden-tests.ps1` renders every local `.c64sav` below `%APPDATA%\C64Emulator\saves`.
+Use `-Accept` to create or refresh a local hash baseline, then run without `-Accept` to fail on render errors,
+missing saves, new saves, or framebuffer hash changes.
 
 For a single Phase 1 smoke run after a Release build:
 

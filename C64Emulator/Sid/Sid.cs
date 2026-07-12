@@ -37,21 +37,13 @@ namespace C64Emulator.Core
         private const int VoiceCount = 3;
         private const int RegistersPerVoice = 7;
         private const double CyclesPerSample = SidClockHz / SampleRate;
-        private const double SecondsPerSidCycle = 1.0 / SidClockHz;
         private const uint AccumulatorMask = 0x00FFFFFF;
-        private static readonly double[] AttackTimes =
+        private static readonly int[] EnvelopeRatePeriods =
         {
-            0.002, 0.008, 0.016, 0.024,
-            0.038, 0.056, 0.068, 0.080,
-            0.100, 0.250, 0.500, 0.800,
-            1.000, 3.000, 5.000, 8.000
-        };
-        private static readonly double[] DecayReleaseTimes =
-        {
-            0.006, 0.024, 0.048, 0.072,
-            0.114, 0.168, 0.204, 0.240,
-            0.300, 0.750, 1.500, 2.400,
-            3.000, 9.000, 15.000, 24.000
+            9, 32, 63, 95,
+            149, 220, 267, 313,
+            392, 977, 1954, 3126,
+            3907, 11720, 19532, 31251
         };
 
         private readonly byte[] _registers = new byte[0x20];
@@ -296,7 +288,7 @@ namespace C64Emulator.Core
         {
             for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
             {
-                _voiceMsbRising[voiceIndex] = _voices[voiceIndex].Advance(SecondsPerSidCycle);
+                _voiceMsbRising[voiceIndex] = _voices[voiceIndex].Advance();
             }
 
             for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
@@ -558,6 +550,10 @@ namespace C64Emulator.Core
             private uint _noiseLfsr;
             private uint _accumulator;
             private float _envelope;
+            private int _envelopeCounter;
+            private int _envelopeRateCounter;
+            private int _envelopeExponentialCounter;
+            private int _envelopeExponentialPeriod;
             private EnvelopeStage _envelopeStage;
             private bool _gate;
 
@@ -622,6 +618,10 @@ namespace C64Emulator.Core
                 _noiseLfsr = seed == 0 ? 0x7FFFF8u : seed;
                 _accumulator = 0u;
                 _envelope = 0.0f;
+                _envelopeCounter = 0;
+                _envelopeRateCounter = 0;
+                _envelopeExponentialCounter = 0;
+                _envelopeExponentialPeriod = 1;
                 _envelopeStage = EnvelopeStage.Release;
                 _gate = false;
                 FrequencyRegister = 0;
@@ -640,10 +640,14 @@ namespace C64Emulator.Core
                 if (!_gate && newGate)
                 {
                     _envelopeStage = EnvelopeStage.Attack;
+                    _envelopeExponentialCounter = 0;
+                    _envelopeExponentialPeriod = 1;
                 }
                 else if (_gate && !newGate)
                 {
                     _envelopeStage = EnvelopeStage.Release;
+                    _envelopeExponentialCounter = 0;
+                    UpdateEnvelopeExponentialPeriod();
                 }
 
                 _gate = newGate;
@@ -659,7 +663,7 @@ namespace C64Emulator.Core
             /// <summary>
             /// Handles the advance operation.
             /// </summary>
-            public bool Advance(double deltaTime)
+            public bool Advance()
             {
                 bool msbRising = false;
                 if (!TestEnabled)
@@ -683,7 +687,7 @@ namespace C64Emulator.Core
                     _accumulator = 0u;
                 }
 
-                UpdateEnvelope(deltaTime);
+                ClockEnvelope();
                 return msbRising;
             }
 
@@ -767,7 +771,7 @@ namespace C64Emulator.Core
             /// </summary>
             public byte GetEnvelopeByte()
             {
-                return (byte)Clamp(_envelope * 255.0f, 0.0f, 255.0f);
+                return (byte)_envelopeCounter;
             }
 
             /// <summary>
@@ -798,6 +802,7 @@ namespace C64Emulator.Core
             public void LoadState(BinaryReader reader)
             {
                 StateSerializer.ReadObjectFields(reader, this);
+                RepairEnvelopeAfterLoad();
             }
 
             /// <summary>
@@ -842,47 +847,167 @@ namespace C64Emulator.Core
             }
 
             /// <summary>
-            /// Updates envelope.
+            /// Clocks the SID-style 8-bit envelope counter once per chip cycle.
             /// </summary>
-            private void UpdateEnvelope(double deltaTime)
+            private void ClockEnvelope()
+            {
+                int ratePeriod = GetCurrentEnvelopeRatePeriod();
+                _envelopeRateCounter++;
+                if (_envelopeRateCounter < ratePeriod)
+                {
+                    return;
+                }
+
+                _envelopeRateCounter = 0;
+                switch (_envelopeStage)
+                {
+                    case EnvelopeStage.Attack:
+                        if (_envelopeCounter < 0xFF)
+                        {
+                            _envelopeCounter++;
+                            if (_envelopeCounter == 0xFF)
+                            {
+                                _envelopeStage = EnvelopeStage.Decay;
+                                _envelopeExponentialCounter = 0;
+                                _envelopeExponentialPeriod = 1;
+                            }
+                        }
+                        break;
+                    case EnvelopeStage.Decay:
+                        ClockEnvelopeDown(GetSustainCounter(), true);
+                        break;
+                    case EnvelopeStage.Sustain:
+                        if (_envelopeCounter > GetSustainCounter())
+                        {
+                            _envelopeStage = EnvelopeStage.Decay;
+                            _envelopeExponentialCounter = 0;
+                            UpdateEnvelopeExponentialPeriod();
+                        }
+                        break;
+                    case EnvelopeStage.Release:
+                        ClockEnvelopeDown(0, false);
+                        break;
+                }
+
+                _envelope = _envelopeCounter / 255.0f;
+            }
+
+            /// <summary>
+            /// Clocks a decay or release step through the exponential counter divider.
+            /// </summary>
+            private void ClockEnvelopeDown(int targetCounter, bool enterSustainAtTarget)
+            {
+                if (_envelopeCounter <= targetCounter)
+                {
+                    if (enterSustainAtTarget)
+                    {
+                        _envelopeStage = EnvelopeStage.Sustain;
+                    }
+
+                    return;
+                }
+
+                _envelopeExponentialCounter++;
+                if (_envelopeExponentialCounter < _envelopeExponentialPeriod)
+                {
+                    return;
+                }
+
+                _envelopeExponentialCounter = 0;
+                _envelopeCounter--;
+                UpdateEnvelopeExponentialPeriod();
+
+                if (enterSustainAtTarget && _envelopeCounter <= targetCounter)
+                {
+                    _envelopeCounter = targetCounter;
+                    _envelopeStage = EnvelopeStage.Sustain;
+                }
+            }
+
+            /// <summary>
+            /// Restores newly added envelope counter fields after loading older savestates.
+            /// </summary>
+            private void RepairEnvelopeAfterLoad()
+            {
+                if (_envelopeCounter == 0 && _envelope > 0.0f)
+                {
+                    _envelopeCounter = (int)Math.Round(Clamp(_envelope, 0.0f, 1.0f) * 255.0f);
+                }
+
+                if (_envelopeExponentialPeriod <= 0)
+                {
+                    _envelopeExponentialPeriod = GetEnvelopeExponentialPeriod(_envelopeCounter);
+                }
+
+                _envelopeRateCounter = Math.Max(0, _envelopeRateCounter);
+                _envelopeExponentialCounter = Math.Max(0, _envelopeExponentialCounter);
+                _envelope = _envelopeCounter / 255.0f;
+            }
+
+            /// <summary>
+            /// Gets the current rate-counter period from the active ADSR stage.
+            /// </summary>
+            private int GetCurrentEnvelopeRatePeriod()
             {
                 switch (_envelopeStage)
                 {
                     case EnvelopeStage.Attack:
-                        _envelope += (float)(deltaTime / AttackTimes[(AttackDecay >> 4) & 0x0F]);
-                        if (_envelope >= 1.0f)
-                        {
-                            _envelope = 1.0f;
-                            _envelopeStage = EnvelopeStage.Decay;
-                        }
-                        break;
+                        return EnvelopeRatePeriods[(AttackDecay >> 4) & 0x0F];
                     case EnvelopeStage.Decay:
-                        float sustainLevel = (SustainRelease >> 4) / 15.0f;
-                        if (_envelope > sustainLevel)
-                        {
-                            _envelope -= (float)(deltaTime / DecayReleaseTimes[AttackDecay & 0x0F]);
-                            if (_envelope <= sustainLevel)
-                            {
-                                _envelope = sustainLevel;
-                                _envelopeStage = EnvelopeStage.Sustain;
-                            }
-                        }
-                        else
-                        {
-                            _envelopeStage = EnvelopeStage.Sustain;
-                        }
-                        break;
-                    case EnvelopeStage.Release:
-                        if (_envelope > 0.0f)
-                        {
-                            _envelope -= (float)(deltaTime / DecayReleaseTimes[SustainRelease & 0x0F]);
-                            if (_envelope < 0.0f)
-                            {
-                                _envelope = 0.0f;
-                            }
-                        }
-                        break;
+                    case EnvelopeStage.Sustain:
+                        return EnvelopeRatePeriods[AttackDecay & 0x0F];
+                    default:
+                        return EnvelopeRatePeriods[SustainRelease & 0x0F];
                 }
+            }
+
+            /// <summary>
+            /// Gets the 8-bit sustain level used by the SID envelope counter.
+            /// </summary>
+            private int GetSustainCounter()
+            {
+                return ((SustainRelease >> 4) & 0x0F) * 0x11;
+            }
+
+            /// <summary>
+            /// Updates the exponential divider at the SID envelope threshold points.
+            /// </summary>
+            private void UpdateEnvelopeExponentialPeriod()
+            {
+                _envelopeExponentialPeriod = GetEnvelopeExponentialPeriod(_envelopeCounter);
+            }
+
+            /// <summary>
+            /// Gets the exponential divider for a given envelope counter value.
+            /// </summary>
+            private static int GetEnvelopeExponentialPeriod(int envelopeCounter)
+            {
+                if (envelopeCounter > 0x5D)
+                {
+                    return 1;
+                }
+
+                if (envelopeCounter > 0x36)
+                {
+                    return 2;
+                }
+
+                if (envelopeCounter > 0x1A)
+                {
+                    return 4;
+                }
+
+                if (envelopeCounter > 0x0E)
+                {
+                    return 8;
+                }
+
+                if (envelopeCounter > 0x06)
+                {
+                    return 16;
+                }
+
+                return envelopeCounter == 0 ? 1 : 30;
             }
 
             /// <summary>

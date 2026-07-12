@@ -126,6 +126,8 @@ namespace C64Emulator.Core
             failures += RunCase(output, "REU swap verify and fixed addressing", TestReuSwapVerifyAndFixedAddressing);
             failures += RunCase(output, "REU size wrapping and FF00 trigger", TestReuSizeWrappingAndFf00Trigger);
             failures += RunCase(output, "SID envelope gate attack/release", TestSidEnvelopeGateAttackRelease);
+            failures += RunCase(output, "SID envelope attack rate counter", TestSidEnvelopeAttackRateCounter);
+            failures += RunCase(output, "SID envelope release exponential counter", TestSidEnvelopeReleaseExponentialCounter);
             failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
             failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
@@ -1804,6 +1806,83 @@ namespace C64Emulator.Core
 
                 byte releaseEnvelope = sid.Read(0x1C);
                 context.True("voice 3 envelope falls after gate clear", releaseEnvelope < attackEnvelope);
+            }
+            finally
+            {
+                sid.Dispose();
+            }
+        }
+
+        private static void TestSidEnvelopeAttackRateCounter(AccuracyContext context)
+        {
+            var sid = new Sid();
+            try
+            {
+                sid.Write(0x13, 0x00);
+                sid.Write(0x14, 0xF0);
+                sid.Write(0x12, 0x01);
+
+                for (int cycle = 0; cycle < 8; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("fastest attack waits for rate counter", (byte)0x00, sid.Read(0x1C));
+                sid.Tick();
+                context.Equal("fastest attack increments after period", (byte)0x01, sid.Read(0x1C));
+
+                for (int cycle = 0; cycle < 8; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("attack counter holds between rate periods", (byte)0x01, sid.Read(0x1C));
+                sid.Tick();
+                context.Equal("attack counter advances on next period", (byte)0x02, sid.Read(0x1C));
+            }
+            finally
+            {
+                sid.Dispose();
+            }
+        }
+
+        private static void TestSidEnvelopeReleaseExponentialCounter(AccuracyContext context)
+        {
+            var sid = new Sid();
+            try
+            {
+                sid.Write(0x13, 0x00);
+                sid.Write(0x14, 0xF0);
+                sid.Write(0x12, 0x01);
+
+                for (int cycle = 0; cycle < 9 * 255; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("attack reaches full 8-bit envelope", (byte)0xFF, sid.Read(0x1C));
+
+                sid.Write(0x12, 0x00);
+                for (int cycle = 0; cycle < (0xFF - 0x5D) * 9; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("release reaches exponential threshold", (byte)0x5D, sid.Read(0x1C));
+
+                for (int cycle = 0; cycle < 9; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("release holds for exponential divider", (byte)0x5D, sid.Read(0x1C));
+
+                for (int cycle = 0; cycle < 9; cycle++)
+                {
+                    sid.Tick();
+                }
+
+                context.Equal("release advances after exponential divider", (byte)0x5C, sid.Read(0x1C));
             }
             finally
             {
