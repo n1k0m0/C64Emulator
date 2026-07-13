@@ -197,8 +197,9 @@ namespace C64Emulator.Network
         /// <param name="relayHost">Public relay host or IP.</param>
         /// <param name="relayPort">Public relay TLS port.</param>
         /// <param name="connectionId">Shared session id used by clients.</param>
+        /// <param name="relayPassword">Optional relay access password.</param>
         /// <param name="password">Optional C64Net session password.</param>
-        public void StartRelay(string relayHost, int relayPort, string connectionId, string password)
+        public void StartRelay(string relayHost, int relayPort, string connectionId, string relayPassword, string password)
         {
             Stop();
             _password = password ?? string.Empty;
@@ -216,7 +217,7 @@ namespace C64Emulator.Network
             string status;
             try
             {
-                if (!relay.Start(relayHost, relayPort, connectionId, out status))
+                if (!relay.Start(relayHost, relayPort, connectionId, relayPassword, out status))
                 {
                     relay.Dispose();
                     IsRelayMode = false;

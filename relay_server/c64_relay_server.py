@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _datetime
+import hmac
 import logging
 import os
 import ssl
@@ -115,14 +116,19 @@ def read_string(payload: bytes, offset: int) -> tuple[str, int]:
     return value, offset + length
 
 
-def parse_register(payload: bytes) -> tuple[int, int, str]:
+def parse_register(payload: bytes) -> tuple[int, int, str, str]:
     """Parse the initial register frame sent by a host or client emulator."""
 
     if len(payload) < 5:
         raise ValueError("short register payload")
     version, role = struct.unpack_from("<iB", payload, 0)
-    connection_id, _ = read_string(payload, 5)
-    return version, role, normalize_connection_id(connection_id)
+    connection_id, offset = read_string(payload, 5)
+    password = ""
+    if offset < len(payload):
+        password, offset = read_string(payload, offset)
+    if offset != len(payload):
+        raise ValueError("trailing register payload")
+    return version, role, normalize_connection_id(connection_id), password
 
 
 def create_register_ok(channel_id: int, status: str) -> bytes:
@@ -220,7 +226,7 @@ async def reject(writer: asyncio.StreamWriter, reason: str) -> None:
         await close_writer(writer)
 
 
-async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, relay_password: str) -> None:
     """Handle a newly accepted TLS connection until it becomes host or client."""
 
     endpoint = peer_name(writer)
@@ -230,9 +236,13 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
             await reject(writer, "BAD RELAY HELLO")
             return
 
-        version, role, connection_id = parse_register(frame.payload)
+        version, role, connection_id, password = parse_register(frame.payload)
         if version != VERSION:
             await reject(writer, "RELAY PROTOCOL MISMATCH")
+            return
+        if relay_password and not hmac.compare_digest(relay_password, password):
+            logger.warning("bad relay password endpoint=%s role=%s id=%s", endpoint, role, connection_id)
+            await reject(writer, "RELAY PASSWORD REJECTED")
             return
 
         # Only the first frame tells the relay whether this peer is the hosting
@@ -441,6 +451,7 @@ async def main() -> None:
     parser.add_argument("--key", default="relay.key", help="TLS private key PEM path")
     parser.add_argument("--cn", default="C64RelayServer", help="self-signed certificate common name")
     parser.add_argument("--log-file", default="", help="optional relay log file path")
+    parser.add_argument("--password", default="", help="optional relay access password")
     args = parser.parse_args()
     configure_logging(args.log_file)
 
@@ -452,8 +463,16 @@ async def main() -> None:
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certfile=os.fspath(cert_path), keyfile=os.fspath(key_path))
 
-    server = await asyncio.start_server(handle_connection, args.host, args.port, ssl=context)
-    logger.info("listening on %s:%s tls cert=%s", args.host, args.port, cert_path)
+    relay_password = args.password or ""
+    handler = lambda reader, writer: handle_connection(reader, writer, relay_password)
+    server = await asyncio.start_server(handler, args.host, args.port, ssl=context)
+    logger.info(
+        "listening on %s:%s tls cert=%s relay_password=%s",
+        args.host,
+        args.port,
+        cert_path,
+        "enabled" if relay_password else "disabled",
+    )
     async with server:
         await server.serve_forever()
 

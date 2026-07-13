@@ -264,12 +264,13 @@ namespace C64Emulator.Network
         /// <param name="relayHost">Relay host name or IP address.</param>
         /// <param name="relayPort">Relay TLS port.</param>
         /// <param name="connectionId">Shared relay session id.</param>
+        /// <param name="relayPassword">Optional relay access password.</param>
         /// <param name="password">Optional C64Net session password.</param>
         /// <param name="role">Requested client role.</param>
         /// <param name="name">Player name to show on the host.</param>
         /// <param name="status">Result status text for the overlay.</param>
         /// <returns>True when the relay and host handshake completed.</returns>
-        public bool ConnectRelay(string relayHost, int relayPort, string connectionId, string password, C64NetClientRole role, string name, out string status)
+        public bool ConnectRelay(string relayHost, int relayPort, string connectionId, string relayPassword, string password, C64NetClientRole role, string name, out string status)
         {
             Disconnect();
             Interlocked.Exchange(ref _bytesSent, 0);
@@ -283,6 +284,7 @@ namespace C64Emulator.Network
                     relayHost,
                     relayPort,
                     connectionId,
+                    relayPassword,
                     out _relayFingerprint,
                     out _relaySessionFingerprint,
                     out status);

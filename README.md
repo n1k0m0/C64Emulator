@@ -108,7 +108,7 @@ Server-side entries:
 | Entry | Values / Action | Details |
 | --- | --- | --- |
 | `MODE` | `LAN` / `RELAY` | Chooses direct LAN hosting or outbound Relay Mode. |
-| `SERVER PORT` | TLS/TCP port | Port used for incoming LAN C64Net sessions. The default is `6464`. |
+| `SERVER PORT` / `RELAY PASSWORD` | TLS/TCP port or hidden text | In LAN Mode, this is the incoming C64Net server port. In Relay Mode, this becomes the optional password required by a protected relay server. |
 | `SERVER PASSWORD` | `NONE` or hidden text | Optional session password. Password characters are shown as `*` in the menu. |
 | `CONNECTION ID` | Text | Shared Relay Mode session id. The relay connects clients to the host registered with the same id. |
 | `SERVER` | `START SERVER` / `STOP SERVER` | Starts or stops the host session. |
@@ -116,6 +116,8 @@ Server-side entries:
 | `CLIENT RIGHT` | `NO JOYSTICK`, `JOYSTICK 1`, `JOYSTICK 2`, `BOTH JOYSTICKS` | Chooses whether the selected client may control a joystick port. |
 | `KEYBOARD RIGHT` | `KEYBOARD` / `NO KEYBOARD` | Chooses whether the selected client may type on the host C64 keyboard matrix. This is independent from joystick rights. |
 | `KICK CLIENT` | Connected client | Disconnects the selected client. Kicked clients cannot rejoin the same server session; restarting the server clears this session ban list. |
+
+In Relay Mode, `RELAY PASSWORD` applies to both hosting and joining through the relay.
 
 Client-side entries:
 
@@ -146,7 +148,7 @@ When the host is in a menu, connected clients receive a persistent popup such as
 
 ## Relay Server
 
-Relay Mode is optional and is meant for sessions where the host cannot expose a LAN/TCP port directly. A public relay accepts one host registration per `CONNECTION ID` and forwards matching clients to that host. The relay itself does not need the C64Net session password and does not decrypt the end-to-end C64 session stream.
+Relay Mode is optional and is meant for sessions where the host cannot expose a LAN/TCP port directly. A public relay accepts one host registration per `CONNECTION ID` and forwards matching clients to that host. A relay server can require its own relay password before it accepts host or client registrations. This relay password is separate from the C64Net session password; the relay still does not need the C64Net session password and does not decrypt the end-to-end C64 session stream.
 
 The repository contains a small Python relay implementation in `relay_server/`. It listens on TLS port `6465` by default, creates or uses a self-signed relay certificate, writes normal logs, and includes Ubuntu `systemd` helper scripts:
 
@@ -426,7 +428,7 @@ Savestate menu controls:
 
 ## Settings
 
-Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, render FPS cap, video filter, video upscale, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
+Runtime settings are stored in `%APPDATA%\C64Emulator\settings.json`. The file remembers user-facing options such as SID volume/model, joystick port, host keyboard layout, render FPS cap, video filter, video upscale, video zoom, fullscreen mode, turbo mode, gamepad input and controller bindings, reset mode, drive overlay visibility, EasyFlash enable/path, REU enable/size, compatibility toggles, the media browser target drive, and the last media browser directory. The network menu also persists LAN/Relay mode, server/client/relay ports, the connection id, the last host, optional session and relay passwords, the player name, and the requested client role. Mounted disk/program files and active network sessions are intentionally not persisted, so the emulator always starts without re-opening ordinary disk/program files or rejoining a previous server. An inserted EasyFlash image path is persisted separately because it behaves like a cartridge expansion device.
 
 ## ROM Files
 

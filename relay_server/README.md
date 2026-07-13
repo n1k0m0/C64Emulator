@@ -9,6 +9,12 @@ It is not part of the Windows installer.
 python3 c64_relay_server.py --host 0.0.0.0 --port 6465
 ```
 
+To restrict the relay to clients that know a shared relay password:
+
+```bash
+python3 c64_relay_server.py --host 0.0.0.0 --port 6465 --password "change-me"
+```
+
 The script uses TLS. If `relay.crt` and `relay.key` do not exist, it creates a
 self-signed certificate with Python `cryptography` when available, or falls back
 to `openssl`.
@@ -31,12 +37,17 @@ The installer creates:
 /var/log/c64-relay-server/relay.log
 ```
 
-Change host, port, certificate path, key path, or certificate common name in:
+Change host, port, certificate path, key path, certificate common name, or relay
+password in:
 
 ```bash
 sudo nano /etc/c64-relay-server/c64-relay-server.env
 sudo systemctl restart c64-relay-server
 ```
+
+Set `C64_RELAY_PASSWORD=` to an empty value to leave the relay open. Set a value
+to require the same `RELAY PASSWORD` in the emulator network menu before a host
+or client can register with the relay.
 
 Useful service commands:
 

@@ -131,6 +131,11 @@ namespace C64Emulator.Core
         public string NetworkConnectionId { get; set; } = "c64";
 
         /// <summary>
+        /// Gets or sets the optional password required by a protected relay server.
+        /// </summary>
+        public string NetworkRelayPassword { get; set; } = string.Empty;
+
+        /// <summary>
         /// Gets or sets the optional client password sent during the C64Net handshake.
         /// </summary>
         public string NetworkClientPassword { get; set; } = string.Empty;

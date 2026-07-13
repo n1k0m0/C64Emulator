@@ -270,6 +270,7 @@ namespace C64Emulator
         private string _mediaBrowserLastDirectory;
         private string _networkHost = "127.0.0.1";
         private string _networkConnectionId = "c64";
+        private string _networkRelayPassword = string.Empty;
         private string _networkServerPassword = string.Empty;
         private string _networkClientPassword = string.Empty;
         private string _networkPlayerName = "player";
@@ -456,6 +457,7 @@ namespace C64Emulator
             _networkRelayPort = ClampNetworkPort(settings.NetworkRelayPort <= 0 ? C64NetProtocol.DefaultRelayPort : settings.NetworkRelayPort);
             _networkHost = string.IsNullOrWhiteSpace(settings.NetworkClientHost) ? "127.0.0.1" : settings.NetworkClientHost.Trim();
             _networkConnectionId = NormalizeNetworkConnectionId(settings.NetworkConnectionId);
+            _networkRelayPassword = settings.NetworkRelayPassword ?? string.Empty;
             _networkServerPassword = settings.NetworkServerPassword ?? string.Empty;
             _networkClientPassword = settings.NetworkClientPassword ?? string.Empty;
             _networkPlayerName = NormalizeNetworkPlayerName(settings.NetworkPlayerName);
@@ -537,6 +539,7 @@ namespace C64Emulator
                 NetworkClientPort = _networkClientPort,
                 NetworkRelayPort = _networkRelayPort,
                 NetworkConnectionId = NormalizeNetworkConnectionId(_networkConnectionId),
+                NetworkRelayPassword = _networkRelayPassword ?? string.Empty,
                 NetworkClientPassword = _networkClientPassword ?? string.Empty,
                 NetworkPlayerName = NormalizeNetworkPlayerName(_networkPlayerName),
                 NetworkRequestedRole = _networkRequestedRole.ToString()
@@ -3791,7 +3794,7 @@ namespace C64Emulator
             {
                 if (_networkTransportMode == C64NetTransportMode.Relay)
                 {
-                    _networkServer.StartRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkServerPassword);
+                    _networkServer.StartRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkRelayPassword, _networkServerPassword);
                 }
                 else
                 {
@@ -3980,7 +3983,7 @@ namespace C64Emulator
             try
             {
                 connected = _networkTransportMode == C64NetTransportMode.Relay
-                    ? _networkClient.ConnectRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status)
+                    ? _networkClient.ConnectRelay(_networkHost, _networkRelayPort, NormalizeNetworkConnectionId(_networkConnectionId), _networkRelayPassword, _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status)
                     : _networkClient.Connect(_networkHost, _networkClientPort, _networkClientPassword, _networkRequestedRole, NormalizeNetworkPlayerName(_networkPlayerName), out status);
             }
             catch (C64NetTlsException ex)
@@ -5890,9 +5893,13 @@ namespace C64Emulator
                     SaveSettings();
                     break;
                 case 1:
-                    // Port fields support both step adjustment and direct digit editing.
-                    _networkServerPort = ClampNetworkPort(_networkServerPort + direction);
-                    SaveSettings();
+                    if (_networkTransportMode == C64NetTransportMode.Lan)
+                    {
+                        // Port fields support both step adjustment and direct digit editing.
+                        _networkServerPort = ClampNetworkPort(_networkServerPort + direction);
+                        SaveSettings();
+                    }
+
                     break;
                 case 4:
                     if (direction != 0)
@@ -6050,7 +6057,8 @@ namespace C64Emulator
                 return false;
             }
 
-            bool serverPortField = _networkOverlaySelection == 1;
+            bool serverPortField = _networkOverlaySelection == 1 && _networkTransportMode == C64NetTransportMode.Lan;
+            bool relayPasswordField = _networkOverlaySelection == 1 && _networkTransportMode == C64NetTransportMode.Relay;
             bool clientPortField = _networkOverlaySelection == 11;
             if (serverPortField || clientPortField)
             {
@@ -6092,7 +6100,7 @@ namespace C64Emulator
             bool playerNameField = _networkOverlaySelection == 9;
             bool hostField = _networkOverlaySelection == 10;
             bool clientPasswordField = _networkOverlaySelection == 12;
-            if (!serverPasswordField && !connectionIdField && !playerNameField && !hostField && !clientPasswordField)
+            if (!relayPasswordField && !serverPasswordField && !connectionIdField && !playerNameField && !hostField && !clientPasswordField)
             {
                 return false;
             }
@@ -6101,7 +6109,12 @@ namespace C64Emulator
             {
                 // Text editing is intentionally simple: ASCII-like keys, backspace, and
                 // delete are enough for host names, player names, and passwords.
-                if (serverPasswordField && _networkServerPassword.Length > 0)
+                if (relayPasswordField && _networkRelayPassword.Length > 0)
+                {
+                    _networkRelayPassword = _networkRelayPassword.Substring(0, _networkRelayPassword.Length - 1);
+                    SaveSettings();
+                }
+                else if (serverPasswordField && _networkServerPassword.Length > 0)
                 {
                     _networkServerPassword = _networkServerPassword.Substring(0, _networkServerPassword.Length - 1);
                     SaveSettings();
@@ -6132,7 +6145,11 @@ namespace C64Emulator
 
             if (key == Key.Delete)
             {
-                if (serverPasswordField)
+                if (relayPasswordField)
+                {
+                    _networkRelayPassword = string.Empty;
+                }
+                else if (serverPasswordField)
                 {
                     _networkServerPassword = string.Empty;
                 }
@@ -6163,7 +6180,15 @@ namespace C64Emulator
                 return false;
             }
 
-            if (serverPasswordField)
+            if (relayPasswordField)
+            {
+                if (_networkRelayPassword.Length < 32)
+                {
+                    _networkRelayPassword += character;
+                    SaveSettings();
+                }
+            }
+            else if (serverPasswordField)
             {
                 if (_networkServerPassword.Length < 32)
                 {
@@ -7335,7 +7360,7 @@ namespace C64Emulator
                 case 0:
                     return "MODE";
                 case 1:
-                    return "SERVER PORT";
+                    return _networkTransportMode == C64NetTransportMode.Relay ? "RELAY PASSWORD" : "SERVER PORT";
                 case 2:
                     return "SERVER PASSWORD";
                 case 3:
@@ -7384,7 +7409,9 @@ namespace C64Emulator
                 case 0:
                     return _networkTransportMode == C64NetTransportMode.Relay ? "RELAY" : "LAN";
                 case 1:
-                    return _networkServerPort <= 0 ? "TYPE PORT" : _networkServerPort.ToString();
+                    return _networkTransportMode == C64NetTransportMode.Relay
+                        ? FormatNetworkPassword(_networkRelayPassword)
+                        : (_networkServerPort <= 0 ? "TYPE PORT" : _networkServerPort.ToString());
                 case 2:
                     return FormatNetworkPassword(_networkServerPassword);
                 case 3:

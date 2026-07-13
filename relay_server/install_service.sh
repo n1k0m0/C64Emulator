@@ -13,6 +13,7 @@ UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 DEFAULT_HOST="${C64_RELAY_HOST:-0.0.0.0}"
 DEFAULT_PORT="${C64_RELAY_PORT:-6465}"
 DEFAULT_CN="${C64_RELAY_CN:-C64RelayServer}"
+DEFAULT_PASSWORD="${C64_RELAY_PASSWORD:-}"
 
 if [[ "${EUID}" -ne 0 ]]; then
     exec sudo \
@@ -25,6 +26,7 @@ if [[ "${EUID}" -ne 0 ]]; then
         C64_RELAY_HOST="${DEFAULT_HOST}" \
         C64_RELAY_PORT="${DEFAULT_PORT}" \
         C64_RELAY_CN="${DEFAULT_CN}" \
+        C64_RELAY_PASSWORD="${DEFAULT_PASSWORD}" \
         bash "$0" "$@"
 fi
 
@@ -75,14 +77,20 @@ C64_RELAY_PORT=${DEFAULT_PORT}
 C64_RELAY_CERT=${CONFIG_DIR}/relay.crt
 C64_RELAY_KEY=${CONFIG_DIR}/relay.key
 C64_RELAY_CN=${DEFAULT_CN}
+C64_RELAY_PASSWORD=${DEFAULT_PASSWORD}
 C64_RELAY_LOG=${LOG_DIR}/relay.log
 EOF
-    chmod 0644 "${ENV_FILE}"
 fi
 
 if ! grep -q '^C64_RELAY_LOG=' "${ENV_FILE}"; then
     printf '\nC64_RELAY_LOG=%s/relay.log\n' "${LOG_DIR}" >> "${ENV_FILE}"
 fi
+
+if ! grep -q '^C64_RELAY_PASSWORD=' "${ENV_FILE}"; then
+    printf '\nC64_RELAY_PASSWORD=\n' >> "${ENV_FILE}"
+fi
+
+chmod 0640 "${ENV_FILE}"
 
 if grep -q '^C64_RELAY_PORT=6464$' "${ENV_FILE}"; then
     sed -i 's/^C64_RELAY_PORT=6464$/C64_RELAY_PORT=6465/' "${ENV_FILE}"
@@ -101,7 +109,7 @@ Group=${SERVICE_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 -u ${INSTALL_DIR}/c64_relay_server.py --host \${C64_RELAY_HOST} --port \${C64_RELAY_PORT} --cert \${C64_RELAY_CERT} --key \${C64_RELAY_KEY} --cn \${C64_RELAY_CN} --log-file \${C64_RELAY_LOG}
+ExecStart=/usr/bin/python3 -u ${INSTALL_DIR}/c64_relay_server.py --host \${C64_RELAY_HOST} --port \${C64_RELAY_PORT} --cert \${C64_RELAY_CERT} --key \${C64_RELAY_KEY} --cn \${C64_RELAY_CN} --log-file \${C64_RELAY_LOG} --password=\${C64_RELAY_PASSWORD}
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

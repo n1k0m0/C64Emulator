@@ -91,9 +91,10 @@ namespace C64Emulator.Network
         /// <param name="host">Relay host or IP address.</param>
         /// <param name="port">Relay TLS port.</param>
         /// <param name="connectionId">Session identifier used to match clients.</param>
+        /// <param name="relayPassword">Optional relay access password.</param>
         /// <param name="status">Short user-facing connection status.</param>
         /// <returns>True when registration succeeded.</returns>
-        public bool Start(string host, int port, string connectionId, out string status)
+        public bool Start(string host, int port, string connectionId, string relayPassword, out string status)
         {
             Stop();
             Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
@@ -102,7 +103,7 @@ namespace C64Emulator.Network
             _shutdown = new CancellationTokenSource();
             _connection = new C64RelayConnection(true);
             _connection.ChannelOpened += HandleChannelOpened;
-            if (!_connection.Connect(Host, Port, C64RelayRole.Server, ConnectionId, out status))
+            if (!_connection.Connect(Host, Port, C64RelayRole.Server, ConnectionId, relayPassword, out status))
             {
                 Stop();
                 return false;
@@ -298,6 +299,7 @@ namespace C64Emulator.Network
         /// <param name="host">Relay host or IP.</param>
         /// <param name="port">Relay TLS port.</param>
         /// <param name="connectionId">Session id to join.</param>
+        /// <param name="relayPassword">Optional relay access password.</param>
         /// <param name="relayFingerprint">Pinned relay TLS fingerprint.</param>
         /// <param name="sessionFingerprint">End-to-end server session fingerprint.</param>
         /// <param name="status">Short status text.</param>
@@ -306,6 +308,7 @@ namespace C64Emulator.Network
             string host,
             int port,
             string connectionId,
+            string relayPassword,
             out string relayFingerprint,
             out string sessionFingerprint,
             out string status)
@@ -313,7 +316,7 @@ namespace C64Emulator.Network
             relayFingerprint = "UNKNOWN";
             sessionFingerprint = "UNKNOWN";
             var connection = new C64RelayConnection(false);
-            if (!connection.Connect(host, port, C64RelayRole.Client, NormalizeConnectionId(connectionId), out status))
+            if (!connection.Connect(host, port, C64RelayRole.Client, NormalizeConnectionId(connectionId), relayPassword, out status))
             {
                 connection.Dispose();
                 return null;
@@ -433,7 +436,7 @@ namespace C64Emulator.Network
             get { return _tcpClient != null && _tcpClient.Connected && _stream != null; }
         }
 
-        public bool Connect(string host, int port, C64RelayRole role, string connectionId, out string status)
+        public bool Connect(string host, int port, C64RelayRole role, string connectionId, string relayPassword, out string status)
         {
             status = string.Empty;
             try
@@ -452,7 +455,7 @@ namespace C64Emulator.Network
                 _stream = C64NetTls.AuthenticateClient(_tcpClient, host, port, out tlsStatus);
                 ApplyStreamTimeouts(_stream, RelayControlHandshakeTimeoutMilliseconds);
                 RelayFingerprint = C64NetTls.GetTrustedServerShortFingerprint(host, port);
-                SendFrame(C64RelayFrameType.Register, 0, CreateRegisterPayload(role, connectionId));
+                SendFrame(C64RelayFrameType.Register, 0, CreateRegisterPayload(role, connectionId, relayPassword));
                 C64RelayFrame response = ReadFrame(_stream);
                 if (response == null)
                 {
@@ -727,7 +730,7 @@ namespace C64Emulator.Network
             };
         }
 
-        private static byte[] CreateRegisterPayload(C64RelayRole role, string connectionId)
+        private static byte[] CreateRegisterPayload(C64RelayRole role, string connectionId, string relayPassword)
         {
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream, Encoding.UTF8))
@@ -735,6 +738,7 @@ namespace C64Emulator.Network
                 writer.Write(ProtocolVersion);
                 writer.Write((byte)role);
                 WriteString(writer, connectionId);
+                WriteString(writer, relayPassword);
                 return stream.ToArray();
             }
         }
