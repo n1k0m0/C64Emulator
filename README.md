@@ -148,7 +148,7 @@ When the host is in a menu, connected clients receive a persistent popup such as
 
 ## Relay Server
 
-Relay Mode is optional and is meant for sessions where the host cannot expose a LAN/TCP port directly. A public relay accepts one host registration per `CONNECTION ID` and forwards matching clients to that host. A relay server can require its own relay password before it accepts host or client registrations. This relay password is separate from the C64Net session password; the relay still does not need the C64Net session password and does not decrypt the end-to-end C64 session stream.
+Relay Mode is optional and is meant for sessions where the host cannot expose a LAN/TCP port directly. A public relay accepts one host registration per `CONNECTION ID` and forwards matching clients to that host. A relay server can require its own relay password before it accepts host or client registrations. After three wrong relay passwords from the same remote IP, that IP is ignored for 30 minutes. This relay password is separate from the C64Net session password; the relay still does not need the C64Net session password and does not decrypt the end-to-end C64 session stream.
 
 The repository contains a small Python relay implementation in `relay_server/`. It listens on TLS port `6465` by default, creates or uses a self-signed relay certificate, writes normal logs, and includes Ubuntu `systemd` helper scripts:
 

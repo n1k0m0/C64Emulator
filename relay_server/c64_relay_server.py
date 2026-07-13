@@ -33,6 +33,7 @@ import os
 import ssl
 import struct
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
@@ -58,6 +59,9 @@ PONG = 8
 
 ROLE_SERVER = 1
 ROLE_CLIENT = 2
+
+RELAY_PASSWORD_FAILURE_LIMIT = 3
+RELAY_PASSWORD_BLOCK_SECONDS = 30 * 60
 
 
 @dataclass
@@ -89,10 +93,20 @@ class RelaySession:
     next_channel_id: int = 1
 
 
+@dataclass
+class RelayAuthFailure:
+    """In-memory relay-password failure state for one remote IP address."""
+
+    failures: int = 0
+    blocked_until: float = 0.0
+
+
 # Global in-memory session table. The relay is intentionally stateless; when the
 # process restarts, hosts simply reconnect and register their connection ids again.
 sessions: Dict[str, RelaySession] = {}
 sessions_lock = asyncio.Lock()
+relay_auth_failures: Dict[str, RelayAuthFailure] = {}
+relay_auth_lock = asyncio.Lock()
 logger = logging.getLogger("c64-relay-server")
 
 
@@ -152,6 +166,17 @@ def peer_name(writer: asyncio.StreamWriter) -> str:
         return "unknown"
     if isinstance(peer, tuple) and len(peer) >= 2:
         return f"{peer[0]}:{peer[1]}"
+    return str(peer)
+
+
+def peer_address(writer: asyncio.StreamWriter) -> str:
+    """Return the remote IP address used for relay-password throttling."""
+
+    peer = writer.get_extra_info("peername")
+    if peer is None:
+        return "unknown"
+    if isinstance(peer, tuple) and len(peer) >= 1:
+        return str(peer[0])
     return str(peer)
 
 
@@ -226,11 +251,82 @@ async def reject(writer: asyncio.StreamWriter, reason: str) -> None:
         await close_writer(writer)
 
 
+async def get_relay_auth_block_seconds(remote_address: str) -> int:
+    """Return remaining block time for a remote IP, or zero when it may try again."""
+
+    now = time.monotonic()
+    async with relay_auth_lock:
+        state = relay_auth_failures.get(remote_address)
+        if state is None or state.blocked_until <= 0:
+            return 0
+        if state.blocked_until <= now:
+            relay_auth_failures.pop(remote_address, None)
+            return 0
+        return int(state.blocked_until - now)
+
+
+async def record_bad_relay_password(remote_address: str, endpoint: str, role: int, connection_id: str) -> bool:
+    """Record one wrong relay password and return whether the address is now blocked."""
+
+    now = time.monotonic()
+    async with relay_auth_lock:
+        state = relay_auth_failures.get(remote_address)
+        if state is None or (state.blocked_until > 0 and state.blocked_until <= now):
+            state = RelayAuthFailure()
+            relay_auth_failures[remote_address] = state
+        if state.blocked_until > now:
+            return True
+
+        state.failures += 1
+        if state.failures >= RELAY_PASSWORD_FAILURE_LIMIT:
+            state.blocked_until = now + RELAY_PASSWORD_BLOCK_SECONDS
+            logger.warning(
+                "relay password blocked address=%s endpoint=%s role=%s id=%s attempts=%s minutes=%s",
+                remote_address,
+                endpoint,
+                role,
+                connection_id,
+                state.failures,
+                RELAY_PASSWORD_BLOCK_SECONDS // 60,
+            )
+            return True
+
+        logger.warning(
+            "bad relay password endpoint=%s role=%s id=%s attempts=%s/%s",
+            endpoint,
+            role,
+            connection_id,
+            state.failures,
+            RELAY_PASSWORD_FAILURE_LIMIT,
+        )
+        return False
+
+
+async def clear_relay_auth_failures(remote_address: str) -> None:
+    """Clear previous relay-password failures after a successful relay login."""
+
+    async with relay_auth_lock:
+        relay_auth_failures.pop(remote_address, None)
+
+
 async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, relay_password: str) -> None:
     """Handle a newly accepted TLS connection until it becomes host or client."""
 
     endpoint = peer_name(writer)
+    remote_address = peer_address(writer)
     try:
+        if relay_password:
+            blocked_seconds = await get_relay_auth_block_seconds(remote_address)
+            if blocked_seconds > 0:
+                logger.warning(
+                    "relay password ignored address=%s endpoint=%s remaining_seconds=%s",
+                    remote_address,
+                    endpoint,
+                    blocked_seconds,
+                )
+                await close_writer(writer)
+                return
+
         frame = await read_frame(reader)
         if frame is None or frame.frame_type != REGISTER:
             await reject(writer, "BAD RELAY HELLO")
@@ -241,9 +337,14 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
             await reject(writer, "RELAY PROTOCOL MISMATCH")
             return
         if relay_password and not hmac.compare_digest(relay_password, password):
-            logger.warning("bad relay password endpoint=%s role=%s id=%s", endpoint, role, connection_id)
-            await reject(writer, "RELAY PASSWORD REJECTED")
+            blocked = await record_bad_relay_password(remote_address, endpoint, role, connection_id)
+            if blocked:
+                await close_writer(writer)
+            else:
+                await reject(writer, "RELAY PASSWORD REJECTED")
             return
+        if relay_password:
+            await clear_relay_auth_failures(remote_address)
 
         # Only the first frame tells the relay whether this peer is the hosting
         # emulator or a joining client. After that, all C64Net data is opaque.

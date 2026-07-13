@@ -47,7 +47,10 @@ sudo systemctl restart c64-relay-server
 
 Set `C64_RELAY_PASSWORD=` to an empty value to leave the relay open. Set a value
 to require the same `RELAY PASSWORD` in the emulator network menu before a host
-or client can register with the relay.
+or client can register with the relay. When a relay password is configured, the
+relay tracks wrong passwords by remote IP address. After three wrong passwords,
+that IP is ignored for 30 minutes. This throttle is in-memory and is cleared when
+the relay process restarts.
 
 Useful service commands:
 
