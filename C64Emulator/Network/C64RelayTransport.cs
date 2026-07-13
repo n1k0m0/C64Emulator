@@ -50,6 +50,7 @@ namespace C64Emulator.Network
         private readonly BlockingCollection<C64RelayAcceptedClient> _acceptedClients = new BlockingCollection<C64RelayAcceptedClient>();
         private readonly List<Task> _handshakeTasks = new List<Task>();
         private readonly object _syncRoot = new object();
+        private bool _disposed;
         private C64RelayConnection _connection;
         private CancellationTokenSource _shutdown;
 
@@ -96,6 +97,11 @@ namespace C64Emulator.Network
         /// <returns>True when registration succeeded.</returns>
         public bool Start(string host, int port, string connectionId, string relayPassword, out string status)
         {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(C64RelayServerListener));
+            }
+
             Stop();
             Host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
             Port = port;
@@ -136,6 +142,11 @@ namespace C64Emulator.Network
         /// </summary>
         public void Stop()
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             CancellationTokenSource shutdown = _shutdown;
             _shutdown = null;
             if (shutdown != null)
@@ -180,7 +191,13 @@ namespace C64Emulator.Network
 
         public void Dispose()
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             Stop();
+            _disposed = true;
             _acceptedClients.Dispose();
         }
 

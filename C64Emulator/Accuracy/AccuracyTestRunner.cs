@@ -16,6 +16,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using C64Emulator.Network;
 
 namespace C64Emulator.Core
 {
@@ -130,6 +132,8 @@ namespace C64Emulator.Core
             failures += RunCase(output, "SID envelope release exponential counter", TestSidEnvelopeReleaseExponentialCounter);
             failures += RunCase(output, "SID voice 3 oscillator/test readback", TestSidVoice3OscillatorAndTestReadback);
             failures += RunCase(output, "SID functional state save/restore", TestSidFunctionalStateSaveRestore);
+            failures += RunCase(output, "Relay listener dispose is idempotent", TestRelayListenerDisposeIsIdempotent);
+            failures += RunCase(output, "Overlay font includes password mask glyph", TestOverlayFontIncludesPasswordMaskGlyph);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
@@ -2166,6 +2170,50 @@ namespace C64Emulator.Core
 
             mechanism.ApplyViaPortB(0x04 | 0x01, 0x07);
             context.Equal("reverse phase returns half-track", 34, mechanism.CurrentHalfTrack);
+        }
+
+        private static void TestRelayListenerDisposeIsIdempotent(AccuracyContext context)
+        {
+            var listener = new C64RelayServerListener();
+            listener.Dispose();
+
+            // StartRelay can dispose a failed listener before its catch block
+            // runs cleanup. A second Dispose must not mask the original error.
+            listener.Dispose();
+            context.True("second dispose completed without throwing", true);
+        }
+
+        private static void TestOverlayFontIncludesPasswordMaskGlyph(AccuracyContext context)
+        {
+            FieldInfo field = typeof(global::C64Emulator.C64Window).GetField("OverlayFont", BindingFlags.NonPublic | BindingFlags.Static);
+            context.True("overlay font field exists", field != null);
+            if (field == null)
+            {
+                return;
+            }
+
+            var font = field.GetValue(null) as IDictionary<char, byte[]>;
+            context.True("overlay font can be read", font != null);
+            if (font == null)
+            {
+                return;
+            }
+
+            byte[] glyph;
+            bool hasVisibleGlyph = false;
+            if (font.TryGetValue('*', out glyph) && glyph != null)
+            {
+                for (int index = 0; index < glyph.Length; index++)
+                {
+                    if (glyph[index] != 0)
+                    {
+                        hasVisibleGlyph = true;
+                        break;
+                    }
+                }
+            }
+
+            context.True("asterisk glyph is visible", hasVisibleGlyph);
         }
     }
 }
