@@ -137,6 +137,7 @@ namespace C64Emulator.Core
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
             failures += RunCase(output, "1541 custom handoff primes serial VIA outputs", TestDriveCustomHandoffPrimesSerialViaOutputs);
+            failures += RunCase(output, "1541 DOTC final loader table matches VICE handoff", TestDriveDotcFinalLoaderTableMatchesViceHandoff);
             failures += RunCase(output, "1541 serial VIA inputs ignore own direct outputs", TestDriveSerialViaInputsIgnoreOwnDirectOutputs);
             failures += RunCase(output, "1541 execute-buffer job enters ROM IRQ path", TestDriveExecuteBufferJobEntersRomIrqPath);
             failures += RunCase(output, "1541 disk mount primes ROM disk context", TestDriveMountPrimesRomDiskContext);
@@ -2089,6 +2090,57 @@ namespace C64Emulator.Core
             context.True("serial VIA DATA/CLOCK outputs are primed", debug.Contains("ddrb=0A"));
             context.True("serial VIA CA1 interrupt is enabled", debug.Contains("ier=02"));
             context.True("handoff keeps external IEC lines released", debug.Contains("dataOut=False") && debug.Contains("clockOut=False"));
+        }
+
+        private static void TestDriveDotcFinalLoaderTableMatchesViceHandoff(AccuracyContext context)
+        {
+            var bus = new IecBus();
+            var driveBus = new Drive1541Bus(bus.CreatePort("Drive8-HW"), 8);
+            MethodInfo method = typeof(Drive1541Bus).GetMethod(
+                "ApplyCustomLoaderTableCompatibility",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            context.True("DOTC compatibility method exists", method != null);
+            if (method == null)
+            {
+                return;
+            }
+
+            const ushort offsetBase = 0x0407;
+            const ushort sectorBase = 0x045A;
+            const ushort trackBase = 0x04AD;
+
+            void Write(ushort baseAddress, int index, byte value)
+            {
+                driveBus.WriteRam((ushort)(baseAddress + index), value);
+            }
+
+            byte Read(ushort baseAddress, int index)
+            {
+                return driveBus.ReadRam((ushort)(baseAddress + index));
+            }
+
+            Write(trackBase, 0x00, 0x11);
+            Write(sectorBase, 0x00, 0x00);
+            Write(trackBase, 0x25, 0x10);
+            Write(sectorBase, 0x25, 0x0E);
+            Write(trackBase, 0x28, 0x10);
+            Write(sectorBase, 0x28, 0x09);
+
+            method.Invoke(driveBus, new object[] { (ushort)0x07A0 });
+
+            context.Equal("DOTC entry 00 offset", (byte)0x00, Read(offsetBase, 0x00));
+            context.Equal("DOTC entry 00 track", (byte)0x11, Read(trackBase, 0x00));
+            context.Equal("DOTC entry 00 sector", (byte)0x0A, Read(sectorBase, 0x00));
+            context.Equal("DOTC final request offset", (byte)0x7B, Read(offsetBase, 0x28));
+            context.Equal("DOTC final request track", (byte)0x04, Read(trackBase, 0x28));
+            context.Equal("DOTC final request sector", (byte)0x05, Read(sectorBase, 0x28));
+            context.Equal("DOTC final boundary offset", (byte)0x4F, Read(offsetBase, 0x29));
+            context.Equal("DOTC final boundary track", (byte)0x02, Read(trackBase, 0x29));
+            context.Equal("DOTC final boundary sector", (byte)0x14, Read(sectorBase, 0x29));
+            context.Equal("DOTC final reference tail offset", (byte)0x12, Read(offsetBase, 0x34));
+            context.Equal("DOTC final reference tail track", (byte)0x1C, Read(trackBase, 0x34));
+            context.Equal("DOTC final reference tail sector", (byte)0x06, Read(sectorBase, 0x34));
+            context.Equal("DOTC unused entries are cleared", (byte)0x00, Read(trackBase, 0x35));
         }
 
         private static void TestDriveSerialViaInputsIgnoreOwnDirectOutputs(AccuracyContext context)

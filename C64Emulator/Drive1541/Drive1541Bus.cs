@@ -42,10 +42,6 @@ namespace C64Emulator.Core
         private const int DosBlockIndexHighBase = 0x00AD;
         private const int DosBlockIndexEntryCount = DosBlockIndexHighBase - DosBlockIndexLowBase;
         private const int DotcFinalLoaderEntryAddress = 0x07A0;
-        private const int DotcFinalLoaderTableBias = 6;
-        private const int DotcFinalLoaderBoundaryIndex = 0x29;
-        private const byte DotcFinalLoaderBoundaryTrack = 0x10;
-        private const byte DotcFinalLoaderBoundarySector = 0x14;
         private const int RawLoaderSectorTableBase = 0x045A;
         private const int RawLoaderTrackTableBase = 0x04AD;
         private const int RawLoaderOffsetTableBase = 0x0407;
@@ -56,6 +52,33 @@ namespace C64Emulator.Core
         private const byte DosHeaderBlockId = 0x08;
         private const byte DiskViaPortBOutputMask = 0x6F;
         private const byte DiskViaPortBMotorAndDensity = 0x64;
+        private static readonly byte[] DotcFinalLoaderReferenceOffsets =
+        {
+            0x00, 0xF2, 0xE3, 0xDB, 0xD2, 0xCF, 0xD6, 0xDE, 0xDF, 0xF4, 0xD3, 0xB2,
+            0xA5, 0x75, 0x4C, 0xF9, 0x1E, 0x03, 0x12, 0x06, 0xEB, 0xC8, 0xB6, 0x06,
+            0x22, 0x68, 0x7E, 0x94, 0x88, 0x3F, 0x12, 0xDA, 0xE9, 0xEF, 0x01, 0x5D,
+            0xAB, 0xC9, 0xA0, 0x04, 0x7B, 0x4F, 0x0D, 0x3D, 0xD4, 0xD9, 0x06, 0x9A,
+            0x60, 0x81, 0x2A, 0xAD, 0x12
+        };
+
+        private static readonly byte[] DotcFinalLoaderReferenceSectors =
+        {
+            0x0A, 0x0A, 0x14, 0x08, 0x12, 0x06, 0x10, 0x04, 0x0E, 0x02, 0x0C, 0x01,
+            0x0B, 0x03, 0x0D, 0x0D, 0x0B, 0x00, 0x0A, 0x14, 0x14, 0x08, 0x06, 0x0E,
+            0x04, 0x0E, 0x0C, 0x09, 0x05, 0x03, 0x0B, 0x11, 0x0A, 0x01, 0x14, 0x0E,
+            0x09, 0x0C, 0x0C, 0x07, 0x05, 0x14, 0x14, 0x07, 0x08, 0x08, 0x09, 0x12,
+            0x0E, 0x03, 0x07, 0x03, 0x06
+        };
+
+        private static readonly byte[] DotcFinalLoaderReferenceTracks =
+        {
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+            0x11, 0x11, 0x11, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+            0x0F, 0x0F, 0x0F, 0x0F, 0x0E, 0x0E, 0x0E, 0x0D, 0x0D, 0x0C, 0x0B, 0x0A,
+            0x09, 0x08, 0x07, 0x05, 0x04, 0x02, 0x01, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x19, 0x1A, 0x1B, 0x1C, 0x1C
+        };
+
         private readonly IecBusPort _iecPort;
         private readonly byte _deviceSelectorBits;
         private bool _piAtn;
@@ -747,30 +770,26 @@ namespace C64Emulator.Core
                 return;
             }
 
-            var offsets = new byte[DosBlockIndexEntryCount];
-            var sectors = new byte[DosBlockIndexEntryCount];
-            var tracks = new byte[DosBlockIndexEntryCount];
+            // The software IEC shortcut services DOTC's M-W/M-E sequence
+            // without the earlier 1541-side table builder that VICE executes.
+            // Recreate that resident table exactly so the final decruncher
+            // reads the expected sector slices instead of whole sectors.
             for (int index = 0; index < DosBlockIndexEntryCount; index++)
             {
-                offsets[index] = _ram[(RawLoaderOffsetTableBase + index) & DriveRamMask];
-                sectors[index] = _ram[(RawLoaderSectorTableBase + index) & DriveRamMask];
-                tracks[index] = _ram[(RawLoaderTrackTableBase + index) & DriveRamMask];
-            }
+                byte offset = index < DotcFinalLoaderReferenceOffsets.Length
+                    ? DotcFinalLoaderReferenceOffsets[index]
+                    : (byte)0x00;
+                byte sector = index < DotcFinalLoaderReferenceSectors.Length
+                    ? DotcFinalLoaderReferenceSectors[index]
+                    : (byte)0x00;
+                byte track = index < DotcFinalLoaderReferenceTracks.Length
+                    ? DotcFinalLoaderReferenceTracks[index]
+                    : (byte)0x00;
 
-            for (int index = 0; index < DosBlockIndexEntryCount; index++)
-            {
-                int sourceIndex = Math.Max(0, index - DotcFinalLoaderTableBias);
-                _ram[(RawLoaderOffsetTableBase + index) & DriveRamMask] = offsets[sourceIndex];
-                _ram[(RawLoaderSectorTableBase + index) & DriveRamMask] = sectors[sourceIndex];
-                _ram[(RawLoaderTrackTableBase + index) & DriveRamMask] = tracks[sourceIndex];
+                _ram[(RawLoaderOffsetTableBase + index) & DriveRamMask] = offset;
+                _ram[(RawLoaderSectorTableBase + index) & DriveRamMask] = sector;
+                _ram[(RawLoaderTrackTableBase + index) & DriveRamMask] = track;
             }
-
-            // DOTC's final stream skips two linked sectors after 16/16 and
-            // ends this request at 16/20; the table boundary controls when
-            // the uploaded drive loop returns to the C64-side decruncher.
-            _ram[(RawLoaderOffsetTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = 0x00;
-            _ram[(RawLoaderSectorTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = DotcFinalLoaderBoundarySector;
-            _ram[(RawLoaderTrackTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = DotcFinalLoaderBoundaryTrack;
         }
 
         /// <summary>
