@@ -26,6 +26,7 @@ namespace C64Emulator.Core
         private const int DefaultHalfTrack = 34;
         private const int SubCyclesPerCpuCycle = 16;
         private const int ByteReadyPulseCycles = 2;
+        private const int TrackRevolutionDriveCycles = 200000;
         private const int DiskSwapCyclesDiskEjecting = 400000;
         private const int DiskSwapCyclesNoDisk = 200000;
         private const int DiskSwapCyclesDiskInserting = 400000;
@@ -48,6 +49,7 @@ namespace C64Emulator.Core
         private int _trackBitCount;
         private int _trackByteCycles;
         private int _cyclesForBit;
+        private int _trackByteCycleAccumulator;
         private int _ue7Counter;
         private int _uf4Counter;
         private int _ue3Counter;
@@ -79,6 +81,74 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Positions the emulated head on a logical track without stepping the VIA lines.
+        /// </summary>
+        public void SeekToTrack(int track)
+        {
+            if (track <= 0)
+            {
+                return;
+            }
+
+            int nextHalfTrack = (Math.Min(track, 42) - 1) * 2;
+            if (nextHalfTrack == _currentHalfTrack)
+            {
+                return;
+            }
+
+            _currentHalfTrack = nextHalfTrack;
+            ReloadTrackStream(true);
+        }
+
+        /// <summary>
+        /// Positions the raw GCR stream at the beginning of a sector record.
+        /// </summary>
+        public void SeekToSectorStart(int track, int sector, int leadBytes = 0)
+        {
+            SeekToTrack(track);
+            if (_diskImage == null ||
+                _trackBytes.Length == 0 ||
+                !_diskImage.TryGetSectorStreamStartOffset(track, sector, out int byteOffset))
+            {
+                return;
+            }
+
+            byteOffset -= leadBytes;
+            byteOffset %= _trackBytes.Length;
+            if (byteOffset < 0)
+            {
+                byteOffset += _trackBytes.Length;
+            }
+
+            _trackBitIndex = byteOffset * 8;
+            ResetReadPipeline();
+        }
+
+        /// <summary>
+        /// Positions the raw GCR stream at the beginning of the sector physically following the given sector.
+        /// </summary>
+        public void SeekToNextSectorStart(int track, int sector, int leadBytes = 0)
+        {
+            SeekToTrack(track);
+            if (_diskImage == null ||
+                _trackBytes.Length == 0 ||
+                !_diskImage.TryGetNextSectorStreamStartOffset(track, sector, out int byteOffset))
+            {
+                return;
+            }
+
+            byteOffset -= leadBytes;
+            byteOffset %= _trackBytes.Length;
+            if (byteOffset < 0)
+            {
+                byteOffset += _trackBytes.Length;
+            }
+
+            _trackBitIndex = byteOffset * 8;
+            ResetReadPipeline();
+        }
+
+        /// <summary>
         /// Resets the component to its power-on or idle state.
         /// </summary>
         public void Reset()
@@ -99,6 +169,7 @@ namespace C64Emulator.Core
             _trackBitCount = 0;
             _trackByteCycles = 32;
             _cyclesForBit = 0;
+            _trackByteCycleAccumulator = 0;
             _ue7Counter = GetClockSelPreload();
             _uf4Counter = 0;
             _ue3Counter = 0;
@@ -142,6 +213,7 @@ namespace C64Emulator.Core
         public void LoadState(BinaryReader reader, D64Image diskImage)
         {
             _diskImage = diskImage;
+            _trackByteCycleAccumulator = 0;
             StateSerializer.ReadObjectFields(reader, this, "_diskImage");
         }
 
@@ -256,7 +328,6 @@ namespace C64Emulator.Core
             }
 
             _writeMode = IsWriteModeActive(diskVia);
-            bool byteReadyEnabled = IsByteReadyEnabled(diskVia);
 
             // D64 images are already stored as logical sector data. D64Image
             // expands that data into a GCR byte stream, not into raw magnetic
@@ -273,7 +344,7 @@ namespace C64Emulator.Core
             }
 
             _cyclesForBit -= byteCycles;
-            AdvanceGcrByte(diskVia, byteReadyEnabled);
+            AdvanceGcrByte(diskVia);
         }
 
         /// <summary>
@@ -317,7 +388,7 @@ namespace C64Emulator.Core
         /// <summary>
         /// Advances the encoder decoder state by one emulated tick.
         /// </summary>
-        private void TickEncoderDecoder(DriveVia6522 diskVia, bool byteReadyEnabled)
+        private void TickEncoderDecoder(DriveVia6522 diskVia)
         {
             _ue7Counter++;
             if (_ue7Counter < 0x10)
@@ -374,11 +445,7 @@ namespace C64Emulator.Core
                 _currentReadByte = (byte)(_readShiftRegister & 0xFF);
             }
 
-            if (byteReadyEnabled)
-            {
-                _byteReadyPulseCycles = ByteReadyPulseCycles;
-                _soPulseCycles = ByteReadyPulseCycles;
-            }
+            PulseByteReady();
         }
 
         /// <summary>
@@ -416,7 +483,7 @@ namespace C64Emulator.Core
         /// <summary>
         /// Handles the advance gcr byte operation.
         /// </summary>
-        private void AdvanceGcrByte(DriveVia6522 diskVia, bool byteReadyEnabled)
+        private void AdvanceGcrByte(DriveVia6522 diskVia)
         {
             if (_trackBytes.Length == 0)
             {
@@ -432,7 +499,7 @@ namespace C64Emulator.Core
                 _trackBitIndex = 0;
             }
 
-            if (!_writeMode && value == 0xFF)
+            if (!_writeMode && value == 0xFF && IsSyncRunByte(byteIndex))
             {
                 _syncActive = true;
                 return;
@@ -446,11 +513,40 @@ namespace C64Emulator.Core
             }
 
             _currentReadByte = value;
-            if (byteReadyEnabled)
+            PulseByteReady();
+        }
+
+        /// <summary>
+        /// Returns whether the current GCR byte belongs to a synthesized SYNC run.
+        /// </summary>
+        private bool IsSyncRunByte(int byteIndex)
+        {
+            if (_trackBytes.Length <= 1)
             {
-                _byteReadyPulseCycles = ByteReadyPulseCycles;
-                _soPulseCycles = ByteReadyPulseCycles;
+                return false;
             }
+
+            int previous = byteIndex == 0 ? _trackBytes.Length - 1 : byteIndex - 1;
+            int next = byteIndex + 1;
+            if (next >= _trackBytes.Length)
+            {
+                next = 0;
+            }
+
+            // A real 1541 sees SYNC after a run of one bits. D64-derived
+            // tracks synthesize that as multiple 0xFF bytes, while encoded
+            // data may still contain an isolated 0xFF byte. Do not swallow
+            // those data bytes as fake SYNC.
+            return _trackBytes[previous] == 0xFF || _trackBytes[next] == 0xFF;
+        }
+
+        /// <summary>
+        /// Pulses the disk byte-ready line and CPU SO input for the freshly latched GCR byte.
+        /// </summary>
+        private void PulseByteReady()
+        {
+            _byteReadyPulseCycles = ByteReadyPulseCycles;
+            _soPulseCycles = ByteReadyPulseCycles;
         }
 
         /// <summary>
@@ -502,14 +598,20 @@ namespace C64Emulator.Core
             }
 
             _currentHalfTrack = nextHalfTrack;
-            ReloadTrackStream();
+            ReloadTrackStream(true);
         }
 
         /// <summary>
         /// Handles the reload track stream operation.
         /// </summary>
-        private void ReloadTrackStream()
+        private void ReloadTrackStream(bool preserveRotationPhase = false)
         {
+            int previousBitIndex = _trackBitIndex;
+            int previousBitCount = _trackBitCount;
+            int previousCyclesForBit = _cyclesForBit;
+            int previousTrackByteCycles = _trackByteCycles;
+            int previousTrackByteCycleAccumulator = _trackByteCycleAccumulator;
+
             _trackBytes = Array.Empty<byte>();
             _trackBitIndex = 0;
             _trackBitCount = 0;
@@ -519,6 +621,7 @@ namespace C64Emulator.Core
             _byteReadyPulseCycles = 0;
             _soPulseCycles = 0;
             _cyclesForBit = 0;
+            _trackByteCycleAccumulator = 0;
             _ue7Counter = GetClockSelPreload();
             _uf4Counter = 0;
             _ue3Counter = 0;
@@ -536,21 +639,46 @@ namespace C64Emulator.Core
             {
                 _trackBytes = trackBytes;
                 _trackBitCount = trackBytes.Length * 8;
+                if (preserveRotationPhase && previousBitCount > 0 && _trackBitCount > 0)
+                {
+                    _trackBitIndex = (int)(((long)previousBitIndex * _trackBitCount) / previousBitCount) % _trackBitCount;
+                }
+
                 // A 1541 rotates at about 300 RPM, i.e. one revolution per
                 // 200 ms. At the C64/1541 ~1 MHz clock this gives roughly
                 // 197k cycles per track revolution on PAL machines. Cache the
                 // byte-ready cadence because this path runs once per drive
                 // cycle while fastloaders spin the motor.
                 _trackByteCycles = Math.Max(1, 197050 / trackBytes.Length);
+                if (preserveRotationPhase && previousTrackByteCycles > 0)
+                {
+                    _cyclesForBit = Math.Min(
+                        _trackByteCycles - 1,
+                        (int)(((long)previousCyclesForBit * _trackByteCycles) / previousTrackByteCycles));
+                    _trackByteCycleAccumulator = Math.Max(0, Math.Min(
+                        TrackRevolutionDriveCycles - 1,
+                        previousTrackByteCycleAccumulator));
+                }
             }
         }
 
         /// <summary>
-        /// Returns whether byte ready enabled is true.
+        /// Clears latched disk-read signals after an explicit stream reposition.
         /// </summary>
-        private static bool IsByteReadyEnabled(DriveVia6522 diskVia)
+        private void ResetReadPipeline()
         {
-            return (diskVia.PeripheralControlRegister & 0x02) != 0;
+            _currentReadByte = 0x00;
+            _syncActive = false;
+            _byteReadyPulseCycles = 0;
+            _soPulseCycles = 0;
+            _cyclesForBit = 0;
+            _trackByteCycleAccumulator = 0;
+            _ue7Counter = GetClockSelPreload();
+            _uf4Counter = 0;
+            _ue3Counter = 0;
+            _readShiftRegister = 0;
+            _writeShiftRegister = 0;
+            _currentDiskBit = false;
         }
 
         /// <summary>

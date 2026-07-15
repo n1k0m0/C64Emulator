@@ -136,6 +136,18 @@ namespace C64Emulator.Core
             failures += RunCase(output, "Overlay font includes password mask glyph", TestOverlayFontIncludesPasswordMaskGlyph);
             failures += RunCase(output, "1541 transport mode toggles", TestDriveTransportToggle);
             failures += RunCase(output, "1541 accuracy scheduler runs drive CPU continuously", TestDriveAccuracySchedulerRunsContinuously);
+            failures += RunCase(output, "1541 custom handoff primes serial VIA outputs", TestDriveCustomHandoffPrimesSerialViaOutputs);
+            failures += RunCase(output, "1541 serial VIA inputs ignore own direct outputs", TestDriveSerialViaInputsIgnoreOwnDirectOutputs);
+            failures += RunCase(output, "1541 execute-buffer job enters ROM IRQ path", TestDriveExecuteBufferJobEntersRomIrqPath);
+            failures += RunCase(output, "1541 disk mount primes ROM disk context", TestDriveMountPrimesRomDiskContext);
+            failures += RunCase(output, "1541 DOS job primes ROM disk context", TestDriveDosJobPrimesRomDiskContext);
+            failures += RunCase(output, "1541 sequential load primes ROM disk context", TestDriveSequentialLoadPrimesRomDiskContext);
+            failures += RunCase(output, "1541 IEC chunk load primes ROM disk context", TestDriveChunkLoadPrimesRomDiskContext);
+            failures += RunCase(output, "1541 final sequential load advances ROM disk context", TestDriveFinalSequentialLoadAdvancesRomDiskContext);
+            failures += RunCase(output, "1541 DOS context syncs GCR head position", TestDriveDosContextSyncsGcrHeadPosition);
+            failures += RunCase(output, "1541 head changes preserve disk rotation phase", TestDriveHeadChangesPreserveDiskRotationPhase);
+            failures += RunCase(output, "D64 GCR tracks use synthetic track skew", TestD64GcrTracksUseSyntheticTrackSkew);
+            failures += RunCase(output, "1541 disk byte-ready is not PCR gated", TestDriveDiskByteReadyIsNotPcrGated);
             failures += RunCase(output, "1541 disk swap preserves custom drive code", TestDriveDiskSwapPreservesCustomCode);
             failures += RunCase(output, "1541 disk set auto-opens companion side", TestDriveDiskSetAutoOpensCompanionSide);
             failures += RunCase(output, "1541 stepper moves only while motor is on", TestDriveStepperMovesOnlyWhileMotorOn);
@@ -1289,6 +1301,44 @@ namespace C64Emulator.Core
             return value;
         }
 
+        private static int GetPrivateInt(object target, string fieldName)
+        {
+            var field = target.GetType().GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field == null)
+            {
+                throw new InvalidOperationException("Missing private field " + fieldName + ".");
+            }
+
+            object value = field.GetValue(target);
+            if (!(value is int))
+            {
+                throw new InvalidOperationException("Private field " + fieldName + " is not an int.");
+            }
+
+            return (int)value;
+        }
+
+        private static int GetDriveMechanismBitIndex(IecDrive1541 drive)
+        {
+            var field = typeof(Drive1541Bus).GetField(
+                "_mechanism",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field == null)
+            {
+                throw new InvalidOperationException("Missing drive mechanism field.");
+            }
+
+            var mechanism = field.GetValue(drive.Hardware.Bus) as Drive1541Mechanism;
+            if (mechanism == null)
+            {
+                throw new InvalidOperationException("Drive mechanism field has an unexpected value.");
+            }
+
+            return GetPrivateInt(mechanism, "_trackBitIndex");
+        }
+
         private static void TestCiaTimerATiming(AccuracyContext context)
         {
             var cia = new Cia1();
@@ -2026,6 +2076,499 @@ namespace C64Emulator.Core
             }
         }
 
+        private static void TestDriveCustomHandoffPrimesSerialViaOutputs(AccuracyContext context)
+        {
+            var bus = new IecBus();
+            var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+
+            drive.Hardware.UploadMemory(0x0500, new byte[] { 0xEA, 0xEA, 0xEA });
+            drive.Hardware.ExecuteAt(0x0500);
+
+            string debug = drive.GetDebugInfo();
+            context.True("custom code active", drive.HasCustomCodeActive);
+            context.True("serial VIA DATA/CLOCK outputs are primed", debug.Contains("ddrb=0A"));
+            context.True("serial VIA CA1 interrupt is enabled", debug.Contains("ier=02"));
+            context.True("handoff keeps external IEC lines released", debug.Contains("dataOut=False") && debug.Contains("clockOut=False"));
+        }
+
+        private static void TestDriveSerialViaInputsIgnoreOwnDirectOutputs(AccuracyContext context)
+        {
+            var bus = new IecBus();
+            IecBusPort c64Port = bus.CreatePort("C64");
+            var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+
+            drive.Hardware.ExecuteAt(0x0500);
+            drive.Hardware.WriteMemory(0x1800, 0x08);
+
+            byte driveOnlyRead = drive.Hardware.ReadMemory(0x1800);
+            context.True("own clock output pulls bus low", drive.GetDebugInfo().Contains("clockOut=True"));
+            context.Equal("own clock is not reflected into PB2", (byte)0x00, (byte)(driveOnlyRead & 0x04));
+
+            c64Port.SetLineLow(IecBusLine.Clock, true);
+            byte externalClockRead = drive.Hardware.ReadMemory(0x1800);
+            context.Equal("external clock low reaches PB2", (byte)0x04, (byte)(externalClockRead & 0x04));
+
+            drive.Hardware.WriteMemory(0x1800, 0x02);
+            byte driveDataOnlyRead = drive.Hardware.ReadMemory(0x1800);
+            context.Equal("own data is not reflected into PB0", (byte)0x00, (byte)(driveDataOnlyRead & 0x01));
+
+            c64Port.SetLineLow(IecBusLine.Data, true);
+            byte externalDataRead = drive.Hardware.ReadMemory(0x1800);
+            context.Equal("external data low reaches PB0", (byte)0x01, (byte)(externalDataRead & 0x01));
+        }
+
+        private static void TestDriveExecuteBufferJobEntersRomIrqPath(AccuracyContext context)
+        {
+            var bus = new IecBus();
+            var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+            var rom = new byte[0x4000];
+
+            WriteDriveRom(rom, 0xF2B0, 0xBA, 0x86, 0x49, 0x4C, 0x00, 0x05);
+            WriteDriveRom(rom, 0xFD9E, 0xA9, 0x01, 0x85, 0x02, 0xA6, 0x49, 0x9A, 0x60);
+            WriteDriveRom(rom, 0xFE7F, 0x68, 0xA8, 0x68, 0xAA, 0x68, 0x40);
+            drive.Hardware.Bus.LoadRom(rom);
+
+            drive.Hardware.UploadMemory(0x0500, new byte[]
+            {
+                0xA5, 0x33,       // LDA $33
+                0x85, 0x11,       // STA $11
+                0xA9, 0x42,       // LDA #$42
+                0x85, 0x10,       // STA $10
+                0x4C, 0x9E, 0xFD  // JMP $FD9E
+            });
+            drive.Hardware.UploadMemory(0x0600, new byte[]
+            {
+                0xEA,             // NOP
+                0x4C, 0x00, 0x06  // JMP $0600
+            });
+            drive.Hardware.ExecuteAt(0x0600);
+            drive.Hardware.Cpu.SR = 0x20;
+            drive.Hardware.WriteMemory(0x0033, 0x02);
+            drive.Hardware.WriteMemory(0x0002, 0xE0);
+
+            for (int tick = 0; tick < 500 &&
+                (drive.Hardware.ReadMemory(0x0010) != 0x42 || drive.Hardware.ReadMemory(0x0002) != 0x01);
+                tick++)
+            {
+                drive.Hardware.Tick();
+            }
+
+            context.Equal("execute buffer marker", (byte)0x42, drive.Hardware.ReadMemory(0x0010));
+            context.Equal("execute buffer pointer high byte", (byte)0x00, drive.Hardware.ReadMemory(0x0011));
+            context.Equal("execute buffer job status", (byte)0x01, drive.Hardware.ReadMemory(0x0002));
+            context.True("custom code remains active after IRQ return", drive.HasCustomCodeActive);
+        }
+
+        private static void WriteDriveRom(byte[] rom, ushort address, params byte[] bytes)
+        {
+            int offset = address & 0x3FFF;
+            Array.Copy(bytes, 0, rom, offset, bytes.Length);
+        }
+
+        private static void TestDriveMountPrimesRomDiskContext(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-mount-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+                SetD64DiskIdForTest(tempPath, 0x4B, 0x50);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.Hardware.MountDisk(D64Image.Load(tempPath));
+
+                context.Equal("ROM header id", (byte)0x08, drive.Hardware.ReadMemory(0x0039));
+                context.Equal("slot 2 disk id low", (byte)0x4B, drive.Hardware.ReadMemory(0x0016));
+                context.Equal("slot 2 disk id high", (byte)0x50, drive.Hardware.ReadMemory(0x0017));
+                context.Equal("current track", (byte)0x12, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("current sector", (byte)0x00, drive.Hardware.ReadMemory(0x0019));
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveDosJobPrimesRomDiskContext(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-dos-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+                SetD64DiskIdForTest(tempPath, 0x4B, 0x50);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.Hardware.MountDisk(D64Image.Load(tempPath));
+
+                drive.Hardware.WriteMemory(0x000A, 0x01);
+                drive.Hardware.WriteMemory(0x000B, 0x00);
+                drive.Hardware.WriteMemory(0x0002, 0x80);
+
+                for (int tick = 0; tick < 20 && drive.Hardware.ReadMemory(0x0002) == 0x80; tick++)
+                {
+                    drive.Hardware.Bus.Tick();
+                }
+
+                context.Equal("read job status", (byte)0x01, drive.Hardware.ReadMemory(0x0002));
+                context.Equal("ROM header id", (byte)0x08, drive.Hardware.ReadMemory(0x0039));
+                context.Equal("slot 2 disk id low", (byte)0x4B, drive.Hardware.ReadMemory(0x0016));
+                context.Equal("slot 2 disk id high", (byte)0x50, drive.Hardware.ReadMemory(0x0017));
+                context.Equal("current track", (byte)0x01, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("current sector", (byte)0x00, drive.Hardware.ReadMemory(0x0019));
+
+                drive.Hardware.WriteMemory(0x0002, 0xE0);
+                drive.Hardware.Bus.Tick();
+                context.Equal("execute current-track reference is normalized", (byte)0x01, drive.Hardware.ReadMemory(0x000A));
+                context.Equal("execute current-sector reference is normalized", (byte)0x00, drive.Hardware.ReadMemory(0x000B));
+                context.Equal("execute preserves current track", (byte)0x01, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("execute preserves current sector", (byte)0x00, drive.Hardware.ReadMemory(0x0019));
+                context.True("execute job is queued for the ROM path", drive.Hardware.Bus.HasPendingExecuteBufferJob);
+                context.True(
+                    "execute job can be consumed by the ROM path",
+                    drive.Hardware.Bus.TryConsumePendingExecuteBufferJob(out int executeSlot, out byte executeJob));
+                context.Equal("execute job slot", 2, executeSlot);
+                context.Equal("execute job code", (byte)0xE0, executeJob);
+
+                drive.Hardware.WriteMemory(0x001A, 0x0E);
+                drive.Hardware.Bus.Tick();
+                context.Equal("active execute job does not clobber ROM checksum scratch", (byte)0x0E, drive.Hardware.ReadMemory(0x001A));
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveSequentialLoadPrimesRomDiskContext(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-seq-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, "E5", new byte[] { 0x01, 0x08, 0xAA });
+                SetD64DiskIdForTest(tempPath, 0x4B, 0x50);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.MountDisk(D64Image.Load(tempPath));
+
+                IecDrive1541.CommandResult openResult = drive.OpenKernalChannel(0, "E5");
+                context.Equal("open status", (byte)0x00, openResult.Status);
+                context.True("first byte read", drive.TryReadKernalChannelByte(0, out byte value, out bool endOfInformation));
+                context.Equal("first file byte", (byte)0x01, value);
+                context.True("not finished after first byte", !endOfInformation);
+
+                context.Equal("ROM header id", (byte)0x08, drive.Hardware.ReadMemory(0x0039));
+                context.Equal("slot 2 disk id low", (byte)0x4B, drive.Hardware.ReadMemory(0x0016));
+                context.Equal("slot 2 disk id high", (byte)0x50, drive.Hardware.ReadMemory(0x0017));
+                context.Equal("current track", (byte)0x01, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("current sector", (byte)0x00, drive.Hardware.ReadMemory(0x0019));
+
+                D64Image image = D64Image.Load(tempPath);
+                context.True(
+                    "next physical sector has stream offset",
+                    image.TryGetNextSectorStreamStartOffset(1, 0, out int nextSectorOffset));
+                context.Equal("raw GCR head moves past shortcut sector", nextSectorOffset * 8, GetDriveMechanismBitIndex(drive));
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveChunkLoadPrimesRomDiskContext(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-chunk-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, "E5", new byte[] { 0x01, 0x08, 0xAA });
+                SetD64DiskIdForTest(tempPath, 0x4B, 0x50);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.MountDisk(D64Image.Load(tempPath));
+
+                IecDrive1541.CommandResult openResult = drive.OpenKernalChannel(0, "E5");
+                context.Equal("open status", (byte)0x00, openResult.Status);
+
+                MethodInfo method = typeof(IecDrive1541).GetMethod(
+                    "TryResolveTalkChunk",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (method == null)
+                {
+                    throw new InvalidOperationException("Missing TryResolveTalkChunk.");
+                }
+
+                object[] parameters = new object[] { (byte)0, 1, null, false };
+                bool resolved = (bool)method.Invoke(drive, parameters);
+                byte[] talkData = parameters[2] as byte[];
+                bool isFinalChunk = (bool)parameters[3];
+
+                context.True("chunk resolved", resolved);
+                context.True("chunk contains one byte", talkData != null && talkData.Length == 1);
+                context.Equal("first chunk byte", (byte)0x01, talkData == null || talkData.Length == 0 ? (byte)0x00 : talkData[0]);
+                context.True("not final after first byte", !isFinalChunk);
+
+                context.Equal("ROM header id", (byte)0x08, drive.Hardware.ReadMemory(0x0039));
+                context.Equal("slot 2 disk id low", (byte)0x4B, drive.Hardware.ReadMemory(0x0016));
+                context.Equal("slot 2 disk id high", (byte)0x50, drive.Hardware.ReadMemory(0x0017));
+                context.Equal("current track", (byte)0x01, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("current sector", (byte)0x00, drive.Hardware.ReadMemory(0x0019));
+
+                D64Image image = D64Image.Load(tempPath);
+                context.True(
+                    "next physical sector has stream offset",
+                    image.TryGetNextSectorStreamStartOffset(1, 0, out int nextSectorOffset));
+                context.Equal("raw GCR head moves past shortcut chunk sector", nextSectorOffset * 8, GetDriveMechanismBitIndex(drive));
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveFinalSequentialLoadAdvancesRomDiskContext(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-final-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                byte[] diskBytes = new byte[174848];
+                int firstSectorOffset = GetD64SectorOffsetForTest(1, 10);
+                diskBytes[firstSectorOffset] = 0x01;
+                diskBytes[firstSectorOffset + 1] = 0x02;
+                for (int index = 0; index < 254; index++)
+                {
+                    diskBytes[firstSectorOffset + 2 + index] = 0xAA;
+                }
+
+                int finalSectorOffset = GetD64SectorOffsetForTest(1, 2);
+                diskBytes[finalSectorOffset] = 0x00;
+                diskBytes[finalSectorOffset + 1] = 0x02;
+                diskBytes[finalSectorOffset + 2] = 0xBB;
+
+                int directorySectorOffset = GetD64SectorOffsetForTest(18, 1);
+                diskBytes[directorySectorOffset + 2] = 0x82;
+                diskBytes[directorySectorOffset + 3] = 1;
+                diskBytes[directorySectorOffset + 4] = 10;
+                for (int index = 0; index < 16; index++)
+                {
+                    diskBytes[directorySectorOffset + 5 + index] = 0xA0;
+                }
+
+                byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes("E5");
+                Array.Copy(nameBytes, 0, diskBytes, directorySectorOffset + 5, nameBytes.Length);
+                diskBytes[directorySectorOffset + 30] = 2;
+                File.WriteAllBytes(tempPath, diskBytes);
+                SetD64DiskIdForTest(tempPath, 0x4B, 0x50);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.MountDisk(D64Image.Load(tempPath));
+
+                IecDrive1541.CommandResult openResult = drive.OpenKernalChannel(0, "E5");
+                context.Equal("open status", (byte)0x00, openResult.Status);
+
+                int readCount = 0;
+                bool endOfInformation = false;
+                byte value = 0x00;
+                while (!endOfInformation && drive.TryReadKernalChannelByte(0, out value, out endOfInformation))
+                {
+                    readCount++;
+                }
+
+                context.Equal("all chained file bytes read", 255, readCount);
+                context.Equal("final chained byte", (byte)0xBB, value);
+                context.True("final byte reports EOI", endOfInformation);
+
+                D64Image image = D64Image.Load(tempPath);
+                context.True(
+                    "physical successor after previous sector resolves",
+                    image.TryGetNextPhysicalSector(1, 10, out int nextSector));
+                context.Equal("physical successor after sector 10", 20, nextSector);
+                context.Equal("current track follows physical successor", (byte)0x01, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("current sector follows physical successor", (byte)0x14, drive.Hardware.ReadMemory(0x0019));
+                context.True(
+                    "raw stream points past physical successor",
+                    image.TryGetNextSectorStreamStartOffset(1, 20, out int streamOffset));
+                context.Equal("head is past physical successor", streamOffset * 8, GetDriveMechanismBitIndex(drive));
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveDosContextSyncsGcrHeadPosition(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-head-context-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+
+                var bus = new IecBus();
+                var drive = new IecDrive1541(8, bus.CreatePort("Drive8"), bus.CreatePort("Drive8-HW"));
+                drive.Hardware.MountDisk(D64Image.Load(tempPath));
+
+                context.Equal("mount head defaults to directory track", 34, drive.Hardware.Bus.CurrentHalfTrack);
+
+                drive.Hardware.WriteMemory(0x000A, 0x22);
+                drive.Hardware.WriteMemory(0x000B, 0x00);
+                drive.Hardware.WriteMemory(0x0002, 0xE0);
+                drive.Hardware.Bus.Tick();
+
+                context.True("execute job is queued", drive.Hardware.Bus.HasPendingExecuteBufferJob);
+                context.Equal("execute job preserves DOS current track", (byte)0x12, drive.Hardware.ReadMemory(0x0018));
+                context.Equal("execute job moves raw GCR head to track 34", 66, drive.Hardware.Bus.CurrentHalfTrack);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestDriveHeadChangesPreserveDiskRotationPhase(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-head-phase-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+                var mechanism = new Drive1541Mechanism();
+                var diskVia = new DriveVia6522();
+
+                diskVia.Reset();
+                mechanism.MountDisk(D64Image.Load(tempPath));
+                mechanism.ApplyViaPortB(0x64, 0xE4);
+
+                for (int cycle = 0; cycle < 1000; cycle++)
+                {
+                    mechanism.Tick(diskVia);
+                }
+
+                int bitIndexBeforeSeek = GetPrivateInt(mechanism, "_trackBitIndex");
+                int bitCountBeforeSeek = GetPrivateInt(mechanism, "_trackBitCount");
+                context.True("rotation advanced before head change", bitIndexBeforeSeek > 0);
+
+                mechanism.SeekToTrack(34);
+                int bitIndexAfterSeek = GetPrivateInt(mechanism, "_trackBitIndex");
+                int bitCountAfterSeek = GetPrivateInt(mechanism, "_trackBitCount");
+                int expectedSeekPhase = (int)(((long)bitIndexBeforeSeek * bitCountAfterSeek) / bitCountBeforeSeek) % bitCountAfterSeek;
+                context.Equal("logical seek scales bit phase", expectedSeekPhase, bitIndexAfterSeek);
+                context.Equal("logical seek moves head", 66, mechanism.CurrentHalfTrack);
+
+                mechanism.ApplyViaPortB(0x65, 0xE7);
+                context.Equal("stepper preserves same-track bit phase", bitIndexAfterSeek, GetPrivateInt(mechanism, "_trackBitIndex"));
+                context.Equal("stepper moves half-track", 67, mechanism.CurrentHalfTrack);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static void TestD64GcrTracksUseSyntheticTrackSkew(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-gcr-skew-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+                D64Image image = D64Image.Load(tempPath);
+
+                context.True("track 1 stream exists", image.TryGetTrackStream(0, out byte[] track1));
+                context.True("track 2 stream exists", image.TryGetTrackStream(2, out byte[] track2));
+                int firstSyncTrack1 = FindGcrSyncRun(track1);
+                int firstSyncTrack2 = FindGcrSyncRun(track2);
+
+                context.True("track 1 sync is not byte-aligned to zero", firstSyncTrack1 > 0);
+                context.True("track 2 sync is not byte-aligned to zero", firstSyncTrack2 > 0);
+                context.True("neighbor tracks have different angular alignment", firstSyncTrack1 != firstSyncTrack2);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
+        private static int FindGcrSyncRun(byte[] trackBytes)
+        {
+            if (trackBytes == null)
+            {
+                return -1;
+            }
+
+            for (int offset = 0; offset <= trackBytes.Length - 5; offset++)
+            {
+                if (trackBytes[offset] == 0xFF &&
+                    trackBytes[offset + 1] == 0xFF &&
+                    trackBytes[offset + 2] == 0xFF &&
+                    trackBytes[offset + 3] == 0xFF &&
+                    trackBytes[offset + 4] == 0xFF)
+                {
+                    return offset;
+                }
+            }
+
+            return -1;
+        }
+
+        private static void TestDriveDiskByteReadyIsNotPcrGated(AccuracyContext context)
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-byte-ready-" + Guid.NewGuid().ToString("N") + ".d64");
+            try
+            {
+                WriteMinimalD64(tempPath, null, null);
+                var mechanism = new Drive1541Mechanism();
+                var diskVia = new DriveVia6522();
+
+                diskVia.Reset();
+                diskVia.Write(0x0C, 0x00);
+                mechanism.MountDisk(D64Image.Load(tempPath));
+                mechanism.ApplyViaPortB(0x64, 0xE4);
+
+                int soPulses = 0;
+                for (int cycle = 0; cycle < 1000; cycle++)
+                {
+                    mechanism.Tick(diskVia);
+                    if (mechanism.ConsumeSoPulse())
+                    {
+                        soPulses++;
+                    }
+                }
+
+                context.True("SO pulses are produced with PCR $00", soPulses > 0);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+        }
+
         private static void TestDriveDiskSwapPreservesCustomCode(AccuracyContext context)
         {
             string tempPath = Path.Combine(Path.GetTempPath(), "c64emulator-empty-" + Guid.NewGuid().ToString("N") + ".d64");
@@ -2118,6 +2661,15 @@ namespace C64Emulator.Core
                 diskBytes[directorySectorOffset + 30] = 1;
             }
 
+            File.WriteAllBytes(path, diskBytes);
+        }
+
+        private static void SetD64DiskIdForTest(string path, byte diskId1, byte diskId2)
+        {
+            byte[] diskBytes = File.ReadAllBytes(path);
+            int bamOffset = GetD64SectorOffsetForTest(18, 0);
+            diskBytes[bamOffset + 0xA2] = diskId1;
+            diskBytes[bamOffset + 0xA3] = diskId2;
             File.WriteAllBytes(path, diskBytes);
         }
 

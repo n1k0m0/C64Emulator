@@ -91,6 +91,16 @@ namespace C64Emulator.Core
         public System.Action BeforeIecPortAccess { get; set; }
 
         /// <summary>
+        /// Gets or sets the callback invoked before CIA IEC port reads.
+        /// </summary>
+        public System.Action BeforeIecPortRead { get; set; }
+
+        /// <summary>
+        /// Gets or sets the predicate that decides whether IEC reads need drive catch-up.
+        /// </summary>
+        public System.Func<bool> ShouldCatchUpIecPortRead { get; set; }
+
+        /// <summary>
         /// Initializes a new Cia2 instance.
         /// </summary>
         public Cia2()
@@ -1174,7 +1184,7 @@ namespace C64Emulator.Core
         /// </summary>
         private byte ReadPortA()
         {
-            return ReadPortA(true);
+            return ReadPortA(ShouldCatchUpIecPortRead != null && ShouldCatchUpIecPortRead());
         }
 
         /// <summary>
@@ -1184,7 +1194,18 @@ namespace C64Emulator.Core
         {
             if (catchUpIec && _iecBusPort != null)
             {
-                BeforeIecPortAccess?.Invoke();
+                // Bit-banged fast loaders sample IEC lines on CIA reads. Use
+                // the read-specific catch-up path when available so scheduler
+                // boundary cases do not expose a drive-side line transition
+                // before the C64's bus read has completed.
+                if (BeforeIecPortRead != null)
+                {
+                    BeforeIecPortRead();
+                }
+                else
+                {
+                    BeforeIecPortAccess?.Invoke();
+                }
             }
 
             byte value = ReadLocalPortA();
@@ -1224,6 +1245,8 @@ namespace C64Emulator.Core
 
             if (catchUpIec)
             {
+                // Finish drive-side IEC work that belongs to the previous
+                // visible line level before this CIA write changes the bus.
                 BeforeIecPortAccess?.Invoke();
             }
 

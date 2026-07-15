@@ -28,6 +28,34 @@ namespace C64Emulator.Core
         private readonly DriveVia6522 _serialVia = new DriveVia6522();
         private readonly DriveVia6522 _diskVia = new DriveVia6522();
         private readonly Drive1541Mechanism _mechanism = new Drive1541Mechanism();
+        private const int DriveRamMask = 0x07FF;
+        private const int NoDosJobSlot = -1;
+        private const int DosJobSlotCount = 6;
+        private const int DosJobTrackSectorBase = 0x0006;
+        private const int DosJobBufferBase = 0x0300;
+        private const int DosJobBufferSize = 0x0100;
+        private const int DosDiskIdBase = 0x0012;
+        private const int DosCurrentTrackAddress = 0x0018;
+        private const int DosCurrentSectorAddress = 0x0019;
+        private const int DosHeaderBlockIdAddress = 0x0039;
+        private const int DosBlockIndexLowBase = 0x005A;
+        private const int DosBlockIndexHighBase = 0x00AD;
+        private const int DosBlockIndexEntryCount = DosBlockIndexHighBase - DosBlockIndexLowBase;
+        private const int DotcFinalLoaderEntryAddress = 0x07A0;
+        private const int DotcFinalLoaderTableBias = 6;
+        private const int DotcFinalLoaderBoundaryIndex = 0x29;
+        private const byte DotcFinalLoaderBoundaryTrack = 0x10;
+        private const byte DotcFinalLoaderBoundarySector = 0x14;
+        private const int RawLoaderSectorTableBase = 0x045A;
+        private const int RawLoaderTrackTableBase = 0x04AD;
+        private const int RawLoaderOffsetTableBase = 0x0407;
+        private const int DosTrackSectorPointerHighAddress = 0x0033;
+        private const int DosBamWorkspaceStart = 0x029D;
+        private const int DosBamWorkspaceEnd = 0x02B0;
+        private const int DosCurrentSectorSearchLeadBytes = 32;
+        private const byte DosHeaderBlockId = 0x08;
+        private const byte DiskViaPortBOutputMask = 0x6F;
+        private const byte DiskViaPortBMotorAndDensity = 0x64;
         private readonly IecBusPort _iecPort;
         private readonly byte _deviceSelectorBits;
         private bool _piAtn;
@@ -43,6 +71,9 @@ namespace C64Emulator.Core
         private bool _upperRomLoaded;
         private bool _serialOutputsEnabled;
         private bool _deferSerialOutputsUntilPortWrite;
+        private bool _customSerialOrbZeroReleasesAtna;
+        private bool _alignDosCurrentSectorWritesToGcr;
+        private bool _dotcInterBlockClockRelease;
 #pragma warning disable CS0414
         // Legacy savestates from the GEOS loader repair pass contain this field.
         // It is no longer used by the drive bus, but keeping it preserves loadability.
@@ -52,6 +83,10 @@ namespace C64Emulator.Core
         private string _lastGeosVectorRepairDebug = "-";
 #pragma warning restore CS0414
         private string _lastJobQueueDebug = "-";
+        private int _pendingExecuteBufferJobSlot = NoDosJobSlot;
+        private byte _pendingExecuteBufferJobCode;
+        private int _activeExecuteBufferJobSlot = NoDosJobSlot;
+        private byte _activeExecuteBufferJobCode;
 
         /// <summary>
         /// Initializes a new Drive1541Bus instance.
@@ -125,7 +160,14 @@ namespace C64Emulator.Core
         {
             if (address < 0x1800)
             {
-                _ram[address & 0x07FF] = value;
+                int ramAddress = address & DriveRamMask;
+                _ram[ramAddress] = value;
+                if (_alignDosCurrentSectorWritesToGcr &&
+                    (ramAddress == DosCurrentTrackAddress || ramAddress == DosCurrentSectorAddress))
+                {
+                    AlignGcrStreamToDosCurrentSector();
+                }
+
                 return;
             }
 
@@ -161,10 +203,17 @@ namespace C64Emulator.Core
             _atnaDataSetToOut = false;
             _serialOutputsEnabled = false;
             _deferSerialOutputsUntilPortWrite = false;
+            _customSerialOrbZeroReleasesAtna = false;
+            _alignDosCurrentSectorWritesToGcr = false;
+            _dotcInterBlockClockRelease = false;
             _geosSecondStageVectorReadRepairArmed = false;
             _suppressGeosRomSerialPortWrites = false;
             _lastGeosVectorRepairDebug = "-";
             _lastJobQueueDebug = "-";
+            _pendingExecuteBufferJobSlot = NoDosJobSlot;
+            _pendingExecuteBufferJobCode = 0;
+            _activeExecuteBufferJobSlot = NoDosJobSlot;
+            _activeExecuteBufferJobCode = 0;
             UpdateSerialInputs();
         }
 
@@ -174,6 +223,15 @@ namespace C64Emulator.Core
         public void MountDisk(D64Image image)
         {
             _mechanism.MountDisk(image);
+            if (image != null &&
+                _ram[DosCurrentTrackAddress] == 0x00 &&
+                _ram[DosCurrentSectorAddress] == 0x00)
+            {
+                // The high-level IEC transport can mount a disk without
+                // running the full 1541 DOS init path. Seed the ROM context
+                // that raw-disk loaders inherit after the first M-E handoff.
+                PrimeDosDiskContext(18, 0, true, false);
+            }
         }
 
         /// <summary>
@@ -182,6 +240,7 @@ namespace C64Emulator.Core
         public void EjectDisk()
         {
             _mechanism.EjectDisk();
+            _alignDosCurrentSectorWritesToGcr = false;
         }
 
         /// <summary>
@@ -225,6 +284,84 @@ namespace C64Emulator.Core
         public byte ReadRam(ushort address)
         {
             return address < 0x1800 ? _ram[address & 0x07FF] : (byte)0x00;
+        }
+
+        /// <summary>
+        /// Primes DOS zero-page state after the software IEC path read a disk sector.
+        /// </summary>
+        public void PrimeDosDiskContextForSector(int track, int sector)
+        {
+            if (track <= 0 || sector < 0)
+            {
+                return;
+            }
+
+            PrimeDosDiskContextAfterShortcutSectorJob(track, sector);
+        }
+
+        /// <summary>
+        /// Primes DOS zero-page state after the software IEC path opened a PRG file.
+        /// </summary>
+        public void PrimeDosFileOpenContext(int track, int sector, int blocks)
+        {
+            if (track <= 0 || sector < 0)
+            {
+                return;
+            }
+
+            PrimeDosDiskContext(track, sector, true, false);
+            PrimeDosBlockIndexWorkspace(blocks);
+            _alignDosCurrentSectorWritesToGcr = true;
+        }
+
+        /// <summary>
+        /// Returns whether an uploaded DOS buffer execution job is waiting for the drive CPU.
+        /// </summary>
+        public bool HasPendingExecuteBufferJob
+        {
+            get { return _pendingExecuteBufferJobSlot != NoDosJobSlot; }
+        }
+
+        /// <summary>
+        /// Consumes a pending DOS buffer execution job.
+        /// </summary>
+        public bool TryConsumePendingExecuteBufferJob(out int slot, out byte job)
+        {
+            slot = _pendingExecuteBufferJobSlot;
+            job = _pendingExecuteBufferJobCode;
+            if (slot == NoDosJobSlot)
+            {
+                return false;
+            }
+
+            PrimeExecuteBufferJobZeroPage();
+            _activeExecuteBufferJobSlot = slot;
+            _activeExecuteBufferJobCode = job;
+            _pendingExecuteBufferJobSlot = NoDosJobSlot;
+            _pendingExecuteBufferJobCode = 0;
+            _lastJobQueueDebug = string.Format("#{0}:{1:X2}:EXEC-RUN", slot, job);
+            return true;
+        }
+
+        /// <summary>
+        /// Completes a queued DOS buffer execution job without running ROM code.
+        /// </summary>
+        public void CompletePendingExecuteBufferJob(bool ok)
+        {
+            int slot = _pendingExecuteBufferJobSlot != NoDosJobSlot
+                ? _pendingExecuteBufferJobSlot
+                : _activeExecuteBufferJobSlot;
+            if (slot == NoDosJobSlot)
+            {
+                return;
+            }
+
+            _ram[slot & DriveRamMask] = ok ? (byte)0x01 : (byte)0x02;
+            _lastJobQueueDebug = string.Format("#{0}:EXEC:{1}", slot, ok ? "OK" : "ERR");
+            _pendingExecuteBufferJobSlot = NoDosJobSlot;
+            _pendingExecuteBufferJobCode = 0;
+            _activeExecuteBufferJobSlot = NoDosJobSlot;
+            _activeExecuteBufferJobCode = 0;
         }
 
         /// <summary>
@@ -425,6 +562,25 @@ namespace C64Emulator.Core
             get { return _iecPort.IsOwnerDrivingLineLow("C64", IecBusLine.Clock); }
         }
 
+        /// <summary>
+        /// Gets or sets whether DOTC's final loader wait loop must keep CLOCK released.
+        /// </summary>
+        public bool DotcInterBlockClockRelease
+        {
+            get { return _dotcInterBlockClockRelease; }
+            set
+            {
+                if (_dotcInterBlockClockRelease == value)
+                {
+                    return;
+                }
+
+                _dotcInterBlockClockRelease = value;
+                ApplySerialOutputs();
+                UpdateObservedClockLine();
+            }
+        }
+
         public bool HasManiacMansionLoaderStub
         {
             get
@@ -453,6 +609,7 @@ namespace C64Emulator.Core
                 _deferSerialOutputsUntilPortWrite = false;
                 if (!_serialOutputsEnabled)
                 {
+                    _customSerialOrbZeroReleasesAtna = false;
                     _iecPort.SetLineLow(IecBusLine.Data, false);
                     _iecPort.SetLineLow(IecBusLine.Clock, false);
                     RefreshSerialLineLevels(true);
@@ -467,10 +624,21 @@ namespace C64Emulator.Core
         /// <summary>
         /// Handles the prepare for custom code start operation.
         /// </summary>
-        public void PrepareForCustomCodeStart()
+        public void PrepareForCustomCodeStart(ushort entryAddress)
         {
+            PrimeDosWorkspaceSelfPatchBytes(entryAddress);
+            PrimeSerialViaForCustomLoaderHandoff();
+            PrimeDiskViaForCustomLoaderHandoff();
+            ApplyCustomLoaderTableCompatibility(entryAddress);
             _serialOutputsEnabled = false;
             _deferSerialOutputsUntilPortWrite = true;
+            _customSerialOrbZeroReleasesAtna = true;
+            // After a shortcut IEC read, the raw stream is already positioned
+            // as if the consumed sector had spun past the head. Uploaded drive
+            // code must then observe normal disk rotation; repeatedly snapping
+            // the head back to ROM's $18/$19 current-sector pair makes raw
+            // scanners see the same sector over and over.
+            _alignDosCurrentSectorWritesToGcr = false;
             // Keep the serial VIA state intact when custom drive code takes
             // over. Fast loaders upload their own code on top of the already
             // initialised DOS/ROM environment and expect timer/PCR/DDR state
@@ -487,6 +655,12 @@ namespace C64Emulator.Core
             // serial routine.
             RefreshSerialLineLevels(false);
             _serialVia.SetCa1LevelSilently(_piAtn);
+            // The software IEC path can leave a stale CA1 interrupt pending
+            // from the just-finished command phase. Keep the CA1 interrupt
+            // enable intact for loaders that wait for new serial edges, but
+            // acknowledge the old edge so a CLI in uploaded code does not jump
+            // into the ROM IRQ handler before the loader's first instruction.
+            _serialVia.Write(0x0D, 0x02);
             // Keep the current VIA interrupt enables and timer setup intact.
             // Uploaded fastloaders are installed on top of the already running
             // DOS environment and often rely on the serial VIA continuing to
@@ -495,6 +669,162 @@ namespace C64Emulator.Core
             // its handshake state byte was only advanced from the IRQ side.
             // The custom code is responsible for masking or acknowledging
             // interrupts explicitly if it wants a different serial state.
+        }
+
+        /// <summary>
+        /// Restores DOS workspace bytes that self-patching raw-disk loaders copy back into their code.
+        /// </summary>
+        private void PrimeDosWorkspaceSelfPatchBytes(ushort entryAddress)
+        {
+            if (entryAddress >= 0x1800)
+            {
+                return;
+            }
+
+            int start = entryAddress & DriveRamMask;
+            int end = Math.Min(DriveRamMask - 11, start + 0x80);
+            for (int offset = start; offset <= end; offset++)
+            {
+                if (_ram[offset] != 0xAD ||
+                    _ram[offset + 3] != 0x8D ||
+                    _ram[offset + 6] != 0xAD ||
+                    _ram[offset + 9] != 0x8D)
+                {
+                    continue;
+                }
+
+                int source1 = _ram[offset + 1] | (_ram[offset + 2] << 8);
+                int target1 = _ram[offset + 4] | (_ram[offset + 5] << 8);
+                int source2 = _ram[offset + 7] | (_ram[offset + 8] << 8);
+                int target2 = _ram[offset + 10] | (_ram[offset + 11] << 8);
+                if (source2 != source1 + 1 ||
+                    source1 < DosBamWorkspaceStart ||
+                    source2 > DosBamWorkspaceEnd ||
+                    !IsDriveRamAddress(target1) ||
+                    !IsDriveRamAddress(target2))
+                {
+                    continue;
+                }
+
+                int sourceIndex1 = source1 & DriveRamMask;
+                int sourceIndex2 = source2 & DriveRamMask;
+                if (_ram[sourceIndex1] != 0x00 || _ram[sourceIndex2] != 0x00)
+                {
+                    continue;
+                }
+
+                byte targetValue1 = _ram[target1 & DriveRamMask];
+                byte targetValue2 = _ram[target2 & DriveRamMask];
+                if (targetValue1 == 0x00 && targetValue2 == 0x00)
+                {
+                    continue;
+                }
+
+                // The high-level IEC command path bypasses parts of 1541 DOS
+                // RAM setup. Some disk loaders copy operands from the DOS/BAM
+                // workspace into already uploaded code; mirroring the target
+                // bytes prevents zero-filled workspace from corrupting them.
+                _ram[sourceIndex1] = targetValue1;
+                _ram[sourceIndex2] = targetValue2;
+            }
+        }
+
+        /// <summary>
+        /// Returns whether an address maps to 1541 RAM.
+        /// </summary>
+        private static bool IsDriveRamAddress(int address)
+        {
+            return address >= 0x0000 && address < 0x1800;
+        }
+
+        /// <summary>
+        /// Applies narrow compatibility fixes for uploaded raw-disk loader tables.
+        /// </summary>
+        private void ApplyCustomLoaderTableCompatibility(ushort entryAddress)
+        {
+            if (entryAddress != DotcFinalLoaderEntryAddress || !IsDotcFinalLoaderTableUnbiased())
+            {
+                return;
+            }
+
+            var offsets = new byte[DosBlockIndexEntryCount];
+            var sectors = new byte[DosBlockIndexEntryCount];
+            var tracks = new byte[DosBlockIndexEntryCount];
+            for (int index = 0; index < DosBlockIndexEntryCount; index++)
+            {
+                offsets[index] = _ram[(RawLoaderOffsetTableBase + index) & DriveRamMask];
+                sectors[index] = _ram[(RawLoaderSectorTableBase + index) & DriveRamMask];
+                tracks[index] = _ram[(RawLoaderTrackTableBase + index) & DriveRamMask];
+            }
+
+            for (int index = 0; index < DosBlockIndexEntryCount; index++)
+            {
+                int sourceIndex = Math.Max(0, index - DotcFinalLoaderTableBias);
+                _ram[(RawLoaderOffsetTableBase + index) & DriveRamMask] = offsets[sourceIndex];
+                _ram[(RawLoaderSectorTableBase + index) & DriveRamMask] = sectors[sourceIndex];
+                _ram[(RawLoaderTrackTableBase + index) & DriveRamMask] = tracks[sourceIndex];
+            }
+
+            // DOTC's final stream skips two linked sectors after 16/16 and
+            // ends this request at 16/20; the table boundary controls when
+            // the uploaded drive loop returns to the C64-side decruncher.
+            _ram[(RawLoaderOffsetTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = 0x00;
+            _ram[(RawLoaderSectorTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = DotcFinalLoaderBoundarySector;
+            _ram[(RawLoaderTrackTableBase + DotcFinalLoaderBoundaryIndex) & DriveRamMask] = DotcFinalLoaderBoundaryTrack;
+        }
+
+        /// <summary>
+        /// Returns whether the resident table matches Defender of the Crown's final loader handoff.
+        /// </summary>
+        private bool IsDotcFinalLoaderTableUnbiased()
+        {
+            return
+                _ram[(RawLoaderTrackTableBase + 0x00) & DriveRamMask] == 0x11 &&
+                _ram[(RawLoaderSectorTableBase + 0x00) & DriveRamMask] == 0x00 &&
+                _ram[(RawLoaderTrackTableBase + 0x25) & DriveRamMask] == 0x10 &&
+                _ram[(RawLoaderSectorTableBase + 0x25) & DriveRamMask] == 0x0E &&
+                _ram[(RawLoaderTrackTableBase + 0x28) & DriveRamMask] == 0x10 &&
+                _ram[(RawLoaderSectorTableBase + 0x28) & DriveRamMask] == 0x09;
+        }
+
+        /// <summary>
+        /// Primes the serial VIA when the software IEC transport hands over to uploaded drive code.
+        /// </summary>
+        private void PrimeSerialViaForCustomLoaderHandoff()
+        {
+            if (_serialVia.PortBDirection != 0x00)
+            {
+                return;
+            }
+
+            // The high-level IEC transport services M-W/M-E without executing
+            // the real 1541 ROM serial command path. Uploaded fastloaders then
+            // inherit a reset-like VIA1 state even though on hardware the ROM
+            // has just used PB1/PB3 as DATA/CLOCK outputs and left CA1 IRQs
+            // live for the serial handshake. Seed those bits so loaders that
+            // immediately bit-bang $1800 can drive the bus and still receive
+            // the IRQ edge they wait for after CLI.
+            _serialVia.Write(0x02, 0x0A);
+            _serialVia.Write(0x0E, 0x82);
+        }
+
+        /// <summary>
+        /// Primes the disk VIA state expected by uploaded raw-disk fast loaders.
+        /// </summary>
+        private void PrimeDiskViaForCustomLoaderHandoff()
+        {
+            if (_diskVia.PortBDirection != 0x00)
+            {
+                return;
+            }
+
+            // The software IEC path can accept M-W/M-E without running enough
+            // 1541 ROM disk code to leave VIA2 in its normal post-DOS state.
+            // Raw-disk loaders such as Defender of the Crown then only toggle
+            // ORB bits and expect motor/density outputs to already be enabled.
+            _diskVia.Write(0x02, DiskViaPortBOutputMask);
+            _diskVia.Write(0x03, 0x00);
+            _diskVia.Write(0x00, (byte)(_diskVia.PortBOutput | DiskViaPortBMotorAndDensity));
         }
 
         /// <summary>
@@ -531,7 +861,11 @@ namespace C64Emulator.Core
                 value |= 0x08;
             }
 
-            if ((ddrb & 0x10) == 0)
+            bool suppressAtnaPullup = _customSerialOrbZeroReleasesAtna &&
+                orb == 0 &&
+                (ddrb & 0x10) == 0;
+
+            if ((ddrb & 0x10) == 0 && !suppressAtnaPullup)
             {
                 value |= 0x10;
             }
@@ -687,7 +1021,7 @@ namespace C64Emulator.Core
             }
 
             _iecPort.SetLines(
-                clockLow: _clockSetToOut,
+                clockLow: _clockSetToOut && !_dotcInterBlockClockRelease,
                 dataLow: _dataSetToOut || _atnaDataSetToOut);
         }
 
@@ -696,12 +1030,13 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateObservedDataLine()
         {
-            // Match Pi1541/VICE readback behavior: once the drive is actively
-            // pulling DATA low (either directly or through the ATN/ATNA XOR
-            // path), PB0 reads back as logically asserted/high.
-            _piData = (_atnaDataSetToOut || _dataSetToOut)
+            // PB0 is the external IEC DATA input. Direct PB1 DATA output must
+            // still pull the bus low, but it must not be mirrored back as an
+            // external talker response; DOTC-style two-wire loaders wait for
+            // the C64 side to release DATA while the drive holds CLOCK.
+            _piData = _atnaDataSetToOut
                 ? true
-                : _iecPort.IsLineLow(IecBusLine.Data);
+                : _iecPort.IsLineLowExcludingOwner(IecBusLine.Data);
         }
 
         /// <summary>
@@ -709,11 +1044,10 @@ namespace C64Emulator.Core
         /// </summary>
         private void UpdateObservedClockLine()
         {
-            // Likewise, a drive that is currently pulling CLOCK low sees the
-            // corresponding VIA input bit asserted/high on readback.
-            _piClock = _clockSetToOut
-                ? true
-                : _iecPort.IsLineLow(IecBusLine.Clock);
+            // PB2 observes external IEC CLOCK. Do not feed PB3 CLOCK output
+            // back into PB2, otherwise fastloader acknowledge loops can
+            // deadlock with the C64 waiting for the drive to release CLOCK.
+            _piClock = _iecPort.IsLineLowExcludingOwner(IecBusLine.Clock);
         }
 
         /// <summary>
@@ -765,48 +1099,94 @@ namespace C64Emulator.Core
         /// </summary>
         private void ServiceDosJobQueue()
         {
+            RefreshExecuteBufferJobState();
+
             // The 1541 DOS job queue is used by many uploaded drive-side
-            // fastloaders. Buffer/job slot 4 maps to job byte $0004,
-            // track/sector bytes $000E/$000F and buffer $0700-$07FF.
-            byte job = _ram[0x0004];
-            if ((job & 0x80) == 0)
+            // fastloaders. Jobs live at $00-$05, each slot has a paired
+            // track/sector entry at $06/$07, $08/$09... and maps to buffers
+            // $0300-$0800. Earlier this helper only serviced slot 4, which
+            // left loaders that use the lower DOS buffers waiting forever.
+            for (int slot = DosJobSlotCount - 1; slot >= 0; slot--)
             {
-                return;
+                byte job = _ram[slot];
+                if ((job & 0x80) == 0)
+                {
+                    continue;
+                }
+
+                int trackSectorOffset = DosJobTrackSectorBase + (slot * 2);
+                int bufferOffset = DosJobBufferBase + (slot * DosJobBufferSize);
+                int command = job & 0xF0;
+                int track = _ram[trackSectorOffset];
+                int sector = _ram[trackSectorOffset + 1];
+                bool handled = true;
+                bool ok = false;
+
+                switch (command)
+                {
+                    case 0xD0:
+                    case 0xE0:
+                        if (IsExecuteBufferJobTracked(slot, job))
+                        {
+                            continue;
+                        }
+
+                        ResolveExecuteJobCurrentSectorReference(ref track, ref sector, trackSectorOffset);
+                        PrimeDosDiskContext(track, sector, false, false);
+                        QueueExecuteBufferJob(slot, job, track, sector);
+                        return;
+
+                    case 0x80: // READ
+                        ok = TryReadJobSector(track, sector, bufferOffset);
+                        if (ok)
+                        {
+                            PrimeDosDiskContextAfterShortcutSectorJob(track, sector);
+                        }
+
+                        break;
+
+                    case 0x90: // WRITE
+                        ok = TryWriteJobSector(track, sector, bufferOffset);
+                        if (ok)
+                        {
+                            PrimeDosDiskContextAfterShortcutSectorJob(track, sector);
+                        }
+
+                        break;
+
+                    case 0xA0: // VERIFY
+                    case 0xB0: // SEEK
+                        ok = _mechanism.TryReadSector(track, sector, out _);
+                        if (ok)
+                        {
+                            PrimeDosDiskContextAfterShortcutSectorJob(track, sector);
+                        }
+
+                        break;
+
+                    case 0xC0: // BUMP/RESTORE class jobs complete without a data buffer.
+                        ok = true;
+                        break;
+
+                    default:
+                        handled = false;
+                        break;
+                }
+
+                if (!handled)
+                {
+                    continue;
+                }
+
+                _ram[slot] = ok ? (byte)0x01 : (byte)0x02;
+                _lastJobQueueDebug = string.Format("#{0}:{1:X2}@{2}/{3}:{4}", slot, job, track, sector, ok ? "OK" : "ERR");
             }
-
-            int command = job & 0xF0;
-            int track = _ram[0x000E];
-            int sector = _ram[0x000F];
-            bool ok = false;
-
-            switch (command)
-            {
-                case 0x80: // READ
-                    ok = TryReadJobSector(track, sector);
-                    break;
-
-                case 0x90: // WRITE
-                    ok = TryWriteJobSector(track, sector);
-                    break;
-
-                case 0xA0: // VERIFY
-                case 0xB0: // SEEK
-                    ok = _mechanism.TryReadSector(track, sector, out _);
-                    break;
-
-                case 0xC0: // BUMP/RESTORE class jobs complete without a data buffer.
-                    ok = true;
-                    break;
-            }
-
-            _ram[0x0004] = ok ? (byte)0x01 : (byte)0x02;
-            _lastJobQueueDebug = string.Format("{0:X2}@{1}/{2}:{3}", job, track, sector, ok ? "OK" : "ERR");
         }
 
         /// <summary>
         /// Attempts to read job sector and reports whether it succeeded.
         /// </summary>
-        private bool TryReadJobSector(int track, int sector)
+        private bool TryReadJobSector(int track, int sector, int bufferOffset)
         {
             byte[] sectorBytes;
             if (!_mechanism.TryReadSector(track, sector, out sectorBytes) || sectorBytes == null || sectorBytes.Length < 256)
@@ -814,18 +1194,241 @@ namespace C64Emulator.Core
                 return false;
             }
 
-            Array.Copy(sectorBytes, 0, _ram, 0x0700, 256);
+            CopySectorToRam(sectorBytes, bufferOffset);
             return true;
         }
 
         /// <summary>
         /// Attempts to write job sector and reports whether it succeeded.
         /// </summary>
-        private bool TryWriteJobSector(int track, int sector)
+        private bool TryWriteJobSector(int track, int sector, int bufferOffset)
         {
             var sectorBytes = new byte[256];
-            Array.Copy(_ram, 0x0700, sectorBytes, 0, 256);
+            CopyRamToSector(bufferOffset, sectorBytes);
             return _mechanism.TryWriteSector(track, sector, sectorBytes);
+        }
+
+        /// <summary>
+        /// Queues a DOS buffer execution job for the 1541 CPU/ROM path.
+        /// </summary>
+        private void QueueExecuteBufferJob(int slot, byte job, int track, int sector)
+        {
+            if ((job & 0x01) != 0)
+            {
+                _ram[slot & DriveRamMask] = 0x0F;
+                _lastJobQueueDebug = string.Format("#{0}:{1:X2}@{2}/{3}:DRV", slot, job, track, sector);
+                return;
+            }
+
+            if (IsExecuteBufferJobTracked(slot, job))
+            {
+                return;
+            }
+
+            _pendingExecuteBufferJobSlot = slot;
+            _pendingExecuteBufferJobCode = job;
+            _lastJobQueueDebug = string.Format("#{0}:{1:X2}@{2}/{3}:EXEC", slot, job, track, sector);
+        }
+
+        /// <summary>
+        /// Returns whether the DOS buffer execute job is already owned by the CPU/ROM path.
+        /// </summary>
+        private bool IsExecuteBufferJobTracked(int slot, byte job)
+        {
+            return (_pendingExecuteBufferJobSlot == slot && _pendingExecuteBufferJobCode == job) ||
+                (_activeExecuteBufferJobSlot == slot && _activeExecuteBufferJobCode == job);
+        }
+
+        /// <summary>
+        /// Maps an invalid $00/$00 execute-job pointer to the current ROM disk context.
+        /// </summary>
+        private void ResolveExecuteJobCurrentSectorReference(ref int track, ref int sector, int trackSectorOffset)
+        {
+            if (track != 0 || sector != 0 || _ram[DosCurrentTrackAddress] == 0x00)
+            {
+                return;
+            }
+
+            // Track 0 does not exist on a 1541 disk. Some fast loaders use an
+            // execute job with $00/$00 as "continue from DOS current sector",
+            // then call ROM helpers that copy the job pair into $18/$19.
+            // Normalize the pair before the ROM path sees it so those helpers
+            // inherit the mounted/previous sector instead of searching track 0.
+            track = _ram[DosCurrentTrackAddress];
+            sector = _ram[DosCurrentSectorAddress];
+            _ram[trackSectorOffset & DriveRamMask] = (byte)track;
+            _ram[(trackSectorOffset + 1) & DriveRamMask] = (byte)sector;
+        }
+
+        /// <summary>
+        /// Restores DOS zero-page state assumed by the ROM buffer execution path.
+        /// </summary>
+        private void PrimeExecuteBufferJobZeroPage()
+        {
+            // The ROM job loop writes the low byte of the track/sector pointer
+            // to $32, but it relies on $33 staying zero from DOS init. Uploaded
+            // loaders can use $33 as scratch before queuing $D0/$E0; reset it
+            // at the handoff so ROM helpers such as $F50A read the intended
+            // job track/sector pair instead of a stray page.
+            _ram[DosTrackSectorPointerHighAddress] = 0x00;
+        }
+
+        /// <summary>
+        /// Primes DOS disk context after a host-side shortcut sector job.
+        /// </summary>
+        private void PrimeDosDiskContextAfterShortcutSectorJob(int track, int sector)
+        {
+            PrimeDosDiskContext(track, sector, true, true);
+            _alignDosCurrentSectorWritesToGcr = true;
+        }
+
+        /// <summary>
+        /// Seeds the 1541 DOS block-index workspace inherited by uploaded loaders.
+        /// </summary>
+        private void PrimeDosBlockIndexWorkspace(int blocks)
+        {
+            int count = blocks > 0
+                ? Math.Min(DosBlockIndexEntryCount, blocks)
+                : DosBlockIndexEntryCount;
+            for (int index = 0; index < count; index++)
+            {
+                _ram[(DosBlockIndexLowBase + index) & DriveRamMask] = (byte)(index & 0xFF);
+                _ram[(DosBlockIndexHighBase + index) & DriveRamMask] = (byte)(index >> 8);
+            }
+        }
+
+        /// <summary>
+        /// Aligns the raw GCR stream when ROM code advances the DOS current-sector pair.
+        /// </summary>
+        private void AlignGcrStreamToDosCurrentSector()
+        {
+            int track = _ram[DosCurrentTrackAddress];
+            int sector = _ram[DosCurrentSectorAddress];
+            if (track <= 0 || sector < 0)
+            {
+                return;
+            }
+
+            byte[] ignoredSectorBytes;
+            if (!_mechanism.TryReadSector(track, sector, out ignoredSectorBytes))
+            {
+                return;
+            }
+
+            _mechanism.SeekToSectorStart(track, sector, DosCurrentSectorSearchLeadBytes);
+        }
+
+        /// <summary>
+        /// Primes DOS zero-page disk context used by ROM header search helpers.
+        /// </summary>
+        private void PrimeDosDiskContext(int track, int sector, bool updateCurrentSector, bool seekPastSector)
+        {
+            _ram[DosHeaderBlockIdAddress] = DosHeaderBlockId;
+            byte currentTrack = _ram[DosCurrentTrackAddress];
+            byte currentSector = _ram[DosCurrentSectorAddress];
+
+            if (TryReadMountedDiskId(out byte diskId1, out byte diskId2))
+            {
+                for (int index = 0; index < DosJobSlotCount; index++)
+                {
+                    int offset = DosDiskIdBase + (index * 2);
+                    _ram[offset & DriveRamMask] = diskId1;
+                    _ram[(offset + 1) & DriveRamMask] = diskId2;
+                }
+            }
+
+            if (updateCurrentSector)
+            {
+                if (seekPastSector)
+                {
+                    // A host-side shortcut has already consumed the sector
+                    // that DOS requested. Leave the DOS current-sector bytes
+                    // on that sector, but put the raw stream where a spinning
+                    // disk would be afterward so uploaded loaders see the
+                    // next record.
+                    _mechanism.SeekToNextSectorStart(track, sector);
+                }
+                else
+                {
+                    _mechanism.SeekToSectorStart(track, sector);
+                }
+            }
+            else
+            {
+                _mechanism.SeekToTrack(track);
+            }
+
+            if (updateCurrentSector)
+            {
+                _ram[DosCurrentTrackAddress] = (byte)track;
+                _ram[DosCurrentSectorAddress] = (byte)sector;
+            }
+            else
+            {
+                _ram[DosCurrentTrackAddress] = currentTrack;
+                _ram[DosCurrentSectorAddress] = currentSector;
+            }
+        }
+
+        /// <summary>
+        /// Reads the mounted disk id bytes from the BAM sector.
+        /// </summary>
+        private bool TryReadMountedDiskId(out byte diskId1, out byte diskId2)
+        {
+            diskId1 = 0x00;
+            diskId2 = 0x00;
+
+            byte[] bam;
+            if (!_mechanism.TryReadSector(18, 0, out bam) || bam == null || bam.Length <= 0xA3)
+            {
+                return false;
+            }
+
+            diskId1 = bam[0xA2];
+            diskId2 = bam[0xA3];
+            return true;
+        }
+
+        /// <summary>
+        /// Clears execute-job tracking once the ROM or custom code changes the job byte.
+        /// </summary>
+        private void RefreshExecuteBufferJobState()
+        {
+            if (_pendingExecuteBufferJobSlot != NoDosJobSlot &&
+                _ram[_pendingExecuteBufferJobSlot & DriveRamMask] != _pendingExecuteBufferJobCode)
+            {
+                _pendingExecuteBufferJobSlot = NoDosJobSlot;
+                _pendingExecuteBufferJobCode = 0;
+            }
+
+            if (_activeExecuteBufferJobSlot != NoDosJobSlot &&
+                _ram[_activeExecuteBufferJobSlot & DriveRamMask] != _activeExecuteBufferJobCode)
+            {
+                _activeExecuteBufferJobSlot = NoDosJobSlot;
+                _activeExecuteBufferJobCode = 0;
+            }
+        }
+
+        /// <summary>
+        /// Copies a disk sector into mirrored 1541 RAM.
+        /// </summary>
+        private void CopySectorToRam(byte[] sectorBytes, int bufferOffset)
+        {
+            for (int index = 0; index < DosJobBufferSize; index++)
+            {
+                _ram[(bufferOffset + index) & DriveRamMask] = sectorBytes[index];
+            }
+        }
+
+        /// <summary>
+        /// Copies mirrored 1541 RAM into a disk sector buffer.
+        /// </summary>
+        private void CopyRamToSector(int bufferOffset, byte[] sectorBytes)
+        {
+            for (int index = 0; index < DosJobBufferSize; index++)
+            {
+                sectorBytes[index] = _ram[(bufferOffset + index) & DriveRamMask];
+            }
         }
 
         /// <summary>

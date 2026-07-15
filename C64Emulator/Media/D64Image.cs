@@ -26,6 +26,13 @@ namespace C64Emulator.Core
     public sealed class D64Image
     {
         private const int SectorSize = 256;
+        private const int HeaderSyncBytes = 5;
+        private const int HeaderGapBytes = 9;
+        private const int DataSyncBytes = 5;
+        private const int EncodedHeaderBlockBytes = 10;
+        private const int EncodedDataBlockBytes = 325;
+        private const int TrackStepSkewNumerator = 100;
+        private const int TrackStepSkewDenominator = 270;
         private static readonly byte[] GcrEncodeTable =
         {
             0x0A, 0x0B, 0x12, 0x13,
@@ -99,7 +106,7 @@ namespace C64Emulator.Core
         /// </summary>
         public static D64Image Load(string path)
         {
-            byte[] allBytes = File.ReadAllBytes(path);
+            byte[] allBytes = ReadAllBytesShared(path);
             int trackCount;
             int sectorCount;
             bool hasErrorInfo;
@@ -152,6 +159,19 @@ namespace C64Emulator.Core
             }
 
             return new D64Image(path, data, errorInfo, trackCount);
+        }
+
+        /// <summary>
+        /// Reads a disk image without taking an exclusive host-file lock.
+        /// </summary>
+        private static byte[] ReadAllBytesShared(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var memory = new MemoryStream())
+            {
+                stream.CopyTo(memory);
+                return memory.ToArray();
+            }
         }
 
         /// <summary>
@@ -257,6 +277,37 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Resolves a loadable PRG entry to its first disk sector without consuming any file data.
+        /// </summary>
+        public bool TryResolveSequentialFileStart(string filename, out int startTrack, out int startSector, out int blocks)
+        {
+            startTrack = 0;
+            startSector = 0;
+            blocks = 0;
+
+            string normalizedRequest = NormalizeFilename(filename);
+            if (normalizedRequest.Length == 0)
+            {
+                normalizedRequest = "*";
+            }
+
+            foreach (D64DirectoryEntry entry in _entries)
+            {
+                if (!IsLoadablePrgEntry(entry) || !Matches(entry.NormalizedName, normalizedRequest))
+                {
+                    continue;
+                }
+
+                startTrack = entry.StartTrack;
+                startSector = entry.StartSector;
+                blocks = entry.Blocks;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Returns whether loadable prg entry is true.
         /// </summary>
         private bool IsLoadablePrgEntry(D64DirectoryEntry entry)
@@ -313,6 +364,98 @@ namespace C64Emulator.Core
 
             sectorBytes = ReadSectorByOffset(offset);
             return true;
+        }
+
+        /// <summary>
+        /// Attempts to get the rotated GCR stream byte position at the start of a sector record.
+        /// </summary>
+        public bool TryGetSectorStreamStartOffset(int track, int sector, out int byteOffset)
+        {
+            byteOffset = 0;
+            if (!TryGetSectorIndex(track, sector, out _))
+            {
+                return false;
+            }
+
+            int unrotatedOffset = 0;
+            int sectorsPerTrack = GetSectorsPerTrack(track);
+            int postDataGapSize = GetPostDataGapSize(track);
+            foreach (int formattedSector in BuildFormattedSectorOrder(sectorsPerTrack))
+            {
+                TryGetSectorErrorCode(track, formattedSector, out byte errorCode);
+                int headerBytes = errorCode == 0x02 || errorCode == 0x03 || errorCode == 0x0F
+                    ? 10
+                    : HeaderSyncBytes + EncodedHeaderBlockBytes;
+                int dataBytes = errorCode == 0x03 || errorCode == 0x0F
+                    ? 10
+                    : DataSyncBytes + EncodedDataBlockBytes;
+                int sectorStart = unrotatedOffset;
+                int sectorEnd = sectorStart + headerBytes + HeaderGapBytes + dataBytes + postDataGapSize;
+
+                if (formattedSector == sector)
+                {
+                    int streamLength = GetTrackSizeBytes(track);
+                    byteOffset = (sectorStart + GetD64TrackSkewOffsetBytes(track)) % streamLength;
+                    return true;
+                }
+
+                unrotatedOffset = sectorEnd;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Attempts to get the rotated GCR stream byte position at the start of the next physically formatted sector.
+        /// </summary>
+        public bool TryGetNextSectorStreamStartOffset(int track, int sector, out int byteOffset)
+        {
+            byteOffset = 0;
+            if (!TryGetNextPhysicalSector(track, sector, out int nextSector))
+            {
+                return false;
+            }
+
+            return TryGetSectorStreamStartOffset(track, nextSector, out byteOffset);
+        }
+
+        /// <summary>
+        /// Attempts to get the sector number that follows a sector in the physical formatted order.
+        /// </summary>
+        public bool TryGetNextPhysicalSector(int track, int sector, out int nextSector)
+        {
+            nextSector = 0;
+            if (!TryGetSectorIndex(track, sector, out _))
+            {
+                return false;
+            }
+
+            int sectorsPerTrack = GetSectorsPerTrack(track);
+            int previousSector = -1;
+            int firstSector = -1;
+            foreach (int formattedSector in BuildFormattedSectorOrder(sectorsPerTrack))
+            {
+                if (firstSector < 0)
+                {
+                    firstSector = formattedSector;
+                }
+
+                if (previousSector == sector)
+                {
+                    nextSector = formattedSector;
+                    return true;
+                }
+
+                previousSector = formattedSector;
+            }
+
+            if (previousSector == sector && firstSector >= 0)
+            {
+                nextSector = firstSector;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -878,6 +1021,11 @@ namespace C64Emulator.Core
             private byte[] _sectorBytes;
             private int _index;
             private int _lastSectorLength;
+            private int _lastReadTrack;
+            private int _lastReadSector;
+            private int _previousReadTrack;
+            private int _previousReadSector;
+            private bool _lastReadSectorIsFinal;
             private bool _finished;
             private int _bytesRead;
             private bool _aborted;
@@ -893,6 +1041,11 @@ namespace C64Emulator.Core
                 _sectorBytes = null;
                 _index = 2;
                 _lastSectorLength = -1;
+                _lastReadTrack = 0;
+                _lastReadSector = 0;
+                _previousReadTrack = 0;
+                _previousReadSector = 0;
+                _lastReadSectorIsFinal = false;
                 _finished = false;
                 _bytesRead = 0;
                 _aborted = false;
@@ -924,6 +1077,10 @@ namespace C64Emulator.Core
                             return false;
                         }
 
+                        _previousReadTrack = _lastReadTrack;
+                        _previousReadSector = _lastReadSector;
+                        _lastReadTrack = _track;
+                        _lastReadSector = _sector;
                         int nextTrack = _sectorBytes[0];
                         int nextSector = _sectorBytes[1];
 
@@ -943,7 +1100,8 @@ namespace C64Emulator.Core
                             }
                         }
 
-                        _lastSectorLength = nextTrack == 0 ? Math.Max(0, Math.Min(254, nextSector - 1)) : 254;
+                        _lastReadSectorIsFinal = nextTrack == 0;
+                        _lastSectorLength = _lastReadSectorIsFinal ? Math.Max(0, Math.Min(254, nextSector - 1)) : 254;
                         _track = nextTrack;
                         _sector = nextSector;
                         _index = 2;
@@ -986,6 +1144,7 @@ namespace C64Emulator.Core
                 _finished = true;
                 _sectorBytes = null;
                 _lastSectorLength = 0;
+                _lastReadSectorIsFinal = false;
                 _track = 0;
                 _sector = 0;
                 _index = 2;
@@ -1004,6 +1163,41 @@ namespace C64Emulator.Core
             public int BytesRead
             {
                 get { return _bytesRead; }
+            }
+
+            public int LastReadTrack
+            {
+                get { return _lastReadTrack; }
+            }
+
+            public int LastReadSector
+            {
+                get { return _lastReadSector; }
+            }
+
+            public int DosContextTrack
+            {
+                get
+                {
+                    return _lastReadSectorIsFinal && _previousReadTrack > 0
+                        ? _previousReadTrack
+                        : _lastReadTrack;
+                }
+            }
+
+            public int DosContextSector
+            {
+                get
+                {
+                    if (_lastReadSectorIsFinal &&
+                        _previousReadTrack > 0 &&
+                        _image.TryGetNextPhysicalSector(_previousReadTrack, _previousReadSector, out int nextSector))
+                    {
+                        return nextSector;
+                    }
+
+                    return _lastReadSector;
+                }
             }
 
             /// <summary>
@@ -1093,7 +1287,7 @@ namespace C64Emulator.Core
             int sectorsPerTrack = GetSectorsPerTrack(track);
             int postDataGapSize = GetPostDataGapSize(track);
 
-            for (int sector = 0; sector < sectorsPerTrack; sector++)
+            foreach (int sector in BuildFormattedSectorOrder(sectorsPerTrack))
             {
                 TryGetSectorErrorCode(track, sector, out byte errorCode);
 
@@ -1103,11 +1297,11 @@ namespace C64Emulator.Core
                 }
                 else
                 {
-                    AddSync(stream, 5);
+                    AddSync(stream, HeaderSyncBytes);
                     AddGcrEncoded(stream, BuildHeaderBlock(track, sector, diskId1, diskId2, errorCode));
                 }
 
-                AddFill(stream, 9, 0x55);
+                AddFill(stream, HeaderGapBytes, 0x55);
 
                 if (errorCode == 0x03 || errorCode == 0x0F)
                 {
@@ -1115,7 +1309,7 @@ namespace C64Emulator.Core
                 }
                 else
                 {
-                    AddSync(stream, 5);
+                    AddSync(stream, DataSyncBytes);
                     AddGcrEncoded(stream, BuildDataBlock(track, sector, errorCode));
                 }
 
@@ -1128,7 +1322,27 @@ namespace C64Emulator.Core
                 stream.Add(0x55);
             }
 
-            return stream.ToArray();
+            return RotateTrackStream(stream.ToArray(), GetD64TrackSkewOffsetBytes(track));
+        }
+
+        /// <summary>
+        /// Builds the sector order of a normally formatted 1541 track.
+        /// </summary>
+        private static IEnumerable<int> BuildFormattedSectorOrder(int sectorsPerTrack)
+        {
+            bool[] used = new bool[sectorsPerTrack];
+            int sector = 0;
+            for (int count = 0; count < sectorsPerTrack; count++)
+            {
+                while (used[sector])
+                {
+                    sector = (sector + 1) % sectorsPerTrack;
+                }
+
+                used[sector] = true;
+                yield return sector;
+                sector = (sector + 10) % sectorsPerTrack;
+            }
         }
 
         /// <summary>
@@ -1294,6 +1508,54 @@ namespace C64Emulator.Core
             }
 
             return (halfTrack / 2) + 1;
+        }
+
+        /// <summary>
+        /// Rotates a synthesized D64 track to mimic the missing angular track alignment of a DOS-formatted disk.
+        /// </summary>
+        private static byte[] RotateTrackStream(byte[] trackBytes, int offset)
+        {
+            if (trackBytes == null || trackBytes.Length == 0)
+            {
+                return trackBytes;
+            }
+
+            offset %= trackBytes.Length;
+            if (offset <= 0)
+            {
+                return trackBytes;
+            }
+
+            byte[] rotated = new byte[trackBytes.Length];
+            Array.Copy(trackBytes, 0, rotated, offset, trackBytes.Length - offset);
+            Array.Copy(trackBytes, trackBytes.Length - offset, rotated, 0, offset);
+            return rotated;
+        }
+
+        /// <summary>
+        /// Gets the synthetic per-track angular offset for a D64-derived GCR stream.
+        /// </summary>
+        private static int GetD64TrackSkewOffsetBytes(int targetTrack)
+        {
+            long trackOffset = 0;
+            for (int track = 1; track <= targetTrack; track++)
+            {
+                int trackSizeBytes = GetTrackSizeBytes(track);
+                trackOffset += GetNominalWrittenTrackBytes(track) - GetPostDataGapSize(track);
+                trackOffset += (trackSizeBytes * TrackStepSkewNumerator) / TrackStepSkewDenominator;
+                trackOffset %= trackSizeBytes;
+            }
+
+            return (int)trackOffset;
+        }
+
+        /// <summary>
+        /// Gets the number of bytes written by a normal formatted track before the remaining tail gap.
+        /// </summary>
+        private static int GetNominalWrittenTrackBytes(int track)
+        {
+            return GetSectorsPerTrack(track) *
+                (HeaderSyncBytes + EncodedHeaderBlockBytes + HeaderGapBytes + DataSyncBytes + EncodedDataBlockBytes + GetPostDataGapSize(track));
         }
 
         /// <summary>

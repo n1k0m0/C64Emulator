@@ -116,6 +116,8 @@ namespace C64Emulator.Core
             _drive10 = new IecDrive1541(10, _iecBus.CreatePort("Drive10"), _iecBus.CreatePort("Drive10-HW"));
             _drive11 = new IecDrive1541(11, _iecBus.CreatePort("Drive11"), _iecBus.CreatePort("Drive11-HW"));
             _cia2.BeforeIecPortAccess = CatchUpDrivesForIecPortAccess;
+            _cia2.BeforeIecPortRead = CatchUpDrivesForIecPortRead;
+            _cia2.ShouldCatchUpIecPortRead = ShouldCatchUpDrivesForIecPortRead;
             _drive8.CustomExecutionStartGate = CanStartDriveCustomExecution;
             _drive9.CustomExecutionStartGate = CanStartDriveCustomExecution;
             _drive10.CustomExecutionStartGate = CanStartDriveCustomExecution;
@@ -1812,6 +1814,28 @@ namespace C64Emulator.Core
             {
                 _catchingUpDrivesForIecAccess = false;
             }
+        }
+
+        /// <summary>
+        /// Leaves IEC reads on the line state that was stable at the start of the current C64 bus cycle.
+        /// </summary>
+        private void CatchUpDrivesForIecPortRead()
+        {
+            // TickCore advances active drives after each CPU microcycle. If a
+            // CIA read also ran the drive first, bit-banged fastloaders could
+            // see a drive line transition that belongs after the read.
+        }
+
+        /// <summary>
+        /// Returns whether a CIA IEC read must expose the current drive-side bus state.
+        /// </summary>
+        private bool ShouldCatchUpDrivesForIecPortRead()
+        {
+            return _accuracyOptions.RunDriveCpuContinuously ||
+                _drive8.HasCustomCodeActive ||
+                _drive9.HasCustomCodeActive ||
+                _drive10.HasCustomCodeActive ||
+                _drive11.HasCustomCodeActive;
         }
 
         /// <summary>

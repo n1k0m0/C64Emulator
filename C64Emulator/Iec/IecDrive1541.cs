@@ -163,6 +163,7 @@ namespace C64Emulator.Core
         private const int CustomExecutionArmIdleCycles = 128;
         private const int CustomExecutionFallbackStartCycles = 4096;
         private const int CustomExecutionAtnReleaseTimeoutCycles = 4096;
+        private const int ImmediateCustomExecutionMaxCycles = 8000000;
 
         private readonly int _deviceNumber;
         private readonly IecBusPort _port;
@@ -885,6 +886,7 @@ namespace C64Emulator.Core
             state.FilenameBytes = Encoding.ASCII.GetBytes(normalizedFilename);
             state.ResetReadSource();
             state.WriteBuffer = null;
+            PrimeDosOpenFileContext(channel);
 
             if (!TryPrepareStandardReadChannel(channel))
             {
@@ -941,6 +943,7 @@ namespace C64Emulator.Core
                     return true;
                 }
 
+                PrimeDosSequentialReadContext(sequentialReader);
                 state.ReadOffset = sequentialReader.BytesRead;
                 endOfInformation = sequentialReader.IsFinished;
                 PulseLed(LedCommandPulseCycles / 8);
@@ -1090,6 +1093,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void BeginListen(byte secondaryAddress)
         {
+            FlushPendingCustomExecutionBeforeStandardCommand();
             PulseLed(LedCommandPulseCycles);
             _listeningSecondaryAddress = secondaryAddress;
             _channel = (byte)(secondaryAddress & 0x0F);
@@ -1121,6 +1125,7 @@ namespace C64Emulator.Core
             {
                 DriveChannel state = GetOrCreateChannel(_channel);
                 state.FilenameBytes = _listenBuffer.ToArray();
+                PrimeDosOpenFileContext(_channel);
             }
 
             _listenBuffer.Clear();
@@ -1243,6 +1248,19 @@ namespace C64Emulator.Core
             }
 
             _lastAtnLow = atnLow;
+
+            if (atnLow && _attentionHandshakeState == AttentionHandshakeState.Idle)
+            {
+                // If custom-code handoff or a missed callback clears the
+                // command-phase state while ATN is still asserted, the C64 is
+                // left waiting for the drive's DATA-low acknowledgement. Treat
+                // the still-low ATN level as an active command phase again.
+                ReleaseClock();
+                PullDataLow();
+                _receiver.Reset();
+                _sender.Reset();
+                _attentionHandshakeState = AttentionHandshakeState.WaitClockLowForByteStart;
+            }
 
             if (TryStartPendingCustomExecution(atnLow))
             {
@@ -2264,6 +2282,7 @@ namespace C64Emulator.Core
 
             if (command == (byte)(ListenBase | _deviceNumber))
             {
+                FlushPendingCustomExecutionBeforeStandardCommand();
                 _deviceAttentioned = true;
                 _deviceListening = true;
                 _deviceTalking = false;
@@ -2366,6 +2385,7 @@ namespace C64Emulator.Core
         {
             byte[] payload = _receiver.ConsumePayload();
             GetOrCreateChannel(_channel).FilenameBytes = payload;
+            PrimeDosOpenFileContext(_channel);
             _payloadReceiveArmed = false;
             _presenceProbeHoldActive = false;
             _presenceProbeObservedClockLow = false;
@@ -2452,6 +2472,7 @@ namespace C64Emulator.Core
                 while (chunk.Count < requestedBytes && state.SequentialReader.TryReadByte(out value))
                 {
                     chunk.Add(value);
+                    PrimeDosSequentialReadContext(state.SequentialReader);
                 }
 
                 state.ReadOffset = state.SequentialReader.BytesRead;
@@ -2497,6 +2518,54 @@ namespace C64Emulator.Core
             isFinalChunk = offset >= bufferedChannelData.Length;
             talkData = sliced;
             return true;
+        }
+
+        /// <summary>
+        /// Primes the 1541 DOS disk context after a software sequential read.
+        /// </summary>
+        private void PrimeDosSequentialReadContext(D64Image.SequentialFileReader reader)
+        {
+            if (reader == null)
+            {
+                return;
+            }
+
+            int track = reader.DosContextTrack;
+            int sector = reader.DosContextSector;
+            _hardware.Bus.PrimeDosDiskContextForSector(track, sector);
+        }
+
+        /// <summary>
+        /// Primes DOS file-open workspace without consuming bytes from the IEC read stream.
+        /// </summary>
+        private void PrimeDosOpenFileContext(byte channel)
+        {
+            if (channel == 15 || _mountedImage == null)
+            {
+                return;
+            }
+
+            DriveChannel state;
+            if (!TryGetChannel(channel, out state) || state.FilenameBytes == null || state.FilenameBytes.Length == 0)
+            {
+                return;
+            }
+
+            string filename = DecodeFilename(state.FilenameBytes);
+            if (filename.StartsWith("$", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            int startTrack;
+            int startSector;
+            int blocks;
+            if (!_mountedImage.TryResolveSequentialFileStart(filename, out startTrack, out startSector, out blocks))
+            {
+                return;
+            }
+
+            _hardware.Bus.PrimeDosFileOpenContext(startTrack, startSector, blocks);
         }
 
         /// <summary>
@@ -3006,6 +3075,59 @@ namespace C64Emulator.Core
             _pendingCustomExecutionWaitForAtnRelease = _port.IsLineLow(IecBusLine.Atn);
             _pendingCustomExecutionIdleCycles = 0;
             _pendingCustomExecutionWaitCycles = 0;
+        }
+
+        /// <summary>
+        /// Runs a pending M-E routine before accepting the next regular IEC command.
+        /// </summary>
+        private void FlushPendingCustomExecutionBeforeStandardCommand()
+        {
+            if (_pendingCustomExecution == PendingCustomExecutionType.None)
+            {
+                return;
+            }
+
+            if (!StartPendingCustomExecutionNow())
+            {
+                return;
+            }
+
+            for (int cycle = 0; cycle < ImmediateCustomExecutionMaxCycles && _hardware.HasCustomCodeActive; cycle++)
+            {
+                _hardware.Tick();
+            }
+
+            if (!_hardware.HasCustomCodeActive)
+            {
+                ResumeAttentionHandshakeAfterSynchronousCustomExecution();
+            }
+        }
+
+        /// <summary>
+        /// Re-enters the command-phase IEC handshake after a synchronous custom-code flush.
+        /// </summary>
+        private void ResumeAttentionHandshakeAfterSynchronousCustomExecution()
+        {
+            if (!_port.IsLineLow(IecBusLine.Atn))
+            {
+                return;
+            }
+
+            // FlushPendingCustomExecutionBeforeStandardCommand can run while
+            // the C64 already has ATN asserted for the next LISTEN/TALK phase.
+            // EnterCustomCodeMode intentionally clears the software receiver
+            // while the uploaded 1541 routine owns the bus; once that routine
+            // returns to DOS, the standard IEC path must acknowledge the still
+            // active ATN phase again or the C64 waits forever for DATA low.
+            _lastAtnLow = true;
+            _continueAttentionCommandAfterRelease = false;
+            _attentionPostReleaseWaitCycles = 0;
+            _postPayloadReadyHoldCycles = 0;
+            _receiver.Reset();
+            _sender.Reset();
+            ReleaseClock();
+            PullDataLow();
+            _attentionHandshakeState = AttentionHandshakeState.WaitInterByteClockLowForByteStart;
         }
 
         /// <summary>
@@ -4137,7 +4259,7 @@ namespace C64Emulator.Core
             }
 
             _recentCommandTexts.Add(commandText);
-            while (_recentCommandTexts.Count > 32)
+            while (_recentCommandTexts.Count > 128)
             {
                 _recentCommandTexts.RemoveAt(0);
             }

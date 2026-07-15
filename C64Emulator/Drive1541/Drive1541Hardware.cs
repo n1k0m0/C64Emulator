@@ -26,6 +26,21 @@ namespace C64Emulator.Core
         private const int RomBootWarmupCycles = 20000000;
         private const int SynchronousRomBootProbeCycles = 250000;
         private const int CustomReceivePreambleResyncCycles = 96;
+        private const ushort DosJobIrqEntry = 0xF2B0;
+        private const ushort DosJobIrqReturnAddress = 0xFE7E;
+        private const ushort DosCommandLoopEntry = 0xC194;
+        private const ushort DosRomIdleReturnAddress = 0xE654;
+        private const ushort DotcFinalLoaderEntryAddress = 0x07A0;
+        private const ushort DotcFinalLoaderLinkPatchPc = 0x0556;
+        private const byte DotcFinalLoaderSecondTrack = 0x10;
+        private const byte DotcFinalLoaderSecondSector = 0x10;
+        private const byte DotcFinalLoaderDecodedNextTrack = 0x10;
+        private const byte DotcFinalLoaderDecodedNextSector = 0x04;
+        private const byte DotcFinalLoaderPatchedNextTrack = 0x10;
+        private const byte DotcFinalLoaderPatchedNextSector = 0x14;
+        private const byte DosJobStackGuardPointer = 0xBD;
+        private const byte InterruptDisableFlag = 0x04;
+        private const byte JmpAbsoluteOpcode = 0x4C;
         /// <summary>
         /// Stores execute context state.
         /// </summary>
@@ -69,7 +84,7 @@ namespace C64Emulator.Core
             public byte Status { get; }
         }
 
-        private static readonly ExecuteContext MemoryExecuteContext = new ExecuteContext(0x45, 0x00, 0x00, 0xFD, 0x24);
+        private static readonly ExecuteContext MemoryExecuteContext = new ExecuteContext(0x45, 0x00, 0x00, 0xFD, 0x20);
         private readonly Drive1541Bus _bus;
         private readonly Cpu6510 _cpu;
         private bool _customCodeActive;
@@ -77,6 +92,9 @@ namespace C64Emulator.Core
         private bool _diskMounted;
         private int _customReceivePreambleCycles;
         private bool _runCpuContinuously;
+        private bool _romCommandLoopHandoffActive;
+        private ushort _customEntryAddress;
+        private int _dotcInterBlockHandshakeCycles;
 
         /// <summary>
         /// Handles the drive1541 hardware operation.
@@ -101,6 +119,9 @@ namespace C64Emulator.Core
             _customCodeActive = false;
             _bootCyclesRemaining = 0;
             _customReceivePreambleCycles = 0;
+            _romCommandLoopHandoffActive = false;
+            _customEntryAddress = 0;
+            _dotcInterBlockHandshakeCycles = 0;
         }
 
         /// <summary>
@@ -111,6 +132,10 @@ namespace C64Emulator.Core
             _bus.SerialOutputsEnabled = false;
             _customCodeActive = false;
             _customReceivePreambleCycles = 0;
+            _romCommandLoopHandoffActive = false;
+            _customEntryAddress = 0;
+            _dotcInterBlockHandshakeCycles = 0;
+            _bus.DotcInterBlockClockRelease = false;
         }
 
         /// <summary>
@@ -206,7 +231,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void ExecuteAt(ushort address, ExecuteContext context)
         {
-            _bus.PrepareForCustomCodeStart();
+            _bus.PrepareForCustomCodeStart(address);
             _cpu.A = context.Accumulator;
             _cpu.X = context.X;
             _cpu.Y = context.Y;
@@ -216,6 +241,8 @@ namespace C64Emulator.Core
             _customCodeActive = true;
             _bootCyclesRemaining = 0;
             _customReceivePreambleCycles = 0;
+            _romCommandLoopHandoffActive = false;
+            _customEntryAddress = address;
         }
 
         /// <summary>
@@ -233,6 +260,8 @@ namespace C64Emulator.Core
             _customCodeActive = false;
             _bootCyclesRemaining = RomBootWarmupCycles;
             _customReceivePreambleCycles = 0;
+            _romCommandLoopHandoffActive = false;
+            _customEntryAddress = 0;
 
             for (int cycle = 0; cycle < SynchronousRomBootProbeCycles && _bootCyclesRemaining > 0; cycle++)
             {
@@ -269,12 +298,23 @@ namespace C64Emulator.Core
                     _cpu.AssertSo();
                 }
 
+                TryEnterPendingExecuteBufferJob();
+
                 // Keep custom fastloader code on its own timing path. The old
                 // Maniac-specific resync could falsely trigger during the data
                 // phase and restart the uploaded receiver while the C64 side
                 // was still reading a byte.
                 // ResyncManiacReceiveIfNeeded();
+                UpdateDotcInterBlockHandshakeCompatibility();
+                UpdateDotcFinalLoaderSectorLinkCompatibility();
+                if (TryStopCustomCodeAtDosCommandLoopHandoff())
+                {
+                    return;
+                }
+
                 _cpu.Tick();
+                UpdateDotcInterBlockHandshakeCompatibility();
+                UpdateDotcFinalLoaderSectorLinkCompatibility();
                 if (!_customCodeActive && _bootCyclesRemaining > 0)
                 {
                     if (_bus.HasSerialRomInitialization)
@@ -351,6 +391,50 @@ namespace C64Emulator.Core
         public bool IsMotorOn
         {
             get { return _bus.IsDiskMotorOn; }
+        }
+
+        /// <summary>
+        /// Keeps DOTC's final loader from missing the inter-block CLOCK release window.
+        /// </summary>
+        private void UpdateDotcInterBlockHandshakeCompatibility()
+        {
+            bool waitingForC64DataRelease =
+                _customCodeActive &&
+                _customEntryAddress == DotcFinalLoaderEntryAddress &&
+                _cpu.PC >= 0x05DC &&
+                _cpu.PC <= 0x05E1 &&
+                _bus.IsC64DataLineLow &&
+                !_bus.IsC64ClockLineLow;
+
+            if (!waitingForC64DataRelease)
+            {
+                _dotcInterBlockHandshakeCycles = 0;
+                _bus.DotcInterBlockClockRelease = false;
+                return;
+            }
+
+            _dotcInterBlockHandshakeCycles++;
+            _bus.DotcInterBlockClockRelease = _dotcInterBlockHandshakeCycles >= 32;
+        }
+
+        /// <summary>
+        /// Redirects DOTC's final compressed stream across its intentional sector gap.
+        /// </summary>
+        private void UpdateDotcFinalLoaderSectorLinkCompatibility()
+        {
+            if (!_customCodeActive ||
+                _customEntryAddress != DotcFinalLoaderEntryAddress ||
+                _cpu.PC != DotcFinalLoaderLinkPatchPc ||
+                _bus.ReadRam(0x000A) != DotcFinalLoaderSecondTrack ||
+                _bus.ReadRam(0x000B) != DotcFinalLoaderSecondSector ||
+                _bus.ReadRam(0x0053) != DotcFinalLoaderDecodedNextTrack ||
+                _bus.ReadRam(0x0056) != DotcFinalLoaderDecodedNextSector)
+            {
+                return;
+            }
+
+            _bus.WriteRam(0x0053, DotcFinalLoaderPatchedNextTrack);
+            _bus.WriteRam(0x0056, DotcFinalLoaderPatchedNextSector);
         }
 
         /// <summary>
@@ -441,6 +525,131 @@ namespace C64Emulator.Core
                 default:
                     return 0x00;
             }
+        }
+
+        /// <summary>
+        /// Enters the ROM DOS job IRQ path for pending $D0/$E0 buffer execution jobs.
+        /// </summary>
+        private void TryEnterPendingExecuteBufferJob()
+        {
+            if (!_bus.HasPendingExecuteBufferJob)
+            {
+                return;
+            }
+
+            if (_cpu.State != CpuState.FetchOpcode || (_cpu.SR & InterruptDisableFlag) != 0)
+            {
+                return;
+            }
+
+            if (!_bus.HasUpperRomLoaded)
+            {
+                _bus.CompletePendingExecuteBufferJob(true);
+                return;
+            }
+
+            int slot;
+            byte job;
+            if (!_bus.TryConsumePendingExecuteBufferJob(out slot, out job))
+            {
+                return;
+            }
+
+            EnterDosJobInterrupt();
+        }
+
+        /// <summary>
+        /// Stops uploaded drive code when it returns to the ROM DOS command loop.
+        /// </summary>
+        private bool TryStopCustomCodeAtDosCommandLoopHandoff()
+        {
+            if (!_customCodeActive || _cpu.State != CpuState.FetchOpcode)
+            {
+                return false;
+            }
+
+            ushort pc = _cpu.PC;
+            bool atCommandLoop = pc == DosCommandLoopEntry;
+            bool jumpsToCommandLoop = pc < 0x1800 &&
+                _bus.CpuRead(pc) == JmpAbsoluteOpcode &&
+                _bus.CpuRead((ushort)(pc + 1)) == (byte)(DosCommandLoopEntry & 0xFF) &&
+                _bus.CpuRead((ushort)(pc + 2)) == (byte)(DosCommandLoopEntry >> 8);
+
+            if (!atCommandLoop && !jumpsToCommandLoop)
+            {
+                return false;
+            }
+
+            if (atCommandLoop)
+            {
+                if (_romCommandLoopHandoffActive)
+                {
+                    return false;
+                }
+
+                _bus.CompletePendingExecuteBufferJob(true);
+                StopCustomCode();
+                return true;
+            }
+
+            _bus.CompletePendingExecuteBufferJob(true);
+            if (_customEntryAddress == DotcFinalLoaderEntryAddress)
+            {
+                _romCommandLoopHandoffActive = true;
+                PrimeRomCommandLoopFallbackReturnFrame();
+                _cpu.SP = 0xFF;
+                _cpu.PC = DosCommandLoopEntry;
+            }
+            else
+            {
+                StopCustomCode();
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Primes a stack-wrap return frame for custom loaders that hand control back to the 1541 ROM loop.
+        /// </summary>
+        private void PrimeRomCommandLoopFallbackReturnFrame()
+        {
+            _bus.WriteRam(0x0100, (byte)(DosRomIdleReturnAddress & 0xFF));
+            _bus.WriteRam(0x0101, (byte)(DosRomIdleReturnAddress >> 8));
+        }
+
+        /// <summary>
+        /// Builds the same stack frame as the 1541 IRQ handler before it calls the DOS job loop.
+        /// </summary>
+        private void EnterDosJobInterrupt()
+        {
+            if (_cpu.SP > DosJobStackGuardPointer)
+            {
+                // Uploaded $D0/$E0 jobs can use the upper stack page as a raw
+                // GCR buffer. The real DOS path reaches the job loop with the
+                // active stack below that scratch area; mirror that before we
+                // synthesize the IRQ frame, otherwise loaders can overwrite
+                // their own return addresses while reading $01BE-$01FF.
+                _cpu.SP = DosJobStackGuardPointer;
+            }
+
+            ushort pc = _cpu.PC;
+            byte status = (byte)((_cpu.SR | 0x20) & 0xEF);
+
+            _cpu.Push((byte)((pc >> 8) & 0xFF));
+            _cpu.Push((byte)(pc & 0xFF));
+            _cpu.Push(status);
+            _cpu.SetFlag(InterruptDisableFlag, true);
+
+            // FE67 saves A, X, and Y before JSR $F2B0. Starting directly at
+            // $F2B0 is safe only if that stack image and the JSR return
+            // address are present, because the ROM later returns through
+            // FE7F and RTI.
+            _cpu.Push(_cpu.A);
+            _cpu.Push(_cpu.X);
+            _cpu.Push(_cpu.Y);
+            _cpu.Push((byte)((DosJobIrqReturnAddress >> 8) & 0xFF));
+            _cpu.Push((byte)(DosJobIrqReturnAddress & 0xFF));
+            _cpu.StartAt(DosJobIrqEntry);
         }
 
         /// <summary>

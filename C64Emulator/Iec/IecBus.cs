@@ -227,6 +227,48 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Returns whether any participant except ownerName is driving line low.
+        /// </summary>
+        internal bool IsLineLowExcludingOwner(string ownerName, IecBusLine line)
+        {
+            ParticipantState participant;
+            if (!_participants.TryGetValue(ownerName, out participant))
+            {
+                return GetAggregateLineState(line);
+            }
+
+            bool ownerDrivesLow = false;
+            int lowCount;
+            switch (line)
+            {
+                case IecBusLine.Atn:
+                    ownerDrivesLow = participant.AtnLow;
+                    lowCount = _atnLowCount;
+                    break;
+
+                case IecBusLine.Clock:
+                    ownerDrivesLow = participant.ClockLow;
+                    lowCount = _clockLowCount;
+                    break;
+
+                case IecBusLine.Data:
+                    ownerDrivesLow = participant.DataLow;
+                    lowCount = _dataLowCount;
+                    break;
+
+                case IecBusLine.ServiceRequest:
+                    ownerDrivesLow = participant.ServiceRequestLow;
+                    lowCount = _serviceRequestLowCount;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            return lowCount - (ownerDrivesLow ? 1 : 0) > 0;
+        }
+
+        /// <summary>
         /// Sets the line state value.
         /// </summary>
         internal void SetLineState(string ownerName, IecBusLine line, bool driveLow)
@@ -491,6 +533,14 @@ namespace C64Emulator.Core
         public bool IsOwnerDrivingLineLow(string ownerName, IecBusLine line)
         {
             return _bus.IsOwnerDrivingLineLow(ownerName, line);
+        }
+
+        /// <summary>
+        /// Returns whether another IEC participant is driving the line low.
+        /// </summary>
+        public bool IsLineLowExcludingOwner(IecBusLine line)
+        {
+            return _bus.IsLineLowExcludingOwner(_ownerName, line);
         }
 
         /// <summary>
