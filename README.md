@@ -12,6 +12,15 @@ With the help of modern AI tooling, I have now returned to the project and expan
 
 This project is not intended to replace the excellent VICE emulator in any way. Above all, it is a personal side project built for the fun of working on it. Perhaps it can also serve as a useful reference for people who are curious about writing their own emulator or exploring AI-assisted software development.
 
+**Highlights:**
+- **Cycle-accurate emulation** with compatibility across many C64 games
+- **SID (Sound Interface Device) and VIC-II (Video Interface Chip) emulation**
+- **Savestates** — save the complete state of the C64 and resume exactly where you left off
+- **Network Play** — play with friends over the network: the server emulates the C64 while clients receive video and audio and send joystick and keyboard input
+- **Automatic updates** — checks for new releases and provides an easy way to update to the latest version
+- **Easy installation** — a ready-to-use Windows installer handles the complete setup
+- **Easy ROM setup** — required C64 and 1541 ROMs are detected automatically; if they are missing, the emulator can download and verify the required ROM files for you
+
 ## Screenshots
 
 | C64 boot screen | Main menu | Settings overlay | Controller mapping |
