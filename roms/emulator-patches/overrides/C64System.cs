@@ -1,0 +1,2925 @@
+/*
+   Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
+using OpenTK.Input;
+
+namespace C64Emulator.Core
+{
+    /// <summary>
+    /// Coordinates the emulated C64 chips, buses, media, input, and frame timing.
+    /// </summary>
+    public sealed class C64System : IDisposable
+    {
+        /// <summary>
+        /// Stores phi2 bus state state.
+        /// </summary>
+        private struct Phi2BusState
+        {
+            public bool BaLow;
+            public bool AecLow;
+            public bool CpuCanAccess;
+            public bool VicCanAccess;
+        }
+
+        /// <summary>
+        /// Describes a C64 key and whether the C64 shift key must be held with it.
+        /// </summary>
+        private struct C64KeyChord
+        {
+            public Key Key;
+            public bool Shift;
+
+            public C64KeyChord(Key key, bool shift)
+            {
+                Key = key;
+                Shift = shift;
+            }
+        }
+
+        private readonly C64Model _model;
+        private readonly FrameBuffer _frameBuffer;
+        private readonly SystemBus _bus;
+        private readonly Cpu6510 _cpu;
+        private readonly Vic2 _vic;
+        private readonly Cia1 _cia1;
+        private readonly Cia2 _cia2;
+        private readonly Sid _sid;
+        private readonly IecBus _iecBus;
+        private readonly IecDrive1541 _drive8;
+        private readonly IecDrive1541 _drive9;
+        private readonly IecDrive1541 _drive10;
+        private readonly IecDrive1541 _drive11;
+        private readonly IecKernalBridge _iecKernalBridge;
+        private readonly MediaManager _mediaManager;
+        private const ushort KernalCursorBlinkSwitchAddress = 0x00CC;
+        private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
+        private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
+        private readonly HashSet<Key> _pressedKeyboardOnlyHostKeys = new HashSet<Key>();
+        private readonly List<Key> _mappedHostKeyboardKeys = new List<Key>();
+        private readonly Queue<byte> _queuedPetsciiInput = new Queue<byte>();
+        private readonly object _syncRoot = new object();
+        private readonly C64AccuracyOptions _accuracyOptions;
+        private MountedMediaInfo _lastMountedMedia = MountedMediaInfo.None;
+        private Key? _lastMirroredPollKey;
+        private int _pollMirrorRepeatDelayCycles;
+        private HostKeyboardLayout _hostKeyboardLayout = HostKeyboardLayout.En;
+        private double _drive1541TargetCycles;
+        private double _drive1541ExecutedCycles;
+        private bool _forceSoftwareIecTransport = true;
+        private bool _enableInputInjection = true;
+        private bool _catchingUpDrivesForIecAccess;
+        private CpuBusAccessPrediction _lastCpuBusPrediction = CpuBusAccessPrediction.None;
+
+        /// <summary>
+        /// Handles the c64 system operation.
+        /// </summary>
+        public C64System(C64Model model)
+            : this(model, null)
+        {
+        }
+
+        /// <summary>
+        /// Handles the c64 system operation.
+        /// </summary>
+        public C64System(C64Model model, C64AccuracyOptions accuracyOptions)
+        {
+            _model = model;
+            _accuracyOptions = (accuracyOptions ?? C64AccuracyOptions.Compatibility).Clone();
+            _frameBuffer = new FrameBuffer(model.VisibleWidth, model.VisibleHeight);
+            _bus = new SystemBus();
+            _cia1 = new Cia1(_accuracyOptions.CiaRevision);
+            _cia2 = new Cia2(_accuracyOptions.CiaRevision);
+            _sid = new Sid(model.CpuHz);
+            _iecBus = new IecBus();
+            _iecKernalBridge = new IecKernalBridge();
+            _mediaManager = new MediaManager();
+            _vic = new Vic2(_bus, _frameBuffer, model);
+            _cia2.AttachIecBus(_iecBus.CreatePort("C64"));
+            _drive8 = new IecDrive1541(8, _iecBus.CreatePort("Drive8"), _iecBus.CreatePort("Drive8-HW"));
+            _drive9 = new IecDrive1541(9, _iecBus.CreatePort("Drive9"), _iecBus.CreatePort("Drive9-HW"));
+            _drive10 = new IecDrive1541(10, _iecBus.CreatePort("Drive10"), _iecBus.CreatePort("Drive10-HW"));
+            _drive11 = new IecDrive1541(11, _iecBus.CreatePort("Drive11"), _iecBus.CreatePort("Drive11-HW"));
+            _cia2.BeforeIecPortAccess = CatchUpDrivesForIecPortAccess;
+            _cia2.BeforeIecPortRead = CatchUpDrivesForIecPortRead;
+            _cia2.ShouldCatchUpIecPortRead = ShouldCatchUpDrivesForIecPortRead;
+            _drive8.CustomExecutionStartGate = CanStartDriveCustomExecution;
+            _drive9.CustomExecutionStartGate = CanStartDriveCustomExecution;
+            _drive10.CustomExecutionStartGate = CanStartDriveCustomExecution;
+            _drive11.CustomExecutionStartGate = CanStartDriveCustomExecution;
+            _drive8.StandardRomTransportStartGate = CanStartDriveRomTransport;
+            _drive9.StandardRomTransportStartGate = CanStartDriveRomTransport;
+            _drive10.StandardRomTransportStartGate = CanStartDriveRomTransport;
+            _drive11.StandardRomTransportStartGate = CanStartDriveRomTransport;
+            _iecKernalBridge.AttachDrive(_drive8);
+            _iecKernalBridge.AttachDrive(_drive9);
+            _iecKernalBridge.AttachDrive(_drive10);
+            _iecKernalBridge.AttachDrive(_drive11);
+            _bus.Connect(_vic, _cia1, _cia2, _sid);
+            _bus.ConfigurePeripheralClock(model.CpuHz);
+            _cpu = new Cpu6510(_bus, _mediaManager, _iecKernalBridge);
+            ApplyAccuracyOptions();
+            ApplyIecTransportMode();
+
+            _bus.InitializeMemory();
+            _bus.LoadRoms(null);
+            Reset();
+        }
+
+        /// <summary>
+        /// Advances the component by one emulated tick.
+        /// </summary>
+        public void Tick()
+        {
+            lock (_syncRoot)
+            {
+                TickCore();
+                if (!RunDrivesToCurrentTime())
+                {
+                    AdvanceIdleDriveVisualState(1);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Resets the component to its power-on or idle state.
+        /// </summary>
+        public void Reset()
+        {
+            lock (_syncRoot)
+            {
+                ResetCore();
+            }
+        }
+
+        /// <summary>
+        /// Handles the reset and reload media operation.
+        /// </summary>
+        public string ResetAndReloadMedia()
+        {
+            lock (_syncRoot)
+            {
+                MountedMediaInfo mountedMedia = _mediaManager.MountedMedia;
+                MountedMediaInfo tapeMedia = _lastMountedMedia.Kind == MountedMediaKind.Tape ? _lastMountedMedia : null;
+                string mountedHostPath = mountedMedia.HostPath;
+                bool hadMountedMedia = mountedMedia.HasMedia && !string.IsNullOrWhiteSpace(mountedHostPath);
+                EasyFlashCartridge easyFlash = _bus.EasyFlash;
+                string easyFlashPath = easyFlash != null ? easyFlash.SourcePath : string.Empty;
+                bool easyFlashEnabled = easyFlash != null && easyFlash.Enabled;
+                ReuExpansion reuSnapshot = CreateReuSnapshotNoLock();
+                var mountedDrivePaths = new Dictionary<int, string>(_mountedDrivePaths);
+
+                ResetCore();
+                if (reuSnapshot != null)
+                {
+                    reuSnapshot.Reset();
+                    _bus.InsertReu(reuSnapshot);
+                }
+
+                string resetMessage = "RESET COMPLETE";
+                foreach (KeyValuePair<int, string> mountedDrivePath in mountedDrivePaths)
+                {
+                    MountDiskToDrive(mountedDrivePath.Value, mountedDrivePath.Key, true);
+                    resetMessage = "RESET MEDIA RELOADED";
+                }
+
+                if (easyFlash != null && !string.IsNullOrWhiteSpace(easyFlashPath) && File.Exists(easyFlashPath))
+                {
+                    MountEasyFlash(easyFlashPath, easyFlashEnabled, false);
+                    resetMessage = "RESET EASYFLASH RELOADED";
+                }
+
+                if (hadMountedMedia && mountedMedia.Kind == MountedMediaKind.Prg)
+                {
+                    MediaMountResult mountResult = _mediaManager.Mount(mountedHostPath);
+                    if (!mountResult.Success)
+                    {
+                        return "RESET MEDIA FAILED";
+                    }
+
+                    if (mountResult.AutoLoadProgramBytes != null)
+                    {
+                        LoadProgramBytes(mountResult.AutoLoadProgramBytes);
+                    }
+
+                    _lastMountedMedia = mountResult.MountedMedia;
+                    resetMessage = "RESET MEDIA RELOADED";
+                }
+
+                if (tapeMedia != null)
+                {
+                    // A machine reset does not rewind or discard the physical cassette.
+                    _lastMountedMedia = tapeMedia;
+                    resetMessage = "RESET TAPE RETAINED";
+                }
+
+                return resetMessage;
+            }
+        }
+
+        /// <summary>
+        /// Performs a C64-side reset while preserving RAM and inserted host media.
+        /// </summary>
+        public string WarmReset()
+        {
+            lock (_syncRoot)
+            {
+                _cia1.Reset();
+                _cia2.Reset();
+                _vic.Reset();
+                _sid.Reset();
+                _bus.EasyFlash?.Reset();
+                _bus.Reu?.Reset();
+                _iecKernalBridge.Reset();
+                _pressedHostKeys.Clear();
+                _pressedKeyboardOnlyHostKeys.Clear();
+                _bus.SetExternalNmi(false);
+                _mappedHostKeyboardKeys.Clear();
+                _cia1.ClearHostKeyboardState();
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                _catchingUpDrivesForIecAccess = false;
+                _cpu.Reset(_bus.ReadResetVector());
+                return "WARM RESET COMPLETE";
+            }
+        }
+
+        /// <summary>
+        /// Releases resources owned by the component.
+        /// </summary>
+        public void Dispose()
+        {
+            lock (_syncRoot)
+            {
+                _sid.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Writes the complete emulated machine state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            lock (_syncRoot)
+            {
+                writer.Write(0x33444956u); // VID3: model header before any mutable state.
+                writer.Write(_model.CyclesPerLine);
+                writer.Write(_model.RasterLines);
+                _bus.SaveState(writer);
+                _cpu.SaveState(writer);
+                _vic.SaveState(writer);
+                _cia1.SaveState(writer);
+                _cia2.SaveState(writer);
+                _sid.SaveState(writer);
+                _frameBuffer.SaveState(writer);
+                _drive8.SaveState(writer);
+                _drive9.SaveState(writer);
+                _drive10.SaveState(writer);
+                _drive11.SaveState(writer);
+                _iecBus.SaveState(writer);
+                _mediaManager.SaveState(writer);
+                WriteMountedMediaInfo(writer, _lastMountedMedia);
+                WriteMountedDrivePaths(writer);
+                WritePressedHostKeys(writer);
+                writer.Write(_lastMirroredPollKey.HasValue);
+                if (_lastMirroredPollKey.HasValue)
+                {
+                    writer.Write((int)_lastMirroredPollKey.Value);
+                }
+
+                writer.Write(_pollMirrorRepeatDelayCycles);
+                writer.Write(_drive1541TargetCycles);
+                writer.Write(_drive1541ExecutedCycles);
+                writer.Write(_catchingUpDrivesForIecAccess);
+            }
+        }
+
+        /// <summary>
+        /// Restores the complete emulated machine state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            lock (_syncRoot)
+            {
+                long modelHeaderPosition = reader.BaseStream.CanSeek ? reader.BaseStream.Position : -1;
+                uint modelMarker = reader.ReadUInt32();
+                if (modelMarker == 0x33444956u)
+                {
+                    int savedCycles = reader.ReadInt32();
+                    int savedLines = reader.ReadInt32();
+                    if (savedCycles != _model.CyclesPerLine || savedLines != _model.RasterLines)
+                        throw new InvalidDataException("Savestate video standard differs from the current machine.");
+                }
+                else
+                {
+                    if (modelHeaderPosition < 0 || _model.IsNtsc)
+                        throw new InvalidDataException("Legacy savestates require a PAL machine and a seekable stream.");
+                    reader.BaseStream.Position = modelHeaderPosition;
+                }
+                _bus.LoadState(reader);
+                _cpu.LoadState(reader);
+                _vic.LoadState(reader);
+                _cia1.LoadState(reader);
+                _cia2.LoadState(reader);
+                _sid.LoadState(reader);
+                _frameBuffer.LoadState(reader);
+                _drive8.LoadState(reader);
+                _drive9.LoadState(reader);
+                _drive10.LoadState(reader);
+                _drive11.LoadState(reader);
+                _iecBus.LoadState(reader);
+                _mediaManager.LoadState(reader);
+                _lastMountedMedia = ReadMountedMediaInfo(reader);
+                ReadMountedDrivePaths(reader);
+                ReadPressedHostKeys(reader);
+                _lastMirroredPollKey = reader.ReadBoolean() ? (Key?)((Key)reader.ReadInt32()) : null;
+                _pollMirrorRepeatDelayCycles = reader.ReadInt32();
+                _drive1541TargetCycles = reader.ReadDouble();
+                _drive1541ExecutedCycles = reader.ReadDouble();
+                _catchingUpDrivesForIecAccess = reader.ReadBoolean();
+                _bus.ConfigurePeripheralClock(_model.CpuHz);
+                RefreshMountedDriveDiskSets();
+                _iecKernalBridge.Reset();
+            }
+        }
+
+        public TapeDeck Tape { get { return _bus.Tape; } }
+        public UserPort UserPort { get { return _bus.UserPort; } }
+
+        public FrameBuffer FrameBuffer
+        {
+            get { return _frameBuffer; }
+        }
+
+        /// <summary>
+        /// Raised whenever the SID flushes a chunk of PCM bytes.
+        /// </summary>
+        /// <remarks>
+        /// The network host subscribes here to forward live SID audio to remote clients
+        /// while the SID can still write to local audio output independently.
+        /// </remarks>
+        public event Action<byte[], int> AudioBytesGenerated
+        {
+            add
+            {
+                lock (_syncRoot)
+                {
+                    _sid.AudioBytesGenerated += value;
+                }
+            }
+            remove
+            {
+                lock (_syncRoot)
+                {
+                    _sid.AudioBytesGenerated -= value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whether SID audio should be played on this machine instance.
+        /// </summary>
+        /// <remarks>
+        /// Remote clients disable local SID playback because their local C64 is paused;
+        /// they play the host's network audio stream instead.
+        /// </remarks>
+        public bool LocalAudioEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _sid.LocalAudioEnabled;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _sid.LocalAudioEnabled = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Disables the KERNAL text cursor so headless direct-SYS runs cannot modify the test screen.
+        /// </summary>
+        /// <remarks>
+        /// The C64 KERNAL periodically writes the blinking cursor character through the screen
+        /// editor IRQ path. VICE VIC-II reference programs are compared as pure graphics tests,
+        /// so the headless harness suppresses that unrelated screen RAM write before entering
+        /// the test program.
+        /// </remarks>
+        public void DisableKernalTextCursor()
+        {
+            lock (_syncRoot)
+            {
+                _bus.WriteRam(KernalCursorBlinkSwitchAddress, 0x01);
+            }
+        }
+
+        public C64Model Model
+        {
+            get { return _model; }
+        }
+
+        public VicTiming Timing
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _vic.GetTiming();
+                }
+            }
+        }
+
+        public VicPipelineState VicPipeline
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _vic.GetPipelineState();
+                }
+            }
+        }
+
+        public Cpu6510 Cpu
+        {
+            get { return _cpu; }
+        }
+
+        public BusOwner BusOwner
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.Owner;
+                }
+            }
+        }
+
+        public bool BaLow
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.BaLow;
+                }
+            }
+        }
+
+        public bool AecLow
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.AecLow;
+                }
+            }
+        }
+
+        public bool CpuCanAccess
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.CpuCanAccess;
+                }
+            }
+        }
+
+        public bool VicCanAccess
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.VicCanAccess;
+                }
+            }
+        }
+
+        public C64AccuracyOptions AccuracyOptions
+        {
+            get { return _accuracyOptions.Clone(); }
+        }
+
+        public CpuBusAccessPrediction LastCpuBusPrediction
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _lastCpuBusPrediction;
+                }
+            }
+        }
+
+        public bool EnableKernalIecHooks
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _cpu.EnableKernalIecHooks;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _cpu.EnableKernalIecHooks = value;
+                    _accuracyOptions.EnableKernalIecHooks = _cpu.EnableKernalIecHooks;
+                    ApplyIecTransportMode();
+                }
+            }
+        }
+
+        public bool EnableLoadHack
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _cpu.EnableLoadHack;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _cpu.EnableLoadHack = value;
+                    _accuracyOptions.EnableLoadHack = value;
+                }
+            }
+        }
+
+        public bool ForceSoftwareIecTransport
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _forceSoftwareIecTransport;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _forceSoftwareIecTransport = value;
+                    _accuracyOptions.ForceSoftwareIecTransport = value;
+                    ApplyIecTransportMode();
+                }
+            }
+        }
+
+        public bool EnableInputInjection
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _enableInputInjection;
+                }
+            }
+            set
+            {
+                lock (_syncRoot)
+                {
+                    _enableInputInjection = value;
+                    _accuracyOptions.EnableInputInjection = value;
+                    if (!_enableInputInjection)
+                    {
+                        _lastMirroredPollKey = null;
+                        _pollMirrorRepeatDelayCycles = 0;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Runs the cycles routine.
+        /// </summary>
+        public void RunCycles(int cycles)
+        {
+            lock (_syncRoot)
+            {
+                for (var i = 0; i < cycles; i++)
+                {
+                    TickCore();
+                }
+
+                if (!RunDrivesToCurrentTime())
+                {
+                    AdvanceIdleDriveVisualState(cycles);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handles the peek operation.
+        /// </summary>
+        public byte Peek(ushort address)
+        {
+            lock (_syncRoot)
+            {
+                return _bus.CpuRead(address);
+            }
+        }
+
+        /// <summary>
+        /// Peeks ram.
+        /// </summary>
+        public byte PeekRam(ushort address)
+        {
+            lock (_syncRoot)
+            {
+                return _bus.ReadRam(address);
+            }
+        }
+
+        /// <summary>
+        /// Gets the memory config debug info value.
+        /// </summary>
+        public string GetMemoryConfigDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return string.Format(
+                    "ddr={0:X2} port={1:X2} effective={2:X2} ioVisible={3}",
+                    _bus.ReadRam(0x0000),
+                    _bus.ReadRam(0x0001),
+                    _bus.ProcessorPortValue,
+                    _bus.IsIoAreaVisible);
+            }
+        }
+
+        /// <summary>
+        /// Gets compact EasyFlash debug information for probe logs.
+        /// </summary>
+        public string GetEasyFlashDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                if (cartridge == null)
+                {
+                    return "easyflash=none";
+                }
+
+                return string.Format(
+                    "easyflash=inserted enabled={0} bank={1} control={2:X2} mode={3} dirty={4} name=\"{5}\"",
+                    cartridge.Enabled,
+                    cartridge.Bank,
+                    cartridge.Control,
+                    cartridge.MemoryMode,
+                    cartridge.IsDirty,
+                    cartridge.DisplayName);
+            }
+        }
+
+        /// <summary>
+        /// Gets compact REU debug information for probe logs.
+        /// </summary>
+        public string GetReuDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                ReuExpansion reu = _bus.Reu;
+                if (reu == null)
+                {
+                    return "reu=none";
+                }
+
+                return string.Format(
+                    "reu=configured enabled={0} size={1} dma={2} status={3:X2} c64={4:X4} reuaddr={5:X6} len={6:X4}",
+                    reu.Enabled,
+                    ReuExpansion.FormatSize(reu.Size),
+                    reu.IsDmaActive,
+                    reu.Status,
+                    reu.C64Address,
+                    reu.ReuAddress,
+                    reu.TransferLength);
+            }
+        }
+
+        public object SyncRoot
+        {
+            get { return _syncRoot; }
+        }
+
+        public IecBus IecBus
+        {
+            get { return _iecBus; }
+        }
+
+        /// <summary>
+        /// Returns whether drive mounted is true.
+        /// </summary>
+        public bool IsDriveMounted(int deviceNumber)
+        {
+            IecDrive1541 drive = GetDrive(deviceNumber);
+            return drive != null && drive.IsMounted;
+        }
+
+        /// <summary>
+        /// Returns whether drive led on is true.
+        /// </summary>
+        public bool IsDriveLedOn(int deviceNumber)
+        {
+            IecDrive1541 drive = GetDrive(deviceNumber);
+            return drive != null && drive.IsLedOn;
+        }
+
+        /// <summary>
+        /// Returns whether drive active is true.
+        /// </summary>
+        public bool IsDriveActive(int deviceNumber)
+        {
+            IecDrive1541 drive = GetDrive(deviceNumber);
+            return drive != null && drive.IsActivityActive;
+        }
+
+        public JoystickPort CurrentJoystickPort
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _cia1.ActiveJoystickPort;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the drive debug info value.
+        /// </summary>
+        public string GetDriveDebugInfo(int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                return drive != null ? drive.GetDebugInfo() : "NO DRIVE";
+            }
+        }
+
+        public DriveSchedulerState GetDriveSchedulerState(int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                if (drive == null)
+                {
+                    return default(DriveSchedulerState);
+                }
+
+                return new DriveSchedulerState
+                {
+                    DeviceNumber = deviceNumber,
+                    TargetCycles = _drive1541TargetCycles,
+                    ExecutedCycles = _drive1541ExecutedCycles,
+                    NeedsClockTick = drive.NeedsClockTick,
+                    RunHardwareContinuously = drive.RunHardwareContinuously,
+                    ProgramCounter = drive.Hardware.ProgramCounter,
+                    HasCustomCodeActive = drive.HasCustomCodeActive,
+                    IsHardwareTransportReady = drive.IsHardwareTransportReady
+                };
+            }
+        }
+
+        /// <summary>
+        /// Peeks drive memory.
+        /// </summary>
+        public byte PeekDriveMemory(int deviceNumber, ushort address)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                return drive != null ? drive.Hardware.ReadMemory(address) : (byte)0xFF;
+            }
+        }
+
+        /// <summary>
+        /// Gets the drive program counter value.
+        /// </summary>
+        public ushort GetDriveProgramCounter(int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                return drive != null ? drive.Hardware.ProgramCounter : (ushort)0x0000;
+            }
+        }
+
+        /// <summary>
+        /// Gets the iec debug info value.
+        /// </summary>
+        public string GetIecDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return string.Format(
+                    "cia2={0} atnLow={1}({4}) clkLow={2}({5}) dataLow={3}({6})",
+                    _cia2.GetDebugInfo(),
+                    _iecBus.IsLineLow(IecBusLine.Atn),
+                    _iecBus.IsLineLow(IecBusLine.Clock),
+                    _iecBus.IsLineLow(IecBusLine.Data),
+                    _iecBus.GetLineOwnersDebug(IecBusLine.Atn),
+                    _iecBus.GetLineOwnersDebug(IecBusLine.Clock),
+                    _iecBus.GetLineOwnersDebug(IecBusLine.Data));
+            }
+        }
+
+        /// <summary>
+        /// Gets compact CIA debug information.
+        /// </summary>
+        public string GetCiaDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return "cia1={" + _cia1.GetDebugInfo() + "} cia2={" + _cia2.GetDebugInfo() + "}";
+            }
+        }
+
+        /// <summary>
+        /// Gets compact SID debug information.
+        /// </summary>
+        public string GetSidDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return _sid.GetDebugInfo();
+            }
+        }
+
+        /// <summary>
+        /// Consumes the next user-visible machine status message.
+        /// </summary>
+        public string ConsumeStatusText()
+        {
+            lock (_syncRoot)
+            {
+                string status = _drive8.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                status = _drive9.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                status = _drive10.ConsumeStatusText();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    return status;
+                }
+
+                return _drive11.ConsumeStatusText();
+            }
+        }
+
+        /// <summary>
+        /// Gets the cpu debug info value.
+        /// </summary>
+        public string GetCpuDebugInfo()
+        {
+            lock (_syncRoot)
+            {
+                return string.Format(
+                    "pc={0:X4} a={1:X2} x={2:X2} y={3:X2} sp={4:X2} sr={5:X2} state={6} lastIec={7}",
+                    _cpu.PC,
+                    _cpu.A,
+                    _cpu.X,
+                    _cpu.Y,
+                    _cpu.SP,
+                    _cpu.SR,
+                    _cpu.State,
+                    _cpu.LastIecHookDebug);
+            }
+        }
+
+        /// <summary>
+        /// Enqueues petscii text.
+        /// </summary>
+        public void EnqueuePetsciiText(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            lock (_syncRoot)
+            {
+                const ushort KeyboardBufferCountAddress = 0x00C6;
+                const int KeyboardBufferCapacity = 10;
+
+                for (int index = 0; index < text.Length; index++)
+                {
+                    byte count = _bus.CpuRead(KeyboardBufferCountAddress);
+                    if (count < KeyboardBufferCapacity)
+                    {
+                        EnqueuePetsciiByte((byte)text[index]);
+                    }
+                    else
+                    {
+                        _queuedPetsciiInput.Enqueue((byte)text[index]);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handles the key down operation.
+        /// </summary>
+        public void KeyDown(Key key)
+        {
+            lock (_syncRoot)
+            {
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Add(key);
+                TryEnqueueHostKeyToKeyboardBuffer(mappedKey);
+                if (IsJoystickKey(mappedKey))
+                {
+                    _cia1.KeyDown(mappedKey);
+                }
+
+                RefreshHostKeyboardMatrix();
+            }
+        }
+
+        /// <summary>
+        /// Handles the key up operation.
+        /// </summary>
+        public void KeyUp(Key key)
+        {
+            lock (_syncRoot)
+            {
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedHostKeys.Remove(key);
+                if (IsJoystickKey(mappedKey))
+                {
+                    _cia1.KeyUp(mappedKey);
+                }
+
+                RefreshHostKeyboardMatrix();
+                if (_lastMirroredPollKey == mappedKey)
+                {
+                    _lastMirroredPollKey = null;
+                    _pollMirrorRepeatDelayCycles = 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Presses a host key as a C64 keyboard-matrix key without joystick side effects.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        public void KeyboardKeyDown(Key key)
+        {
+            lock (_syncRoot)
+            {
+                _pressedKeyboardOnlyHostKeys.Add(key);
+                _pressedHostKeys.Add(key);
+                RefreshHostKeyboardMatrix();
+            }
+        }
+
+        /// <summary>
+        /// Releases a host key previously pressed through KeyboardKeyDown.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        public void KeyboardKeyUp(Key key)
+        {
+            lock (_syncRoot)
+            {
+                Key mappedKey = MapHostKeyboardLayoutKey(key);
+                _pressedKeyboardOnlyHostKeys.Remove(key);
+                _pressedHostKeys.Remove(key);
+                RefreshHostKeyboardMatrix();
+                if (_lastMirroredPollKey == mappedKey)
+                {
+                    _lastMirroredPollKey = null;
+                    _pollMirrorRepeatDelayCycles = 0;
+                }
+            }
+        }
+
+        public float SidMasterVolume
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _sid.MasterVolume;
+                }
+            }
+        }
+
+        public float SidNoiseLevel
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _sid.NoiseLevel;
+                }
+            }
+        }
+
+        public SidChipModel CurrentSidChipModel
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _sid.ChipModel;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sets the sid master volume value.
+        /// </summary>
+        public void SetSidMasterVolume(float value)
+        {
+            lock (_syncRoot)
+            {
+                _sid.MasterVolume = value;
+            }
+        }
+
+        /// <summary>
+        /// Sets the sid noise level value.
+        /// </summary>
+        public void SetSidNoiseLevel(float value)
+        {
+            lock (_syncRoot)
+            {
+                _sid.NoiseLevel = value;
+            }
+        }
+
+        /// <summary>
+        /// Sets the sid chip model value.
+        /// </summary>
+        public void SetSidChipModel(SidChipModel chipModel)
+        {
+            lock (_syncRoot)
+            {
+                _sid.ChipModel = chipModel;
+            }
+        }
+
+        /// <summary>
+        /// Sets the joystick port value.
+        /// </summary>
+        public void SetJoystickPort(JoystickPort joystickPort)
+        {
+            lock (_syncRoot)
+            {
+                _cia1.ActiveJoystickPort = joystickPort;
+            }
+        }
+
+        public HostKeyboardLayout CurrentHostKeyboardLayout
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _hostKeyboardLayout;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sets the frontend host keyboard layout used before mapping keys to the C64.
+        /// </summary>
+        /// <param name="layout">Host keyboard layout.</param>
+        public void SetHostKeyboardLayout(HostKeyboardLayout layout)
+        {
+            lock (_syncRoot)
+            {
+                if (_hostKeyboardLayout == layout)
+                {
+                    return;
+                }
+
+                _hostKeyboardLayout = layout;
+                _pressedHostKeys.Clear();
+                _pressedKeyboardOnlyHostKeys.Clear();
+                _bus.SetExternalNmi(false);
+                _mappedHostKeyboardKeys.Clear();
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                _cia1.ClearHostKeyboardState();
+            }
+        }
+
+        /// <summary>
+        /// Sets the active-low joystick state supplied by a host gamepad.
+        /// </summary>
+        /// <param name="activeLowJoystickState">Active-low C64 joystick bits.</param>
+        public void SetGamepadJoystickState(byte activeLowJoystickState)
+        {
+            lock (_syncRoot)
+            {
+                // Joystick state ultimately affects CIA1 port reads, so route it through
+                // the same machine lock used by CPU/VIC/CIA access.
+                _cia1.SetGamepadJoystickState(activeLowJoystickState);
+            }
+        }
+
+        /// <summary>
+        /// Sets network-controlled joystick input for the selected C64 port.
+        /// </summary>
+        /// <param name="joystickPort">C64 joystick port to update.</param>
+        /// <param name="activeLowJoystickState">Aggregated active-low remote joystick bits.</param>
+        public void SetNetworkJoystickState(JoystickPort joystickPort, byte activeLowJoystickState)
+        {
+            lock (_syncRoot)
+            {
+                // Remote input is sampled by the frontend and merged into CIA1 under the
+                // machine lock so the emulated CPU never observes a partially updated port.
+                _cia1.SetNetworkJoystickState(joystickPort, activeLowJoystickState);
+            }
+        }
+
+        /// <summary>
+        /// Clears all network-controlled joystick input.
+        /// </summary>
+        public void ClearNetworkJoystickState()
+        {
+            lock (_syncRoot)
+            {
+                // Called when hosting stops or a remote session ends, ensuring no stale
+                // remote fire/direction bit remains latched.
+                _cia1.ClearNetworkJoystickState();
+            }
+        }
+
+        /// <summary>
+        /// Sets a network-controlled C64 keyboard matrix key.
+        /// </summary>
+        /// <param name="key">Frontend key received from a permitted network client.</param>
+        /// <param name="pressed">True when the remote key is currently held.</param>
+        public void SetNetworkKeyState(Key key, bool pressed)
+        {
+            lock (_syncRoot)
+            {
+                // Keep remote keyboard input on its own CIA1 layer. Joystick input has a
+                // separate permission path and is not affected by this call.
+                _cia1.SetNetworkKeyState(key, pressed);
+            }
+        }
+
+        /// <summary>
+        /// Releases all network-controlled C64 keyboard matrix keys.
+        /// </summary>
+        public void ClearNetworkKeyboardState()
+        {
+            lock (_syncRoot)
+            {
+                _cia1.ClearNetworkKeyboardState();
+            }
+        }
+
+        public MountedMediaInfo MountedMedia
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _lastMountedMedia;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets a snapshot of all host disk images currently inserted into emulated drives.
+        /// </summary>
+        public Dictionary<int, string> GetMountedDriveHostPaths()
+        {
+            lock (_syncRoot)
+            {
+                return new Dictionary<int, string>(_mountedDrivePaths);
+            }
+        }
+
+        /// <summary>
+        /// Mounts media.
+        /// </summary>
+        public string MountMedia(string path)
+        {
+            return MountMedia(path, 8);
+        }
+
+        /// <summary>
+        /// Mounts media.
+        /// </summary>
+        public string MountMedia(string path, int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                if (string.Equals(Path.GetExtension(path), ".tap", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        _bus.Tape.Mount(File.ReadAllBytes(path));
+                        _bus.Tape.Play();
+                        _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", Path.GetFileName(path), Path.GetFullPath(path));
+                        return "TAPE MOUNTED - PLAY";
+                    }
+                    catch (Exception ex) { return "TAPE LOAD FAILED: " + ex.Message; }
+                }
+
+                if (string.Equals(Path.GetExtension(path), ".crt", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MountEasyFlash(path, true, true);
+                }
+
+                if (string.Equals(Path.GetExtension(path), ".d64", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MountDiskToDrive(path, deviceNumber, true);
+                }
+
+                MediaMountResult result = _mediaManager.Mount(path);
+                if (result.Success && result.AutoLoadProgramBytes != null)
+                {
+                    LoadProgramBytes(result.AutoLoadProgramBytes);
+                    _lastMountedMedia = result.MountedMedia;
+                }
+
+                return result.Message;
+            }
+        }
+
+        /// <summary>Press the emulated cassette PLAY button; the ROM controls its motor.</summary>
+        public string PlayTape()
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.Tape.PulseCount == 0) return "NO TAPE LOADED";
+                _bus.Tape.Play();
+                return "TAPE PLAY";
+            }
+        }
+
+        public string StopTape()
+        {
+            lock (_syncRoot) { _bus.Tape.Stop(); return "TAPE STOP"; }
+        }
+
+        public string RewindTape()
+        {
+            lock (_syncRoot) { _bus.Tape.Rewind(); return "TAPE REWOUND"; }
+        }
+
+        /// <summary>Keep the physical cassette, including an unsaved recording, across a frontend power cycle.</summary>
+        public TapeDeck CreateTapeSnapshot()
+        {
+            lock (_syncRoot)
+            {
+                var snapshot = new TapeDeck();
+                CopyTapeState(_bus.Tape, snapshot);
+                return snapshot;
+            }
+        }
+
+        public void InsertTapeSnapshot(TapeDeck snapshot, MountedMediaInfo media)
+        {
+            if (snapshot == null) return;
+            lock (_syncRoot)
+            {
+                CopyTapeState(snapshot, _bus.Tape);
+                _bus.Tape.ConfigureClock(_model.CpuHz);
+                _bus.Tape.WriteProcessorPort(_bus.CpuRead(0), _bus.CpuRead(1));
+                if (media != null && media.Kind == MountedMediaKind.Tape) _lastMountedMedia = media;
+            }
+        }
+
+        private static void CopyTapeState(TapeDeck source, TapeDeck destination)
+        {
+            using (var stream = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
+                    StateSerializer.WriteObjectFields(writer, source);
+                stream.Position = 0;
+                using (var reader = new BinaryReader(stream))
+                    StateSerializer.ReadObjectFields(reader, destination);
+            }
+        }
+
+        /// <summary>Start a new in-memory recording; save it explicitly with SaveTape.</summary>
+        public string BeginTapeRecording()
+        {
+            lock (_syncRoot)
+            {
+                _bus.Tape.Record(_model.IsNtsc ? (byte)1 : (byte)0);
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", "NEW RECORDING", string.Empty);
+                return "TAPE RECORD - ENTER SAVE";
+            }
+        }
+
+        /// <summary>Export captured pulses atomically without replacing the tape in memory.</summary>
+        public string SaveTape(string path)
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.Tape.PulseCount == 0) return "NO TAPE PULSES TO SAVE";
+                string temporary = null;
+                try
+                {
+                    string destination = Path.GetFullPath(path);
+                    byte[] bytes = _bus.Tape.ExportTap();
+                    temporary = Path.Combine(Path.GetDirectoryName(destination), ".c64-tape-" + Guid.NewGuid().ToString("N") + ".tmp");
+                    using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        stream.Write(bytes, 0, bytes.Length);
+                        stream.Flush(true);
+                    }
+                    File.Move(temporary, destination, true);
+                    temporary = null;
+                    _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", Path.GetFileName(destination), destination);
+                    return "TAPE SAVED " + Path.GetFileName(destination);
+                }
+                catch (Exception ex) { return "TAPE SAVE FAILED: " + ex.Message; }
+                finally { if (temporary != null) { try { File.Delete(temporary); } catch { } } }
+            }
+        }
+
+        /// <summary>
+        /// Ejects media.
+        /// </summary>
+        public string EjectMedia()
+        {
+            lock (_syncRoot)
+            {
+                string message = _mediaManager.Eject();
+                _mountedDrivePaths.Clear();
+                _drive8.EjectDisk();
+                _drive9.EjectDisk();
+                _drive10.EjectDisk();
+                _drive11.EjectDisk();
+                _bus.EjectEasyFlash();
+                _bus.Tape.Eject();
+                _lastMountedMedia = MountedMediaInfo.None;
+                return message;
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the configured REU is visible at I/O2.
+        /// </summary>
+        public bool ReuEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.ReuEnabled;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the configured REU capacity.
+        /// </summary>
+        public ReuMemorySize ReuSize
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.Reu != null ? _bus.Reu.Size : ReuMemorySize.K512;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enables or disables the REU, creating it with the current/default size if needed.
+        /// </summary>
+        public string SetReuEnabled(bool enabled)
+        {
+            lock (_syncRoot)
+            {
+                ReuMemorySize size = _bus.Reu != null ? _bus.Reu.Size : ReuMemorySize.K512;
+                _bus.ConfigureReu(enabled, size);
+                return enabled ? "REU ON " + ReuExpansion.FormatSize(size) : "REU OFF";
+            }
+        }
+
+        /// <summary>
+        /// Changes the configured REU capacity.
+        /// </summary>
+        public string SetReuSize(ReuMemorySize size)
+        {
+            lock (_syncRoot)
+            {
+                bool enabled = _bus.Reu != null && _bus.Reu.Enabled;
+                _bus.ConfigureReu(enabled, size);
+                return "REU SIZE " + ReuExpansion.FormatSize(_bus.Reu.Size);
+            }
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the configured REU.
+        /// </summary>
+        public ReuExpansion CreateReuSnapshot()
+        {
+            lock (_syncRoot)
+            {
+                return CreateReuSnapshotNoLock();
+            }
+        }
+
+        /// <summary>
+        /// Inserts a previously captured REU snapshot.
+        /// </summary>
+        public string InsertReuSnapshot(ReuExpansion reu)
+        {
+            lock (_syncRoot)
+            {
+                if (reu == null)
+                {
+                    return "NO REU";
+                }
+
+                reu.Reset();
+                _bus.InsertReu(reu);
+                return reu.Enabled ? "REU READY " + ReuExpansion.FormatSize(reu.Size) : "REU OFF";
+            }
+        }
+
+        /// <summary>
+        /// Gets whether an EasyFlash cartridge is inserted.
+        /// </summary>
+        public bool IsEasyFlashInserted
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.EasyFlash != null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the inserted EasyFlash is enabled on the expansion port.
+        /// </summary>
+        public bool EasyFlashEnabled
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _bus.EasyFlashEnabled;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the inserted EasyFlash has unsaved flash changes.
+        /// </summary>
+        public bool IsEasyFlashDirty
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null && cartridge.IsDirty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the inserted EasyFlash display name.
+        /// </summary>
+        public string EasyFlashDisplayName
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null ? cartridge.DisplayName : string.Empty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the inserted EasyFlash image path.
+        /// </summary>
+        public string EasyFlashImagePath
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    EasyFlashCartridge cartridge = _bus.EasyFlash;
+                    return cartridge != null ? cartridge.SourcePath : string.Empty;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enables or disables the inserted EasyFlash.
+        /// </summary>
+        public string SetEasyFlashEnabled(bool enabled)
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.EasyFlash == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.EasyFlashEnabled = enabled;
+                _cpu.Reset(_bus.ReadResetVector());
+                return enabled ? "EASYFLASH ON" : "EASYFLASH OFF";
+            }
+        }
+
+        /// <summary>
+        /// Saves the inserted EasyFlash back to its CRT file.
+        /// </summary>
+        public string SaveEasyFlash()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                if (cartridge == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                try
+                {
+                    cartridge.SaveToSource();
+                    return "EASYFLASH SAVED";
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(ex);
+                    return "EASYFLASH SAVE FAILED";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ejects the inserted EasyFlash cartridge.
+        /// </summary>
+        public string EjectEasyFlash()
+        {
+            lock (_syncRoot)
+            {
+                if (_bus.EasyFlash == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.EjectEasyFlash();
+                if (_lastMountedMedia != null && _lastMountedMedia.Kind == MountedMediaKind.EasyFlash)
+                {
+                    _lastMountedMedia = MountedMediaInfo.None;
+                }
+
+                _cpu.Reset(_bus.ReadResetVector());
+                return "EASYFLASH EJECTED";
+            }
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the inserted EasyFlash, preserving unsaved edits.
+        /// </summary>
+        public EasyFlashCartridge CreateEasyFlashSnapshot()
+        {
+            lock (_syncRoot)
+            {
+                EasyFlashCartridge cartridge = _bus.EasyFlash;
+                return cartridge != null ? cartridge.Clone() : null;
+            }
+        }
+
+        /// <summary>
+        /// Inserts a previously captured EasyFlash snapshot after a power-cycle recreate.
+        /// </summary>
+        public string InsertEasyFlashSnapshot(EasyFlashCartridge cartridge)
+        {
+            lock (_syncRoot)
+            {
+                if (cartridge == null)
+                {
+                    return "NO EASYFLASH";
+                }
+
+                _bus.InsertEasyFlash(cartridge);
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.EasyFlash, "CRT", cartridge.DisplayName, cartridge.SourcePath);
+                _cpu.Reset(_bus.ReadResetVector());
+                return cartridge.Enabled ? "RESET EASYFLASH READY" : "RESET EASYFLASH OFF";
+            }
+        }
+
+        /// <summary>
+        /// Computes phi2 bus state.
+        /// </summary>
+        private Phi2BusState ComputePhi2BusState()
+        {
+            _lastCpuBusPrediction = CpuBusAccessPrediction.None;
+            if (_vic.RequiresBusThisCycle())
+            {
+                return new Phi2BusState
+                {
+                    BaLow = true,
+                    AecLow = true,
+                    CpuCanAccess = false,
+                    VicCanAccess = true
+                };
+            }
+
+            if (_vic.HasBusRequestPendingThisCycle())
+            {
+                CpuBusAccessPrediction prediction = _cpu.PredictNextCycleAccess();
+                _lastCpuBusPrediction = prediction;
+                if (prediction.AccessType == CpuTraceAccessType.Write)
+                {
+                    return new Phi2BusState
+                    {
+                        BaLow = true,
+                        AecLow = false,
+                        CpuCanAccess = true,
+                        VicCanAccess = false
+                    };
+                }
+
+                return new Phi2BusState
+                {
+                    BaLow = true,
+                    AecLow = false,
+                    CpuCanAccess = false,
+                    VicCanAccess = false
+                };
+            }
+
+            return new Phi2BusState
+            {
+                BaLow = false,
+                AecLow = false,
+                CpuCanAccess = true,
+                VicCanAccess = false
+            };
+        }
+
+        /// <summary>
+        /// Handles the reset core operation.
+        /// </summary>
+        private void ResetCore()
+        {
+            MountedMediaInfo tapeMedia = _lastMountedMedia.Kind == MountedMediaKind.Tape ? _lastMountedMedia : null;
+            _bus.InitializeMemory();
+            _bus.LoadRoms(null);
+            _cia1.Reset();
+            _cia2.Reset();
+            _vic.Reset();
+            _sid.Reset();
+            _drive8.Reset();
+            _drive9.Reset();
+            _drive10.Reset();
+            _drive11.Reset();
+            _iecKernalBridge.Reset();
+            _mountedDrivePaths.Clear();
+            _lastMountedMedia = tapeMedia ?? MountedMediaInfo.None;
+            _pressedHostKeys.Clear();
+            _pressedKeyboardOnlyHostKeys.Clear();
+            _bus.SetExternalNmi(false);
+            _mappedHostKeyboardKeys.Clear();
+            _queuedPetsciiInput.Clear();
+            _lastMirroredPollKey = null;
+            _pollMirrorRepeatDelayCycles = 0;
+            _drive1541TargetCycles = 0.0;
+            _drive1541ExecutedCycles = 0.0;
+            _catchingUpDrivesForIecAccess = false;
+            _cpu.Reset(_bus.ReadResetVector());
+        }
+
+        /// <summary>
+        /// Creates a deep copy of the configured REU without taking the outer lock.
+        /// </summary>
+        private ReuExpansion CreateReuSnapshotNoLock()
+        {
+            ReuExpansion reu = _bus.Reu;
+            return reu != null ? reu.Clone() : null;
+        }
+
+        /// <summary>
+        /// Loads and inserts an EasyFlash CRT image.
+        /// </summary>
+        private string MountEasyFlash(string path, bool enabled, bool resetMachine)
+        {
+            try
+            {
+                EasyFlashCartridge cartridge = EasyFlashCartridge.LoadCrt(path);
+                cartridge.Enabled = enabled;
+                if (resetMachine)
+                {
+                    ResetCore();
+                }
+
+                _bus.InsertEasyFlash(cartridge);
+                _bus.EasyFlashEnabled = enabled;
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.EasyFlash, "CRT", cartridge.DisplayName, path);
+                _cpu.Reset(_bus.ReadResetVector());
+                return enabled ? "EASYFLASH MOUNTED" : "EASYFLASH LOADED OFF";
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(ex);
+                return "INVALID EASYFLASH";
+            }
+        }
+
+        /// <summary>
+        /// Writes mounted media overlay metadata into a savestate stream.
+        /// </summary>
+        private static void WriteMountedMediaInfo(BinaryWriter writer, MountedMediaInfo mediaInfo)
+        {
+            mediaInfo = mediaInfo ?? MountedMediaInfo.None;
+            writer.Write((int)mediaInfo.Kind);
+            BinaryStateIO.WriteString(writer, mediaInfo.ShortLabel);
+            BinaryStateIO.WriteString(writer, mediaInfo.DisplayName);
+            BinaryStateIO.WriteString(writer, mediaInfo.HostPath);
+        }
+
+        /// <summary>
+        /// Reads mounted media overlay metadata from a savestate stream.
+        /// </summary>
+        private static MountedMediaInfo ReadMountedMediaInfo(BinaryReader reader)
+        {
+            var kind = (MountedMediaKind)reader.ReadInt32();
+            string shortLabel = BinaryStateIO.ReadString(reader) ?? "NONE";
+            string displayName = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            string hostPath = BinaryStateIO.ReadString(reader) ?? string.Empty;
+            return new MountedMediaInfo(kind, shortLabel, displayName, hostPath);
+        }
+
+        /// <summary>
+        /// Writes mounted drive host paths.
+        /// </summary>
+        private void WriteMountedDrivePaths(BinaryWriter writer)
+        {
+            writer.Write(_mountedDrivePaths.Count);
+            foreach (KeyValuePair<int, string> entry in _mountedDrivePaths)
+            {
+                writer.Write(entry.Key);
+                BinaryStateIO.WriteString(writer, entry.Value);
+            }
+        }
+
+        /// <summary>
+        /// Reads mounted drive host paths.
+        /// </summary>
+        private void ReadMountedDrivePaths(BinaryReader reader)
+        {
+            _mountedDrivePaths.Clear();
+            int count = reader.ReadInt32();
+            for (int index = 0; index < count; index++)
+            {
+                int drive = reader.ReadInt32();
+                string path = BinaryStateIO.ReadString(reader);
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    _mountedDrivePaths[drive] = path;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Writes currently pressed host keys.
+        /// </summary>
+        private void WritePressedHostKeys(BinaryWriter writer)
+        {
+            writer.Write(_pressedHostKeys.Count);
+            foreach (Key key in _pressedHostKeys)
+            {
+                writer.Write((int)key);
+            }
+        }
+
+        /// <summary>
+        /// Reads currently pressed host keys.
+        /// </summary>
+        private void ReadPressedHostKeys(BinaryReader reader)
+        {
+            _pressedHostKeys.Clear();
+            int count = reader.ReadInt32();
+            for (int index = 0; index < count; index++)
+            {
+                _pressedHostKeys.Add((Key)reader.ReadInt32());
+            }
+            _bus.SetExternalNmi(_pressedHostKeys.Contains(Key.PageUp));
+        }
+
+        /// <summary>
+        /// Handles the advance drive clock operation.
+        /// </summary>
+        private void AdvanceDriveClock()
+        {
+            // The 1541 has its own 1 MHz clock. On a PAL C64 the computer runs
+            // at roughly 0.985 MHz, so custom bit-banged loaders expect the
+            // drive CPU to advance slightly faster than the C64 CPU.
+            _drive1541TargetCycles += 1000000.0 / _model.CpuHz;
+        }
+
+        /// <summary>
+        /// Runs the drives to current time routine.
+        /// </summary>
+        private bool RunDrivesToCurrentTime()
+        {
+            if (!AnyDriveNeedsClockTick())
+            {
+                _drive1541ExecutedCycles = _drive1541TargetCycles;
+                return false;
+            }
+
+            bool tickedDrive = false;
+            while (_drive1541ExecutedCycles + 1.0 <= _drive1541TargetCycles)
+            {
+                TickAllDrivesOnce();
+                tickedDrive = true;
+                _drive1541ExecutedCycles += 1.0;
+            }
+
+            return tickedDrive;
+        }
+
+        /// <summary>
+        /// Advances drive activity indicators while their emulated CPUs are parked.
+        /// </summary>
+        private void AdvanceIdleDriveVisualState(int c64Cycles)
+        {
+            if (c64Cycles <= 0)
+            {
+                return;
+            }
+
+            int driveCycles = Math.Max(1, (int)Math.Ceiling(c64Cycles * 1000000.0 / _model.CpuHz));
+            _drive8.AdvanceIdleVisualState(driveCycles);
+            _drive9.AdvanceIdleVisualState(driveCycles);
+            _drive10.AdvanceIdleVisualState(driveCycles);
+            _drive11.AdvanceIdleVisualState(driveCycles);
+        }
+
+        /// <summary>
+        /// Handles the any drive needs clock tick operation.
+        /// </summary>
+        private bool AnyDriveNeedsClockTick()
+        {
+            if (_accuracyOptions.RunDriveCpuContinuously)
+            {
+                return true;
+            }
+
+            return _drive8.NeedsClockTick ||
+                _drive9.NeedsClockTick ||
+                _drive10.NeedsClockTick ||
+                _drive11.NeedsClockTick;
+        }
+
+        /// <summary>
+        /// Advances the all drives once state by one emulated tick.
+        /// </summary>
+        private void TickAllDrivesOnce()
+        {
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive8.NeedsClockTick)
+            {
+                _drive8.Tick();
+            }
+
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive9.NeedsClockTick)
+            {
+                _drive9.Tick();
+            }
+
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive10.NeedsClockTick)
+            {
+                _drive10.Tick();
+            }
+
+            if (_accuracyOptions.RunDriveCpuContinuously || _drive11.NeedsClockTick)
+            {
+                _drive11.Tick();
+            }
+        }
+
+        /// <summary>
+        /// Handles the catch up drives for iec port access operation.
+        /// </summary>
+        private void CatchUpDrivesForIecPortAccess()
+        {
+            if (_catchingUpDrivesForIecAccess)
+            {
+                return;
+            }
+
+            _catchingUpDrivesForIecAccess = true;
+            try
+            {
+                RunDrivesToCurrentTime();
+            }
+            finally
+            {
+                _catchingUpDrivesForIecAccess = false;
+            }
+        }
+
+        /// <summary>
+        /// Leaves IEC reads on the line state that was stable at the start of the current C64 bus cycle.
+        /// </summary>
+        private void CatchUpDrivesForIecPortRead()
+        {
+            // TickCore advances active drives after each CPU microcycle. If a
+            // CIA read also ran the drive first, bit-banged fastloaders could
+            // see a drive line transition that belongs after the read.
+        }
+
+        /// <summary>
+        /// Returns whether a CIA IEC read must expose the current drive-side bus state.
+        /// </summary>
+        private bool ShouldCatchUpDrivesForIecPortRead()
+        {
+            return _accuracyOptions.RunDriveCpuContinuously ||
+                _drive8.HasCustomCodeActive ||
+                _drive9.HasCustomCodeActive ||
+                _drive10.HasCustomCodeActive ||
+                _drive11.HasCustomCodeActive;
+        }
+
+        /// <summary>
+        /// Applies startup accuracy policy to shortcut-capable subsystems.
+        /// </summary>
+        private void ApplyAccuracyOptions()
+        {
+            _cpu.EnableLoadHack = _accuracyOptions.EnableLoadHack;
+            _cpu.EnableKernalIecHooks = _accuracyOptions.EnableKernalIecHooks;
+            _forceSoftwareIecTransport = _accuracyOptions.ForceSoftwareIecTransport;
+            _enableInputInjection = _accuracyOptions.EnableInputInjection;
+            _drive8.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive9.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive10.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            _drive11.RunHardwareContinuously = _accuracyOptions.RunDriveCpuContinuously;
+            if (!_enableInputInjection)
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+            }
+        }
+
+        /// <summary>
+        /// Advances the core state by one emulated tick.
+        /// </summary>
+        private void TickCore()
+        {
+            AdvanceDriveClock();
+            _vic.PrepareCycle();
+            Phi2BusState phi2BusState = ComputePhi2BusState();
+            bool runReuDmaCycle = _bus.IsReuDmaActive && !phi2BusState.BaLow && !phi2BusState.VicCanAccess;
+            if (runReuDmaCycle)
+            {
+                _bus.SetPhi2BusState(false, false, false, false);
+            }
+            else
+            {
+                _bus.SetPhi2BusState(
+                    phi2BusState.BaLow,
+                    phi2BusState.AecLow,
+                    phi2BusState.CpuCanAccess,
+                    phi2BusState.VicCanAccess);
+            }
+
+            _cpu.Tick();
+            if (runReuDmaCycle)
+            {
+                _bus.TickReuDmaCycle();
+            }
+
+            _bus.TickExternalPorts();
+            _cia1.Tick();
+            _cia2.Tick();
+            _sid.Tick();
+            DrainQueuedPetsciiInputIntoKeyboardBuffer();
+            MirrorHeldHostInputIntoKeyboardBuffer();
+            _vic.FinishCycle();
+            if (AnyDriveNeedsClockTick())
+            {
+                RunDrivesToCurrentTime();
+            }
+        }
+
+        /// <summary>
+        /// Loads program bytes.
+        /// </summary>
+        private void LoadProgramBytes(byte[] programBytes)
+        {
+            ushort loadAddress;
+            ushort endAddress;
+            if (!PrgLoader.TryLoadIntoMemory(_bus, programBytes, out loadAddress, out endAddress))
+            {
+                return;
+            }
+
+            _bus.WriteRam(0x0090, 0x00);
+        }
+
+        /// <summary>
+        /// Mounts disk to drive.
+        /// </summary>
+        private string MountDiskToDrive(string path, int deviceNumber, bool updateLastMountedMedia)
+        {
+            IecDrive1541 drive = GetDrive(deviceNumber);
+            if (drive == null)
+            {
+                return "INVALID DRIVE";
+            }
+
+            D64Image mountedDiskImage;
+            try
+            {
+                mountedDiskImage = D64Image.Load(path);
+            }
+            catch (Exception)
+            {
+                return "INVALID D64";
+            }
+
+            drive.MountDisk(mountedDiskImage, LoadCompanionDiskSetImages(path, mountedDiskImage));
+            _mountedDrivePaths[deviceNumber] = path;
+
+            if (updateLastMountedMedia)
+            {
+                string displayName = string.IsNullOrWhiteSpace(mountedDiskImage.DiskName)
+                    ? Path.GetFileNameWithoutExtension(path)
+                    : mountedDiskImage.DiskName;
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.D64, "D" + deviceNumber, displayName, path);
+            }
+
+            return "DISK MOUNTED IN DRIVE " + deviceNumber;
+        }
+
+        /// <summary>
+        /// Rebuilds companion D64 side lists after loading a savestate.
+        /// </summary>
+        private void RefreshMountedDriveDiskSets()
+        {
+            foreach (KeyValuePair<int, string> mountedDrivePath in _mountedDrivePaths)
+            {
+                IecDrive1541 drive = GetDrive(mountedDrivePath.Key);
+                if (drive == null || !drive.IsMounted)
+                {
+                    continue;
+                }
+
+                drive.SetCompanionDisks(LoadCompanionDiskSetImages(mountedDrivePath.Value, null));
+            }
+        }
+
+        /// <summary>
+        /// Loads D64 images in the same folder that look like other sides of the mounted disk.
+        /// </summary>
+        private static List<D64Image> LoadCompanionDiskSetImages(string mountedPath, D64Image primaryImage)
+        {
+            var images = new List<D64Image>();
+            if (primaryImage != null)
+            {
+                images.Add(primaryImage);
+            }
+
+            if (string.IsNullOrWhiteSpace(mountedPath))
+            {
+                return images;
+            }
+
+            string directory = Path.GetDirectoryName(mountedPath);
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            {
+                return images;
+            }
+
+            string mountedFullPath = Path.GetFullPath(mountedPath);
+            string diskSetKey = GetD64DiskSetKey(Path.GetFileNameWithoutExtension(mountedPath));
+            string[] candidates;
+            try
+            {
+                candidates = Directory.GetFiles(directory, "*.d64", SearchOption.TopDirectoryOnly);
+                Array.Sort(candidates, StringComparer.OrdinalIgnoreCase);
+            }
+            catch (IOException)
+            {
+                return images;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return images;
+            }
+
+            for (int index = 0; index < candidates.Length; index++)
+            {
+                string candidate = candidates[index];
+                if (string.Equals(Path.GetFullPath(candidate), mountedFullPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(GetD64DiskSetKey(Path.GetFileNameWithoutExtension(candidate)), diskSetKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    images.Add(D64Image.Load(candidate));
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+                catch (InvalidDataException)
+                {
+                }
+            }
+
+            return images;
+        }
+
+        /// <summary>
+        /// Normalizes common disk-side tokens so Side A/B or Side 1/2 images share one lookup key.
+        /// </summary>
+        private static string GetD64DiskSetKey(string fileNameWithoutExtension)
+        {
+            string key = (fileNameWithoutExtension ?? string.Empty).ToUpperInvariant();
+            key = Regex.Replace(key, @"(^|[\s_.-])SIDE[\s_.-]?(?:[0-9]+|[A-Z])($|[\s_.-])", "$1SIDE$2", RegexOptions.CultureInvariant);
+            key = Regex.Replace(key, @"(^|[\s_.-])DISK[\s_.-]?(?:[0-9]+|[A-Z])($|[\s_.-])", "$1DISK$2", RegexOptions.CultureInvariant);
+            return key;
+        }
+
+        /// <summary>
+        /// Gets the drive value.
+        /// </summary>
+        private IecDrive1541 GetDrive(int deviceNumber)
+        {
+            switch (deviceNumber)
+            {
+                case 8:
+                    return _drive8;
+                case 9:
+                    return _drive9;
+                case 10:
+                    return _drive10;
+                case 11:
+                    return _drive11;
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Applies iec transport mode.
+        /// </summary>
+        private void ApplyIecTransportMode()
+        {
+            // Keep standard CBM-DOS LOADs on the drive-side IEC/DOS transport.
+            // This still goes over the IEC bus and no longer uses KERNAL hooks;
+            // uploaded/custom drive code hands over to the hardware/ROM side
+            // explicitly once the loader requests it.
+            bool forceSoftwareTransport = _forceSoftwareIecTransport;
+            _drive8.ForceSoftwareTransport = forceSoftwareTransport;
+            _drive9.ForceSoftwareTransport = forceSoftwareTransport;
+            _drive10.ForceSoftwareTransport = forceSoftwareTransport;
+            _drive11.ForceSoftwareTransport = forceSoftwareTransport;
+            bool useKernalBridgeTransport = _cpu.EnableKernalIecHooks;
+            _drive8.UseKernalBridgeTransport = useKernalBridgeTransport;
+            _drive9.UseKernalBridgeTransport = useKernalBridgeTransport;
+            _drive10.UseKernalBridgeTransport = useKernalBridgeTransport;
+            _drive11.UseKernalBridgeTransport = useKernalBridgeTransport;
+            // Keep passively observing the IEC bus even while the bridged
+            // KERNAL serial path is active. Standard LOADs still use the
+            // bridged transport for now, but many cracked loaders switch to
+            // direct CIA2 bit-banging after RUN. If we disable passive
+            // observation while hooks are enabled, the drive never sees those
+            // post-loader commands and cannot arm uploaded/custom drive code.
+            bool observeExternalIecTraffic = true;
+            _drive8.ObserveExternalIecTraffic = observeExternalIecTraffic;
+            _drive9.ObserveExternalIecTraffic = observeExternalIecTraffic;
+            _drive10.ObserveExternalIecTraffic = observeExternalIecTraffic;
+            _drive11.ObserveExternalIecTraffic = observeExternalIecTraffic;
+        }
+
+        /// <summary>
+        /// Returns whether the component can start drive custom execution.
+        /// </summary>
+        private bool CanStartDriveCustomExecution()
+        {
+            // Do not let uploaded drive code take over while the C64 side is
+            // still inside the KERNAL IEC command path. Real loaders return
+            // from CLOSE/UNLISTEN first, then their RAM-side bit-banged serial
+            // loop performs the first DATA/CLOCK handshake.
+            if (_cpu.State != CpuState.FetchOpcode)
+            {
+                return false;
+            }
+
+            if (_cpu.PC >= 0xE000 || _cpu.LastOpcodeAddress >= 0xE000)
+            {
+                return false;
+            }
+
+            return !HasImminentKernalCall(_cpu.PC);
+        }
+
+        /// <summary>
+        /// Returns whether imminent kernal call is available or active.
+        /// </summary>
+        private bool HasImminentKernalCall(ushort startAddress)
+        {
+            // A few fastloaders queue U3/M-E, return to their own RAM stub, and
+            // then immediately call KERNAL CLRCHN/CLOSE before switching to the
+            // bit-banged protocol. If the drive jumps into custom code in that
+            // tiny window, the remaining KERNAL call sees no standard listener
+            // and sets ST=$80. Delay the handoff while a nearby JSR/JMP targets
+            // the KERNAL ROM.
+            const int scanBytes = 8;
+            for (int offset = 0; offset < scanBytes; offset++)
+            {
+                ushort opcodeAddress = (ushort)(startAddress + offset);
+                byte opcode = _bus.ReadRam(opcodeAddress);
+                if (opcode != 0x20 && opcode != 0x4C)
+                {
+                    continue;
+                }
+
+                ushort operandLowAddress = (ushort)(opcodeAddress + 1);
+                ushort operandHighAddress = (ushort)(opcodeAddress + 2);
+                ushort target = (ushort)(_bus.ReadRam(operandLowAddress) | (_bus.ReadRam(operandHighAddress) << 8));
+                if (target >= 0xE000)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Returns whether the component can start drive rom transport.
+        /// </summary>
+        private bool CanStartDriveRomTransport()
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Handles the mirror held host input into keyboard buffer operation.
+        /// </summary>
+        private void MirrorHeldHostInputIntoKeyboardBuffer()
+        {
+            if (_queuedPetsciiInput.Count > 0)
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                return;
+            }
+
+            if (!CanMirrorHostInputIntoKeyboardBuffer())
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                return;
+            }
+
+            const ushort KeyboardBufferCountAddress = 0x00C6;
+            const int RepeatDelayCycles = 25000;
+
+            if (_bus.CpuRead(KeyboardBufferCountAddress) != 0)
+            {
+                return;
+            }
+
+            Key heldKey;
+            byte petscii;
+            if (!TryGetHeldPollKey(out heldKey, out petscii))
+            {
+                _lastMirroredPollKey = null;
+                _pollMirrorRepeatDelayCycles = 0;
+                return;
+            }
+
+            if (_lastMirroredPollKey.HasValue && _lastMirroredPollKey.Value == heldKey)
+            {
+                if (_pollMirrorRepeatDelayCycles > 0)
+                {
+                    _pollMirrorRepeatDelayCycles--;
+                    return;
+                }
+            }
+
+            EnqueuePetsciiByte(petscii);
+            _lastMirroredPollKey = heldKey;
+            _pollMirrorRepeatDelayCycles = RepeatDelayCycles;
+        }
+
+        /// <summary>
+        /// Attempts to get held poll key and reports whether it succeeded.
+        /// </summary>
+        private bool TryGetHeldPollKey(out Key key, out byte petscii)
+        {
+            Key[] priority =
+            {
+                Key.Number1,
+                Key.Number2,
+                Key.Space,
+                Key.Enter,
+                Key.BackSpace
+            };
+
+            for (int index = 0; index < priority.Length; index++)
+            {
+                Key candidate = priority[index];
+                if (_pressedHostKeys.Contains(candidate) && TryMapHostKeyToPetscii(candidate, out petscii))
+                {
+                    key = candidate;
+                    return true;
+                }
+            }
+
+            key = default(Key);
+            petscii = 0x00;
+            return false;
+        }
+
+        /// <summary>
+        /// Drains queued petscii input into the KERNAL keyboard buffer.
+        /// </summary>
+        private void DrainQueuedPetsciiInputIntoKeyboardBuffer()
+        {
+            while (_queuedPetsciiInput.Count > 0)
+            {
+                if (!EnqueuePetsciiByte(_queuedPetsciiInput.Peek()))
+                {
+                    return;
+                }
+
+                _queuedPetsciiInput.Dequeue();
+            }
+        }
+
+        /// <summary>
+        /// Enqueues petscii byte.
+        /// </summary>
+        private bool EnqueuePetsciiByte(byte petscii)
+        {
+            const ushort KeyboardBufferCountAddress = 0x00C6;
+            const ushort KeyboardBufferStartAddress = 0x0277;
+            const int KeyboardBufferCapacity = 10;
+
+            byte count = _bus.CpuRead(KeyboardBufferCountAddress);
+            if (count >= KeyboardBufferCapacity)
+            {
+                return false;
+            }
+
+            _bus.WriteRam((ushort)(KeyboardBufferStartAddress + count), petscii);
+            _bus.WriteRam(KeyboardBufferCountAddress, (byte)(count + 1));
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to enqueue host key to keyboard buffer and reports whether it succeeded.
+        /// </summary>
+        private void TryEnqueueHostKeyToKeyboardBuffer(Key key)
+        {
+            // Some cracked intros poll GETIN while they have IRQs disabled.
+            // In that situation the normal KERNAL keyboard scan does not refill
+            // the keyboard buffer, so host key presses would otherwise be
+            // invisible even though the program is explicitly waiting for a key.
+            if (!CanMirrorHostInputIntoKeyboardBuffer() || !IsBufferOnlyHotkey(key))
+            {
+                return;
+            }
+
+            byte petscii;
+            if (!TryMapHostKeyToPetscii(key, out petscii))
+            {
+                return;
+            }
+
+            EnqueuePetsciiByte(petscii);
+        }
+
+        /// <summary>
+        /// Returns whether buffer only hotkey is true.
+        /// </summary>
+        private static bool IsBufferOnlyHotkey(Key key)
+        {
+            return key == Key.Space ||
+                key == Key.Enter ||
+                key == Key.BackSpace ||
+                key == Key.Number1 ||
+                key == Key.Number2;
+        }
+
+        /// <summary>
+        /// Maps host key names that differ between the selected PC keyboard layout and C64 expectations.
+        /// </summary>
+        /// <param name="key">Frontend key.</param>
+        /// <returns>Logical key to pass to the emulated keyboard.</returns>
+        public Key MapHostKeyboardLayoutKey(Key key)
+        {
+            if (_hostKeyboardLayout == HostKeyboardLayout.Ger)
+            {
+                if (key == Key.Y)
+                {
+                    return Key.Z;
+                }
+
+                if (key == Key.Z)
+                {
+                    return Key.Y;
+                }
+            }
+
+            return key;
+        }
+
+        /// <summary>
+        /// Rebuilds the local C64 keyboard matrix from the currently held host keys.
+        /// </summary>
+        private void RefreshHostKeyboardMatrix()
+        {
+            // RESTORE is wired to NMI, not the CIA1 keyboard matrix. Keeping the
+            // line asserted while PageUp is held gives one CPU edge per press.
+            _bus.SetExternalNmi(_pressedHostKeys.Contains(Key.PageUp));
+            _mappedHostKeyboardKeys.Clear();
+
+            bool hostShiftHeld = ContainsShift(_pressedHostKeys) || ContainsShift(_pressedKeyboardOnlyHostKeys);
+            bool anyNonShiftKey = false;
+            bool allNonShiftKeysConsumeHostShift = true;
+            bool c64ShiftRequired = false;
+
+            foreach (Key key in _pressedHostKeys)
+            {
+                if (IsShiftKey(key) || IsJoystickKey(MapHostKeyboardLayoutKey(key)))
+                {
+                    continue;
+                }
+
+                anyNonShiftKey = true;
+                if (!AddHostKeyToC64KeyboardState(key, hostShiftHeld, ref c64ShiftRequired))
+                {
+                    allNonShiftKeysConsumeHostShift = false;
+                }
+            }
+
+            foreach (Key key in _pressedKeyboardOnlyHostKeys)
+            {
+                if (IsShiftKey(key))
+                {
+                    continue;
+                }
+
+                anyNonShiftKey = true;
+                if (!AddHostKeyToC64KeyboardState(key, hostShiftHeld, ref c64ShiftRequired))
+                {
+                    allNonShiftKeysConsumeHostShift = false;
+                }
+            }
+
+            if (c64ShiftRequired || (hostShiftHeld && (!anyNonShiftKey || !allNonShiftKeysConsumeHostShift)))
+            {
+                AddMappedHostKeyboardKey(Key.ShiftLeft);
+            }
+
+            _cia1.SetHostKeyboardState(_mappedHostKeyboardKeys);
+        }
+
+        /// <summary>
+        /// Adds the C64 key or key chord represented by one host key.
+        /// </summary>
+        /// <returns>True when host shift was consumed to select a layout-specific symbol.</returns>
+        private bool AddHostKeyToC64KeyboardState(Key hostKey, bool hostShiftHeld, ref bool c64ShiftRequired)
+        {
+            C64KeyChord chord;
+            bool consumesHostShift;
+            if (TryMapHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift))
+            {
+                AddMappedHostKeyboardKey(chord.Key);
+                c64ShiftRequired |= chord.Shift;
+                return consumesHostShift;
+            }
+
+            Key mappedKey = MapHostKeyboardLayoutKey(hostKey);
+            if (mappedKey != Key.Unknown)
+            {
+                AddMappedHostKeyboardKey(mappedKey);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Maps layout-specific printable host symbols to C64 matrix keys.
+        /// </summary>
+        private bool TryMapHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            if (_hostKeyboardLayout == HostKeyboardLayout.Ger)
+            {
+                return TryMapGermanHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift);
+            }
+
+            return TryMapEnglishHostSymbolKey(hostKey, hostShiftHeld, out chord, out consumesHostShift);
+        }
+
+        /// <summary>
+        /// Maps symbols on a US/English host keyboard to C64 matrix keys.
+        /// </summary>
+        private static bool TryMapEnglishHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            chord = default(C64KeyChord);
+            consumesHostShift = hostShiftHeld;
+
+            if (hostShiftHeld)
+            {
+                switch (hostKey)
+                {
+                    case Key.Number2:
+                        chord = new C64KeyChord(Key.Quote, false); // @
+                        return true;
+                    case Key.Number6:
+                        chord = new C64KeyChord(Key.C64ArrowUp, false); // ^
+                        return true;
+                    case Key.Number7:
+                        chord = new C64KeyChord(Key.Number6, true); // &
+                        return true;
+                    case Key.Number8:
+                        chord = new C64KeyChord(Key.KeypadMultiply, false); // *
+                        return true;
+                    case Key.Number9:
+                        chord = new C64KeyChord(Key.Number8, true); // (
+                        return true;
+                    case Key.Number0:
+                        chord = new C64KeyChord(Key.Number9, true); // )
+                        return true;
+                    case Key.Plus:
+                        chord = new C64KeyChord(Key.Plus, false); // +
+                        return true;
+                    case Key.Semicolon:
+                        chord = new C64KeyChord(Key.Semicolon, false); // :
+                        return true;
+                    case Key.Quote:
+                        chord = new C64KeyChord(Key.Number2, true); // "
+                        return true;
+                    case Key.Slash:
+                        chord = new C64KeyChord(Key.Slash, true); // ?
+                        return true;
+                    default:
+                        consumesHostShift = false;
+                        return false;
+                }
+            }
+
+            consumesHostShift = false;
+            switch (hostKey)
+            {
+                case Key.Plus:
+                    chord = new C64KeyChord(Key.BracketRight, false); // =
+                    return true;
+                case Key.Semicolon:
+                    chord = new C64KeyChord(Key.BracketLeft, false); // ;
+                    return true;
+                case Key.Quote:
+                    chord = new C64KeyChord(Key.Number7, true); // '
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Maps symbols on a German host keyboard to C64 matrix keys.
+        /// </summary>
+        private static bool TryMapGermanHostSymbolKey(Key hostKey, bool hostShiftHeld, out C64KeyChord chord, out bool consumesHostShift)
+        {
+            chord = default(C64KeyChord);
+            consumesHostShift = hostShiftHeld;
+
+            if (hostShiftHeld)
+            {
+                switch (hostKey)
+                {
+                    case Key.Number0:
+                        chord = new C64KeyChord(Key.BracketRight, false); // =
+                        return true;
+                    case Key.Number3:
+                        chord = new C64KeyChord(Key.Unknown, false); // Section sign has no direct C64 key here.
+                        return true;
+                    case Key.Number7:
+                        chord = new C64KeyChord(Key.Slash, false); // /
+                        return true;
+                    case Key.BracketRight:
+                        chord = new C64KeyChord(Key.KeypadMultiply, false); // *
+                        return true;
+                    case Key.Minus:
+                        chord = new C64KeyChord(Key.Slash, true); // ?
+                        return true;
+                    case Key.Comma:
+                        chord = new C64KeyChord(Key.BracketLeft, false); // ;
+                        return true;
+                    case Key.Period:
+                        chord = new C64KeyChord(Key.Semicolon, false); // :
+                        return true;
+                    case Key.BackSlash:
+                        chord = new C64KeyChord(Key.Number7, true); // '
+                        return true;
+                    case Key.Slash:
+                    case Key.Plus:
+                    case Key.BracketLeft:
+                    case Key.Semicolon:
+                    case Key.Quote:
+                        chord = new C64KeyChord(Key.Unknown, false);
+                        return true;
+                    default:
+                        consumesHostShift = false;
+                        return false;
+                }
+            }
+
+            consumesHostShift = false;
+            switch (hostKey)
+            {
+                case Key.BracketRight:
+                    chord = new C64KeyChord(Key.Plus, false); // +
+                    return true;
+                case Key.Slash:
+                    chord = new C64KeyChord(Key.Minus, false); // -
+                    return true;
+                case Key.BackSlash:
+                    chord = new C64KeyChord(Key.Number3, true); // #
+                    return true;
+                case Key.Minus:
+                case Key.Plus:
+                case Key.BracketLeft:
+                case Key.Semicolon:
+                case Key.Quote:
+                    chord = new C64KeyChord(Key.Unknown, false);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Adds a key to the rebuilt C64 matrix key set.
+        /// </summary>
+        private void AddMappedHostKeyboardKey(Key key)
+        {
+            if (key != Key.Unknown && !_mappedHostKeyboardKeys.Contains(key))
+            {
+                _mappedHostKeyboardKeys.Add(key);
+            }
+        }
+
+        /// <summary>
+        /// Returns whether any shift key is held in the supplied set.
+        /// </summary>
+        private static bool ContainsShift(HashSet<Key> keys)
+        {
+            return keys.Contains(Key.ShiftLeft) ||
+                keys.Contains(Key.LShift) ||
+                keys.Contains(Key.ShiftRight) ||
+                keys.Contains(Key.RShift);
+        }
+
+        /// <summary>
+        /// Returns whether the key is a host shift key.
+        /// </summary>
+        private static bool IsShiftKey(Key key)
+        {
+            return key == Key.ShiftLeft ||
+                key == Key.LShift ||
+                key == Key.ShiftRight ||
+                key == Key.RShift;
+        }
+
+        /// <summary>
+        /// Returns whether the key is routed to joystick input in normal play.
+        /// </summary>
+        private static bool IsJoystickKey(Key key)
+        {
+            return key == Key.Up ||
+                key == Key.Down ||
+                key == Key.Left ||
+                key == Key.Right ||
+                key == Key.ControlLeft ||
+                key == Key.LControl;
+        }
+
+        /// <summary>
+        /// Returns whether the component can mirror host input into keyboard buffer.
+        /// </summary>
+        private bool CanMirrorHostInputIntoKeyboardBuffer()
+        {
+            return _enableInputInjection && (_cpu.SR & 0x04) != 0 && IsLikelyIntroKeyboardPollLoop();
+        }
+
+        /// <summary>
+        /// Returns whether likely intro keyboard poll loop is true.
+        /// </summary>
+        private bool IsLikelyIntroKeyboardPollLoop()
+        {
+            ushort pc = _cpu.PC;
+
+            // Keep this host-side fallback away from the normal KERNAL/BASIC
+            // input loops. Otherwise held printable keys are injected into the
+            // BASIC keyboard buffer repeatedly in addition to the CIA matrix.
+            return pc >= 0xC020 && pc <= 0xC02D;
+        }
+
+        /// <summary>
+        /// Attempts to map host key to petscii and reports whether it succeeded.
+        /// </summary>
+        private static bool TryMapHostKeyToPetscii(Key key, out byte petscii)
+        {
+            petscii = 0x00;
+
+            switch (key)
+            {
+                case Key.A:
+                    petscii = (byte)'A';
+                    return true;
+                case Key.B:
+                    petscii = (byte)'B';
+                    return true;
+                case Key.C:
+                    petscii = (byte)'C';
+                    return true;
+                case Key.D:
+                    petscii = (byte)'D';
+                    return true;
+                case Key.E:
+                    petscii = (byte)'E';
+                    return true;
+                case Key.F:
+                    petscii = (byte)'F';
+                    return true;
+                case Key.G:
+                    petscii = (byte)'G';
+                    return true;
+                case Key.H:
+                    petscii = (byte)'H';
+                    return true;
+                case Key.I:
+                    petscii = (byte)'I';
+                    return true;
+                case Key.J:
+                    petscii = (byte)'J';
+                    return true;
+                case Key.K:
+                    petscii = (byte)'K';
+                    return true;
+                case Key.L:
+                    petscii = (byte)'L';
+                    return true;
+                case Key.M:
+                    petscii = (byte)'M';
+                    return true;
+                case Key.N:
+                    petscii = (byte)'N';
+                    return true;
+                case Key.O:
+                    petscii = (byte)'O';
+                    return true;
+                case Key.P:
+                    petscii = (byte)'P';
+                    return true;
+                case Key.Q:
+                    petscii = (byte)'Q';
+                    return true;
+                case Key.R:
+                    petscii = (byte)'R';
+                    return true;
+                case Key.S:
+                    petscii = (byte)'S';
+                    return true;
+                case Key.T:
+                    petscii = (byte)'T';
+                    return true;
+                case Key.U:
+                    petscii = (byte)'U';
+                    return true;
+                case Key.V:
+                    petscii = (byte)'V';
+                    return true;
+                case Key.W:
+                    petscii = (byte)'W';
+                    return true;
+                case Key.X:
+                    petscii = (byte)'X';
+                    return true;
+                case Key.Y:
+                    petscii = (byte)'Y';
+                    return true;
+                case Key.Z:
+                    petscii = (byte)'Z';
+                    return true;
+                case Key.Number0:
+                    petscii = (byte)'0';
+                    return true;
+                case Key.Number1:
+                    petscii = (byte)'1';
+                    return true;
+                case Key.Number2:
+                    petscii = (byte)'2';
+                    return true;
+                case Key.Number3:
+                    petscii = (byte)'3';
+                    return true;
+                case Key.Number4:
+                    petscii = (byte)'4';
+                    return true;
+                case Key.Number5:
+                    petscii = (byte)'5';
+                    return true;
+                case Key.Number6:
+                    petscii = (byte)'6';
+                    return true;
+                case Key.Number7:
+                    petscii = (byte)'7';
+                    return true;
+                case Key.Number8:
+                    petscii = (byte)'8';
+                    return true;
+                case Key.Number9:
+                    petscii = (byte)'9';
+                    return true;
+                case Key.ControlLeft:
+                    petscii = 0x20;
+                    return true;
+                case Key.Space:
+                    petscii = 0x20;
+                    return true;
+                case Key.Enter:
+                    petscii = 0x0D;
+                    return true;
+                case Key.BackSpace:
+                    petscii = 0x14;
+                    return true;
+                case Key.Comma:
+                    petscii = (byte)',';
+                    return true;
+                case Key.Period:
+                    petscii = (byte)'.';
+                    return true;
+                case Key.Minus:
+                    petscii = (byte)'-';
+                    return true;
+                case Key.Slash:
+                    petscii = (byte)'/';
+                    return true;
+                case Key.Quote:
+                    petscii = (byte)'"';
+                    return true;
+                case Key.Semicolon:
+                    petscii = (byte)';';
+                    return true;
+                case Key.Plus:
+                    petscii = (byte)'=';
+                    return true;
+                default:
+                    return false;
+            }
+        }
+    }
+}

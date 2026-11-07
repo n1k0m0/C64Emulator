@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EmulatorSource Condition="'$(EmulatorSource)' == ''">../../../C64Emulator_reference</EmulatorSource>
+    <DefineConstants Condition="Exists('$(EmulatorPatchDirectory)/C64System.cs')">$(DefineConstants);RESTORE_KEY_PATCH</DefineConstants>
+    <DefineConstants Condition="Exists('$(EmulatorPatchDirectory)/C64Model.cs')">$(DefineConstants);VIDEO_STANDARD_PATCH</DefineConstants>
+    <DefineConstants Condition="Exists('$(EmulatorPatchDirectory)/TapImage.cs')">$(DefineConstants);TAPE_SERIAL_RC3_PATCH</DefineConstants>
+    <DefineConstants Condition="Exists('$(EmulatorPatchDirectory)/D64Image.cs')">$(DefineConstants);DOS_RC3_PATCH</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(EmulatorSource)/C64Emulator/Cpu/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Cia/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Machine/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Cartridge/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Expansion/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Input/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Iec/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Drive1541/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Media/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Vic/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/Sid/Sid.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/SaveStates/*.cs" />
+    <Compile Include="$(EmulatorSource)/C64Emulator/DevTools/*.cs" />
+    <Compile Include="$(EmulatorSource)/SharpPixels/Input/OpenTkInputCompatibility.cs" />
+    <Compile Include="NullAudio.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="DataFileTests.cs" />
+    <Compile Include="RuntimeControlTests.cs" />
+    <Compile Include="VideoStandardTests.cs" />
+    <Compile Include="VideoSpriteTests.cs" />
+    <Compile Include="TapeHostTests.cs" />
+    <Compile Include="DosRc3Tests.cs" Condition="Exists('DosRc3Tests.cs')" />
+    <Compile Include="EditorRc3Tests.cs" Condition="Exists('EditorRc3Tests.cs')" />
+    <Compile Include="TapeSerialRc3Tests.cs" Condition="Exists('TapeSerialRc3Tests.cs')" />
+    <Compile Include="NativeSerialRc3Tests.cs" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Media/D64Image.cs" Condition="Exists('$(EmulatorPatchDirectory)/D64Image.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/D64Image.cs" Condition="Exists('$(EmulatorPatchDirectory)/D64Image.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Iec/IecDrive1541.cs" Condition="Exists('$(EmulatorPatchDirectory)/IecDrive1541.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/IecDrive1541.cs" Condition="Exists('$(EmulatorPatchDirectory)/IecDrive1541.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Machine/C64System.cs" Condition="Exists('$(EmulatorPatchDirectory)/C64System.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/C64System.cs" Condition="Exists('$(EmulatorPatchDirectory)/C64System.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Machine/C64Model.cs" Condition="Exists('$(EmulatorPatchDirectory)/C64Model.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/C64Model.cs" Condition="Exists('$(EmulatorPatchDirectory)/C64Model.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Machine/SystemBus.cs" Condition="Exists('$(EmulatorPatchDirectory)/SystemBus.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/SystemBus.cs" Condition="Exists('$(EmulatorPatchDirectory)/SystemBus.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Cia/Cia1.cs" Condition="Exists('$(EmulatorPatchDirectory)/Cia1.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/Cia1.cs" Condition="Exists('$(EmulatorPatchDirectory)/Cia1.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Cia/Cia2.cs" Condition="Exists('$(EmulatorPatchDirectory)/Cia2.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/Cia2.cs" Condition="Exists('$(EmulatorPatchDirectory)/Cia2.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Vic/Vic2.cs" Condition="Exists('$(EmulatorPatchDirectory)/Vic2.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/Vic2.cs" Condition="Exists('$(EmulatorPatchDirectory)/Vic2.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Vic/VicBusPlan.cs" Condition="Exists('$(EmulatorPatchDirectory)/VicBusPlan.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/VicBusPlan.cs" Condition="Exists('$(EmulatorPatchDirectory)/VicBusPlan.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Sid/Sid.cs" Condition="Exists('$(EmulatorPatchDirectory)/Sid.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/Sid.cs" Condition="Exists('$(EmulatorPatchDirectory)/Sid.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/TapImage.cs" Condition="Exists('$(EmulatorPatchDirectory)/TapImage.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/TapeDeck.cs" Condition="Exists('$(EmulatorPatchDirectory)/TapeDeck.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/UserPort.cs" Condition="Exists('$(EmulatorPatchDirectory)/UserPort.cs')" />
+    <Compile Remove="$(EmulatorSource)/C64Emulator/Media/MountedMediaKind.cs" Condition="Exists('$(EmulatorPatchDirectory)/MountedMediaKind.cs')" />
+    <Compile Include="$(EmulatorPatchDirectory)/MountedMediaKind.cs" Condition="Exists('$(EmulatorPatchDirectory)/MountedMediaKind.cs')" />
+  </ItemGroup>
+</Project>

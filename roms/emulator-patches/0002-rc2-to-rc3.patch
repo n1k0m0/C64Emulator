@@ -1,0 +1,3163 @@
+diff --git a/C64Emulator/Media/D64Image.cs b/C64Emulator/Media/D64Image.cs
+--- a/C64Emulator/Media/D64Image.cs
++++ b/C64Emulator/Media/D64Image.cs
+@@ -94,12 +94,12 @@
+         /// <summary>
+         /// Gets the PETSCII disk name.
+         /// </summary>
+-        public string DiskName { get; }
++        public string DiskName { get; private set; }
+ 
+         /// <summary>
+         /// Gets the disk identifier.
+         /// </summary>
+-        public string DiskId { get; }
++        public string DiskId { get; private set; }
+ 
+         /// <summary>
+         /// Handles the load operation.
+@@ -747,13 +747,32 @@
+             Encoding.ASCII.GetBytes(name).CopyTo(work, target + 5);
+             work[target + 30] = (byte)count; work[target + 31] = (byte)(count >> 8);
+ 
+-            string temporary = HostPath + ".save-" + Guid.NewGuid().ToString("N");
++            return CommitCandidate(work, out statusText);
++        }
++
++        // Functional DOS operations. Every mutating request builds a separate
++        // candidate image and publishes it only after the host write succeeds.
++        private bool CanPersist(out string statusText)
++        {
++            statusText = "00, OK,00,00";
++            if (string.IsNullOrWhiteSpace(HostPath))
++            { statusText = "74, DRIVE NOT READY,00,00"; return false; }
++            if (IsReadOnly || (File.Exists(HostPath) && new FileInfo(HostPath).IsReadOnly))
++            { statusText = "26, WRITE PROTECT ON,00,00"; return false; }
++            return true;
++        }
++
++        private bool CommitCandidate(byte[] work, out string statusText, byte[] errorInfo = null)
++        {
++            if (!CanPersist(out statusText)) return false;
++            byte[] errors = errorInfo ?? _errorInfo;
++            string temporary = HostPath + ".dos-" + Guid.NewGuid().ToString("N");
+             try
+             {
+                 using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                 {
+                     stream.Write(work, 0, work.Length);
+-                    if (_errorInfo != null) stream.Write(_errorInfo, 0, _errorInfo.Length);
++                    if (errors != null) stream.Write(errors, 0, errors.Length);
+                     stream.Flush(true);
+                 }
+                 File.Move(temporary, HostPath, true);
+@@ -767,11 +786,511 @@
+                 catch (UnauthorizedAccessException) { }
+             }
+             Array.Copy(work, _data, work.Length);
++            if (errors != null && _errorInfo != null) Array.Copy(errors, _errorInfo, errors.Length);
++            RefreshDirectory();
++            statusText = "00, OK,00,00";
++            return true;
++        }
++
++        public void RefreshDirectory()
++        {
+             _trackStreamCache.Clear();
+             _entries.Clear(); _entries.AddRange(ReadDirectoryEntries());
++            DiskName = ReadDiskName(); DiskId = ReadDiskId();
++        }
++
++        private bool CheckDosSectorReadable(int track, int sector, out string statusText)
++        {
++            statusText = "71, DIR ERROR,00,00";
++            if (!TryGetSectorErrorCode(track, sector, out byte error) || error == 1) return true;
++            int code = error switch { 2 => 20, 3 => 21, 4 => 22, 5 => 23, 7 => 25, 8 => 26, 9 => 27, 10 => 28, 11 => 29, 15 => 74, _ => 66 };
++            string message = code switch { 25 or 28 => "WRITE ERROR", 26 => "WRITE PROTECT ON", 29 => "DISK ID MISMATCH", 74 => "DRIVE NOT READY", 66 => "ILLEGAL TRACK OR SECTOR", _ => "READ ERROR" };
++            statusText = $"{code:00}, {message},{track:00},{sector:00}"; return false;
++        }
++
++        private bool TryDirectoryLayout(byte[] image, out List<int> entries,
++            out List<(int Track, int Sector)> sectors, out string statusText)
++        {
++            entries = new List<int>(); sectors = new List<(int, int)>();
++            statusText = "71, DIR ERROR,00,00";
++            int track = 18, sector = 1;
++            var visited = new HashSet<int>();
++            while (track != 0)
++            {
++                if (track != 18 || sector == 0 || !TryGetSectorOffset(track, sector, out int at) ||
++                    !visited.Add((track << 8) | sector)) return false;
++                if (!CheckDosSectorReadable(track, sector, out statusText)) return false;
++                sectors.Add((track, sector));
++                for (int slot = 0; slot < 8; slot++) entries.Add(at + slot * 32);
++                track = image[at]; sector = image[at + 1];
++            }
++            statusText = "00, OK,00,00";
++            return sectors.Count > 0;
++        }
++
++        private bool BamIsFree(byte[] image, int track, int sector)
++        {
++            TryGetSectorOffset(18, 0, out int bam);
++            return (image[bam + track * 4 + 1 + sector / 8] & (1 << (sector & 7))) != 0;
++        }
++
++        private void BamMark(byte[] image, int track, int sector, bool free)
++        {
++            TryGetSectorOffset(18, 0, out int bam);
++            int at = bam + track * 4, bits = at + 1 + sector / 8;
++            byte mask = (byte)(1 << (sector & 7));
++            if (free) image[bits] |= mask; else image[bits] &= (byte)~mask;
++            int count = 0;
++            for (int s = 0; s < GetSectorsPerTrack(track); s++)
++                if ((image[at + 1 + s / 8] & (1 << (s & 7))) != 0) count++;
++            image[at] = (byte)count;
++        }
++
++        private string EntryName(byte[] image, int entry) => DecodePetsciiName(image, entry + 5, 16).ToUpperInvariant();
++
++        private bool TryCollectFile(byte[] image, int entry, out byte[] bytes,
++            out List<(int Track, int Sector)> allSectors, out string statusText)
++        {
++            bytes = Array.Empty<byte>(); allSectors = new List<(int, int)>();
++            statusText = "71, DIR ERROR,00,00";
++            int type = image[entry + 2] & 7;
++            if (type < 1 || type > 4) return false;
++            var dataSectors = new List<(int Track, int Sector)>();
++            var visited = new HashSet<int>(); var payload = new List<byte>();
++            int track = image[entry + 3], sector = image[entry + 4];
++            if (track == 0) return false;
++            while (track != 0)
++            {
++                if (track == 18 || track > 35 || !TryGetSectorOffset(track, sector, out int at) ||
++                    !visited.Add((track << 8) | sector)) return false;
++                if (!CheckDosSectorReadable(track, sector, out statusText)) return false;
++                dataSectors.Add((track, sector));
++                int used = image[at] == 0 ? image[at + 1] - 1 : 254;
++                if (used < 0 || used > 254) return false;
++                for (int i = 0; i < used; i++) payload.Add(image[at + 2 + i]);
++                track = image[at]; sector = image[at + 1];
++            }
++            allSectors.AddRange(dataSectors);
++            if (type == 4)
++            {
++                int length = image[entry + 23];
++                if (length < 1 || length > 254 || payload.Count == 0 || payload.Count % length != 0) return false;
++                if (dataSectors.Count > 720 || payload.Count / length > 65535) return false;
++                var sides = new List<(int Track, int Sector)>();
++                track = image[entry + 21]; sector = image[entry + 22];
++                if (track == 0) return false;
++                while (track != 0)
++                {
++                    if (track == 18 || track > 35 || sides.Count >= 6 ||
++                        !TryGetSectorOffset(track, sector, out int at) || !visited.Add((track << 8) | sector)) return false;
++                    if (!CheckDosSectorReadable(track, sector, out statusText)) return false;
++                    if (image[at + 2] != sides.Count || image[at + 3] != length) { statusText = "71, DIR ERROR,00,00"; return false; }
++                    sides.Add((track, sector));
++                    track = image[at]; sector = image[at + 1];
++                }
++                if (sides.Count != (dataSectors.Count + 119) / 120) return false;
++                for (int side = 0; side < sides.Count; side++)
++                {
++                    TryGetSectorOffset(sides[side].Track, sides[side].Sector, out int at);
++                    int count = Math.Min(120, dataSectors.Count - side * 120);
++                    if (side == sides.Count - 1 && image[at + 1] != 15 + 2 * count) return false;
++                    // Unused index slots are not part of the file and may contain
++                    // stale bytes on images produced by other DOS implementations.
++                    for (int i = 0; i < sides.Count; i++)
++                    {
++                        int t = sides[i].Track, s = sides[i].Sector;
++                        if (image[at + 4 + i * 2] != t || image[at + 5 + i * 2] != s) return false;
++                    }
++                    for (int i = 0; i < count; i++)
++                    {
++                        int index = side * 120 + i;
++                        int t = dataSectors[index].Track, s = dataSectors[index].Sector;
++                        if (image[at + 16 + i * 2] != t || image[at + 17 + i * 2] != s) return false;
++                    }
++                }
++                allSectors.AddRange(sides);
++            }
++            bytes = payload.ToArray();
+             statusText = "00, OK,00,00";
+             return true;
+         }
++
++        private bool TryOwnership(byte[] image, List<int> entries,
++            List<(int Track, int Sector)> directory, out Dictionary<int, List<(int Track, int Sector)>> files,
++            out HashSet<int> occupied, out string statusText)
++        {
++            files = new Dictionary<int, List<(int, int)>>(); occupied = new HashSet<int> { 18 << 8 };
++            foreach (var s in directory) occupied.Add((s.Track << 8) | s.Sector);
++            foreach (int entry in entries)
++            {
++                if ((image[entry + 2] & 7) == 0 || (image[entry + 2] & 0x80) == 0) continue;
++                if (!TryCollectFile(image, entry, out _, out var chain, out statusText)) return false;
++                foreach (var s in chain)
++                    if (!occupied.Add((s.Track << 8) | s.Sector))
++                    { statusText = "71, DIR ERROR,00,00"; return false; }
++                files[entry] = chain;
++            }
++            statusText = "00, OK,00,00";
++            return true;
++        }
++
++        private static bool TryDosName(string input, bool patterns, out string name, out string statusText)
++        {
++            name = (input ?? string.Empty).Trim().ToUpperInvariant();
++            statusText = "33, SYNTAX ERROR,00,00";
++            int colon = name.IndexOf(':');
++            if (colon >= 0)
++            {
++                if (colon > 0 && name.Substring(0, colon) != "0")
++                { statusText = "74, DRIVE NOT READY,00,00"; return false; }
++                name = name.Substring(colon + 1);
++            }
++            if (name.Length == 0) { statusText = "34, SYNTAX ERROR,00,00"; return false; }
++            if (name.Length > 16) return false;
++            foreach (char c in name)
++                if (c < 0x20 || c > 0x7E || c == '"' || c == ':' || c == ',' || c == '=' ||
++                    (!patterns && (c == '*' || c == '?'))) return false;
++            statusText = "00, OK,00,00";
++            return true;
++        }
++
++        public sealed class RelativeFileData
++        {
++            public string Name { get; internal set; }
++            public int RecordLength { get; internal set; }
++            public byte[] Bytes { get; internal set; }
++            public bool Locked { get; internal set; }
++            public int RecordCount => Bytes.Length / RecordLength;
++        }
++
++        /// <summary>True for an explicit L/REL specification or a matching existing REL.</summary>
++        public bool IsRelativeSpecification(string specification)
++        {
++            string request = specification ?? string.Empty;
++            int comma = request.IndexOf(',');
++            if (comma >= 0)
++            {
++                string kind = request.Substring(comma + 1).Split(',')[0].Trim().ToUpperInvariant();
++                return kind == "L" || kind == "REL";
++            }
++            request = request.TrimStart('@');
++            if (!TryDosName(request, true, out string name, out _)) return false;
++            foreach (var entry in _entries)
++                if (entry.FileTypeName == "REL" && MatchesSequentialName(entry.NormalizedName, name)) return true;
++            return false;
++        }
++
++        /// <summary>OPEN L takes a binary record-length byte, not a decimal field.</summary>
++        public bool TryOpenRelativeFile(string specification, out RelativeFileData file, out string statusText)
++        {
++            file = null;
++            string request = specification ?? string.Empty;
++            if (request.StartsWith("@", StringComparison.Ordinal)) request = request.Substring(1);
++            int comma = request.IndexOf(','); int length = 0;
++            string rawName = comma < 0 ? request : request.Substring(0, comma);
++            if (comma >= 0)
++            {
++                int next = request.IndexOf(',', comma + 1);
++                string type = (next < 0 ? request.Substring(comma + 1) : request.Substring(comma + 1, next - comma - 1)).Trim().ToUpperInvariant();
++                if (type != "L" && type != "REL")
++                { statusText = "64, FILE TYPE MISMATCH,00,00"; return false; }
++                if (next >= 0)
++                {
++                    if (request.Length != next + 2 || request[next + 1] < 1 || request[next + 1] > 254)
++                    { statusText = "51, OVERFLOW IN RECORD,00,00"; return false; }
++                    length = request[next + 1];
++                }
++            }
++            if (!TryDosName(rawName, true, out string name, out statusText)) return false;
++            if (!TryDirectoryLayout(_data, out var entries, out _, out statusText)) return false;
++            foreach (int entry in entries)
++            {
++                if ((_data[entry + 2] & 7) == 0 || !MatchesSequentialName(EntryName(_data, entry), name)) continue;
++                if ((_data[entry + 2] & 7) != 4 || (length != 0 && length != _data[entry + 23]))
++                { statusText = "64, FILE TYPE MISMATCH,00,00"; return false; }
++                if ((_data[entry + 2] & 0x80) == 0)
++                { statusText = "60, WRITE FILE OPEN,00,00"; return false; }
++                if (!TryCollectFile(_data, entry, out byte[] bytes, out _, out statusText)) return false;
++                file = new RelativeFileData { Name = EntryName(_data, entry), RecordLength = _data[entry + 23],
++                    Bytes = bytes, Locked = (_data[entry + 2] & 0x40) != 0 };
++                return true;
++            }
++            if (length == 0) { statusText = "62, FILE NOT FOUND,00,00"; return false; }
++            if (!TryDosName(name, false, out name, out statusText)) return false;
++            byte[] empty = new byte[length]; empty[0] = 0xFF;
++            if (!StoreDosFile(name, 4, length, empty, false, out statusText)) return false;
++            file = new RelativeFileData { Name = name, RecordLength = length, Bytes = empty };
++            return true;
++        }
++
++        /// <summary>Writes fixed-length records and real REL side-sector index blocks atomically.</summary>
++        public bool TryWriteRelativeFile(string name, int recordLength, byte[] bytes, out string statusText)
++        {
++            if (!TryDosName(name, false, out name, out statusText)) return false;
++            if (recordLength < 1 || recordLength > 254 || bytes == null || bytes.Length == 0 || bytes.Length % recordLength != 0)
++            { statusText = "51, OVERFLOW IN RECORD,00,00"; return false; }
++            return StoreDosFile(name, 4, recordLength, bytes, true, out statusText);
++        }
++
++        private bool StoreDosFile(string name, int type, int recordLength, byte[] bytes,
++            bool replace, out string statusText)
++        {
++            if (!CanPersist(out statusText)) return false;
++            if (type == 4 && ((long)bytes.Length > 720 * 254 || bytes.Length / recordLength > 65535))
++            { statusText = "52, FILE TOO LARGE,00,00"; return false; }
++            if (bytes.Length > 664 * 254) { statusText = "72, DISK FULL,00,00"; return false; }
++            byte[] work = (byte[])_data.Clone();
++            if (!TryDirectoryLayout(work, out var entries, out var directories, out statusText) ||
++                !TryOwnership(work, entries, directories, out var chains, out var occupied, out statusText)) return false;
++            int target = -1, freeEntry = -1;
++            foreach (int entry in entries)
++            {
++                if ((work[entry + 2] & 7) == 0) { if (freeEntry < 0) freeEntry = entry; continue; }
++                if (EntryName(work, entry) == name) { target = entry; break; }
++            }
++            if (target >= 0)
++            {
++                if (!replace) { statusText = "63, FILE EXISTS,00,00"; return false; }
++                if ((work[target + 2] & 7) != type || (type == 4 && work[target + 23] != recordLength))
++                { statusText = "64, FILE TYPE MISMATCH,00,00"; return false; }
++                if ((work[target + 2] & 0x80) == 0)
++                { statusText = "60, WRITE FILE OPEN,00,00"; return false; }
++                if ((work[target + 2] & 0x40) != 0)
++                { statusText = "26, WRITE PROTECT ON,00,00"; return false; }
++                foreach (var s in chains[target])
++                { BamMark(work, s.Track, s.Sector, true); occupied.Remove((s.Track << 8) | s.Sector); }
++            }
++            else
++            {
++                if (replace) { statusText = "62, FILE NOT FOUND,00,00"; return false; }
++                target = freeEntry;
++                if (target < 0)
++                {
++                    int next = -1;
++                    for (int s = 2; s < GetSectorsPerTrack(18); s++)
++                        if (BamIsFree(work, 18, s) && !occupied.Contains((18 << 8) | s)) { next = s; break; }
++                    if (next < 0) { statusText = "72, DISK FULL,00,00"; return false; }
++                    TryGetSectorOffset(18, next, out target);
++                    var last = directories[directories.Count - 1];
++                    TryGetSectorOffset(last.Track, last.Sector, out int previous);
++                    work[previous] = 18; work[previous + 1] = (byte)next;
++                    Array.Clear(work, target, 256); work[target + 1] = 255;
++                    BamMark(work, 18, next, false); occupied.Add((18 << 8) | next);
++                }
++            }
++            int dataCount = Math.Max(1, (bytes.Length + 253) / 254);
++            int sideCount = type == 4 ? (dataCount + 119) / 120 : 0;
++            int required = dataCount + sideCount;
++            var blocks = new List<(int Track, int Sector)>();
++            for (int pass = 0; pass < 2 && blocks.Count < required; pass++)
++            {
++                int begin = pass == 0 ? 17 : 19, end = pass == 0 ? 1 : 35;
++                for (int track = begin; pass == 0 ? track >= end : track <= end; track += pass == 0 ? -1 : 1)
++                {
++                    for (int sector = 0; sector < GetSectorsPerTrack(track) && blocks.Count < required; sector++)
++                    {
++                        if (!BamIsFree(work, track, sector) || occupied.Contains((track << 8) | sector)) continue;
++                        blocks.Add((track, sector)); BamMark(work, track, sector, false);
++                    }
++                    if (blocks.Count == required) break;
++                }
++            }
++            if (blocks.Count != required) { statusText = "72, DISK FULL,00,00"; return false; }
++            int copied = 0;
++            for (int i = 0; i < dataCount; i++)
++            {
++                TryGetSectorOffset(blocks[i].Track, blocks[i].Sector, out int at);
++                Array.Clear(work, at, 256);
++                int take = Math.Min(254, bytes.Length - copied);
++                if (i + 1 < dataCount) { work[at] = (byte)blocks[i + 1].Track; work[at + 1] = (byte)blocks[i + 1].Sector; }
++                else work[at + 1] = (byte)(take + 1);
++                Array.Copy(bytes, copied, work, at + 2, take); copied += take;
++            }
++            for (int i = 0; i < sideCount; i++)
++            {
++                TryGetSectorOffset(blocks[dataCount + i].Track, blocks[dataCount + i].Sector, out int at);
++                Array.Clear(work, at, 256);
++                int count = Math.Min(120, dataCount - i * 120);
++                if (i + 1 < sideCount)
++                { work[at] = (byte)blocks[dataCount + i + 1].Track; work[at + 1] = (byte)blocks[dataCount + i + 1].Sector; }
++                else work[at + 1] = (byte)(15 + count * 2);
++                work[at + 2] = (byte)i; work[at + 3] = (byte)recordLength;
++                for (int s = 0; s < sideCount; s++)
++                { work[at + 4 + s * 2] = (byte)blocks[dataCount + s].Track; work[at + 5 + s * 2] = (byte)blocks[dataCount + s].Sector; }
++                for (int d = 0; d < count; d++)
++                { work[at + 16 + d * 2] = (byte)blocks[i * 120 + d].Track; work[at + 17 + d * 2] = (byte)blocks[i * 120 + d].Sector; }
++            }
++            Array.Clear(work, target + 2, 30);
++            work[target + 2] = (byte)(0x80 | type);
++            work[target + 3] = (byte)blocks[0].Track; work[target + 4] = (byte)blocks[0].Sector;
++            for (int i = 0; i < 16; i++) work[target + 5 + i] = 0xA0;
++            Encoding.ASCII.GetBytes(name).CopyTo(work, target + 5);
++            if (type == 4)
++            {
++                work[target + 21] = (byte)blocks[dataCount].Track; work[target + 22] = (byte)blocks[dataCount].Sector;
++                work[target + 23] = (byte)recordLength;
++            }
++            work[target + 30] = (byte)required; work[target + 31] = (byte)(required >> 8);
++            return CommitCandidate(work, out statusText);
++        }
++
++        public bool TryRenameFile(string destination, string source, out string statusText)
++        {
++            if (!CanPersist(out statusText) || !TryDosName(destination, false, out string name, out statusText) ||
++                !TryDosName(source, false, out string old, out statusText)) return false;
++            byte[] work = (byte[])_data.Clone();
++            if (!TryDirectoryLayout(work, out var entries, out _, out statusText)) return false;
++            int target = -1;
++            foreach (int entry in entries)
++            {
++                if ((work[entry + 2] & 7) == 0) continue;
++                if (EntryName(work, entry) == name) { statusText = "63, FILE EXISTS,00,00"; return false; }
++                if (EntryName(work, entry) == old) target = entry;
++            }
++            if (target < 0) { statusText = "62, FILE NOT FOUND,00,00"; return false; }
++            if ((work[target + 2] & 0x80) == 0) { statusText = "60, WRITE FILE OPEN,00,00"; return false; }
++            for (int i = 0; i < 16; i++) work[target + 5 + i] = 0xA0;
++            Encoding.ASCII.GetBytes(name).CopyTo(work, target + 5);
++            return CommitCandidate(work, out statusText);
++        }
++
++        public bool TryScratchFiles(string[] specifications, out int scratched, out string statusText)
++        {
++            scratched = 0;
++            if (!CanPersist(out statusText)) return false;
++            if (specifications == null || specifications.Length == 0)
++            { statusText = "34, SYNTAX ERROR,00,00"; return false; }
++            var patterns = new List<(string Name, int Type)>();
++            foreach (string item in specifications)
++            {
++                string text = item; int type = 0, equals = text.IndexOf('=');
++                if (equals >= 0)
++                {
++                    string qualifier = text.Substring(equals + 1).Trim().ToUpperInvariant();
++                    type = qualifier switch { "S" or "SEQ" => 1, "P" or "PRG" => 2, "U" or "USR" => 3, "L" or "REL" => 4, _ => -1 };
++                    if (type < 0) { statusText = "64, FILE TYPE MISMATCH,00,00"; return false; }
++                    text = text.Substring(0, equals);
++                }
++                if (!TryDosName(text, true, out string pattern, out statusText)) return false;
++                patterns.Add((pattern, type));
++            }
++            byte[] work = (byte[])_data.Clone();
++            if (!TryDirectoryLayout(work, out var entries, out var directory, out statusText) ||
++                !TryOwnership(work, entries, directory, out var chains, out _, out statusText)) return false;
++            foreach (int entry in entries)
++            {
++                int type = work[entry + 2] & 7;
++                if (type == 0 || (work[entry + 2] & 0x40) != 0) continue;
++                bool match = false;
++                foreach (var pattern in patterns)
++                    if ((pattern.Type == 0 || pattern.Type == type) && MatchesSequentialName(EntryName(work, entry), pattern.Name)) { match = true; break; }
++                if (!match) continue;
++                if (!chains.TryGetValue(entry, out var sectors))
++                { statusText = "60, WRITE FILE OPEN,00,00"; return false; }
++                foreach (var s in sectors) BamMark(work, s.Track, s.Sector, true);
++                work[entry + 2] = 0; scratched++;
++            }
++            if (scratched > 0 && !CommitCandidate(work, out statusText)) { scratched = 0; return false; }
++            statusText = $"01, FILES SCRATCHED,{scratched:00},00";
++            return true;
++        }
++
++        public bool TryCopyFiles(string destination, string[] sources, out string statusText)
++        {
++            if (!CanPersist(out statusText) || !TryDosName(destination, false, out string name, out statusText)) return false;
++            if (sources == null || sources.Length < 1 || sources.Length > 4)
++            { statusText = "30, SYNTAX ERROR,00,00"; return false; }
++            if (!TryDirectoryLayout(_data, out var entries, out _, out statusText)) return false;
++            int type = 0, length = 0; var bytes = new List<byte>();
++            foreach (string source in sources)
++            {
++                if (!TryDosName(source, true, out string old, out statusText)) return false;
++                int found = -1;
++                foreach (int entry in entries)
++                    if ((_data[entry + 2] & 7) != 0 && MatchesSequentialName(EntryName(_data, entry), old)) { found = entry; break; }
++                if (found < 0) { statusText = "62, FILE NOT FOUND,00,00"; return false; }
++                if ((_data[found + 2] & 0x80) == 0) { statusText = "60, WRITE FILE OPEN,00,00"; return false; }
++                int sourceType = _data[found + 2] & 7, sourceLength = sourceType == 4 ? _data[found + 23] : 0;
++                if (type != 0 && (type != sourceType || length != sourceLength))
++                { statusText = "64, FILE TYPE MISMATCH,00,00"; return false; }
++                type = sourceType; length = sourceLength;
++                if (!TryCollectFile(_data, found, out byte[] part, out _, out statusText)) return false;
++                bytes.AddRange(part);
++            }
++            return StoreDosFile(name, type, length, bytes.ToArray(), false, out statusText);
++        }
++
++        public bool TryFormat(string diskName, string diskId, out string statusText)
++        {
++            if (!CanPersist(out statusText) || !TryDosName(diskName, false, out string name, out statusText)) return false;
++            if (diskId != null && (diskId.Length != 2 || diskId[0] < 0x20 || diskId[0] > 0x7E || diskId[1] < 0x20 || diskId[1] > 0x7E))
++            { statusText = "33, SYNTAX ERROR,00,00"; return false; }
++            bool full = diskId != null;
++            byte[] work = (byte[])_data.Clone();
++            if (full) Array.Clear(work, 0, 683 * 256);
++            TryGetSectorOffset(18, 0, out int bam); TryGetSectorOffset(18, 1, out int directory);
++            string id = diskId ?? DiskId;
++            if (id.Length < 2) id = id.PadRight(2, '0');
++            Array.Clear(work, bam, 256); Array.Clear(work, directory, 256);
++            work[bam] = 18; work[bam + 1] = 1; work[bam + 2] = 0x41; work[directory + 1] = 0xFF;
++            for (int track = 1; track <= 35; track++)
++                for (int sector = 0; sector < GetSectorsPerTrack(track); sector++) BamMark(work, track, sector, true);
++            BamMark(work, 18, 0, false); BamMark(work, 18, 1, false);
++            for (int i = 0x90; i <= 0xAA; i++) work[bam + i] = 0xA0;
++            Encoding.ASCII.GetBytes(name).CopyTo(work, bam + 0x90);
++            work[bam + 0xA2] = (byte)id[0]; work[bam + 0xA3] = (byte)id[1];
++            work[bam + 0xA5] = (byte)'2'; work[bam + 0xA6] = (byte)'A';
++            byte[] errors = _errorInfo == null ? null : (byte[])_errorInfo.Clone();
++            if (full && errors != null) Array.Fill(errors, (byte)1, 0, 683);
++            return CommitCandidate(work, out statusText, errors);
++        }
++
++        public bool TryValidate(out string statusText)
++        {
++            if (!CanPersist(out statusText)) return false;
++            byte[] work = (byte[])_data.Clone();
++            if (!TryDirectoryLayout(work, out var entries, out var directory, out statusText) ||
++                !TryOwnership(work, entries, directory, out var chains, out var occupied, out statusText)) return false;
++            TryGetSectorOffset(18, 0, out int bam);
++            Array.Clear(work, bam + 4, 35 * 4);
++            for (int track = 1; track <= 35; track++)
++                for (int sector = 0; sector < GetSectorsPerTrack(track); sector++)
++                    if (!occupied.Contains((track << 8) | sector)) BamMark(work, track, sector, true);
++            foreach (int entry in entries)
++            {
++                if ((work[entry + 2] & 7) == 0) continue;
++                if ((work[entry + 2] & 0x80) == 0) { work[entry + 2] = 0; continue; }
++                int count = chains[entry].Count; work[entry + 30] = (byte)count; work[entry + 31] = (byte)(count >> 8);
++            }
++            return CommitCandidate(work, out statusText);
++        }
++
++        public bool TryWriteSectorPersistent(int track, int sector, byte[] bytes, out string statusText)
++        {
++            if (!CanPersist(out statusText)) return false;
++            if (bytes == null || bytes.Length != 256 || !TryGetSectorOffset(track, sector, out int at))
++            { statusText = $"66, ILLEGAL TRACK OR SECTOR,{track:00},{sector:00}"; return false; }
++            byte[] work = (byte[])_data.Clone(); Array.Copy(bytes, 0, work, at, 256);
++            return CommitCandidate(work, out statusText);
++        }
++
++        public bool TryChangeAllocation(int track, int sector, bool allocate, out string statusText)
++        {
++            if (!CanPersist(out statusText)) return false;
++            if (track < 1 || track > 35 || !TryGetSectorOffset(track, sector, out _))
++            { statusText = $"66, ILLEGAL TRACK OR SECTOR,{track:00},{sector:00}"; return false; }
++            if (allocate && !BamIsFree(_data, track, sector))
++            {
++                int nextTrack = 0, nextSector = 0;
++                for (int t = track; t <= 35 && nextTrack == 0; t++)
++                    for (int s = t == track ? sector + 1 : 0; s < GetSectorsPerTrack(t); s++)
++                        if (BamIsFree(_data, t, s)) { nextTrack = t; nextSector = s; break; }
++                statusText = $"65, NO BLOCK,{nextTrack:00},{nextSector:00}"; return false;
++            }
++            byte[] work = (byte[])_data.Clone(); BamMark(work, track, sector, !allocate);
++            return CommitCandidate(work, out statusText);
++        }
++
+ 
+         /// <summary>
+         /// Attempts to get sector error code and reports whether it succeeded.
+diff --git a/C64Emulator/Iec/IecDrive1541.cs b/C64Emulator/Iec/IecDrive1541.cs
+--- a/C64Emulator/Iec/IecDrive1541.cs
++++ b/C64Emulator/Iec/IecDrive1541.cs
+@@ -36,6 +36,15 @@
+             public int ReadOffset;
+             public D64Image.SequentialFileReader SequentialReader;
+             public List<byte> WriteBuffer;
++            public int BufferNumber = -1;
++            public bool BufferAnnounce;
++            public string RelativeName;
++            public int RelativeRecordLength;
++            public byte[] RelativeBytes = Array.Empty<byte>();
++            public int RelativeRecord = 1;
++            public int RelativePosition;
++            public bool RelativeLocked;
++            public List<byte> RelativePending;
+ 
+             /// <summary>
+             /// Handles the reset read source operation.
+@@ -55,6 +64,9 @@
+                 FilenameBytes = Array.Empty<byte>();
+                 ResetReadSource();
+                 WriteBuffer = null;
++                BufferNumber = -1; BufferAnnounce = false;
++                RelativeName = null; RelativeRecordLength = 0; RelativeBytes = Array.Empty<byte>();
++                RelativeRecord = 1; RelativePosition = 0; RelativeLocked = false; RelativePending = null;
+             }
+ 
+             /// <summary>
+@@ -175,6 +187,7 @@
+         // StateSerializer includes these named fields in savestates.
+         private byte[] _talkReaderCheckpoint = Array.Empty<byte>();
+         private bool _talkSyntheticEof;
++        private byte[] _channelExtension = Array.Empty<byte>();
+         private readonly IecByteReceiver _passiveReceiver;
+         private readonly Dictionary<byte, DriveChannel> _channels = new Dictionary<byte, DriveChannel>();
+         private readonly List<D64Image> _diskSetImages = new List<D64Image>();
+@@ -435,6 +448,7 @@
+                 _mountedImage.SaveState(writer);
+             }
+ 
++            _channelExtension = SerializeChannelExtensions();
+             StateSerializer.WriteObjectFields(
+                 writer,
+                 this,
+@@ -477,6 +491,7 @@
+         {
+             _talkReaderCheckpoint = Array.Empty<byte>();
+             _talkSyntheticEof = false;
++            _channelExtension = Array.Empty<byte>();
+             _mountedImage = reader.ReadBoolean() ? D64Image.LoadState(reader) : null;
+             StateSerializer.ReadObjectFields(
+                 reader,
+@@ -515,6 +530,7 @@
+                 _channels[channelNumber] = channel;
+             }
+ 
++            DeserializeChannelExtensions();
+             _receiver.LoadState(reader);
+             _sender.LoadState(reader);
+             _passiveReceiver.LoadState(reader);
+@@ -879,6 +895,7 @@
+             PulseLed(LedCommandPulseCycles);
+ 
+             byte channel = (byte)(secondaryAddress & 0x0F);
++            if (channel != 15) ProcessKernalCommandChannel(15, true);
+             _channel = channel;
+             DriveChannel state = GetOrCreateChannel(channel);
+             state.ReadOffset = 0;
+@@ -886,12 +903,18 @@
+             if (channel == 15)
+             {
+                 state.FilenameBytes = Array.Empty<byte>();
++                state.WriteBuffer = new List<byte>();
++                if (!string.IsNullOrEmpty(filename))
++                {
++                    CommandResult opened = ExecuteCommand(Encoding.Latin1.GetBytes(filename));
++                    SetChannelReadBuffer(channel, opened.ReadBuffer.Length > 0 ? opened.ReadBuffer : EncodeStatusText(_statusText));
++                    return opened;
++                }
+                 SetChannelReadBuffer(channel, EncodeStatusText(_statusText));
+-                state.WriteBuffer = new List<byte>();
+                 return SetStatus(new CommandResult(0x00, _statusText, state.ReadBuffer));
+             }
+ 
+-            return InitializeFileChannel(channel, Encoding.ASCII.GetBytes(filename ?? string.Empty));
++            return InitializeFileChannel(channel, Encoding.Latin1.GetBytes(filename ?? string.Empty));
+         }
+ 
+         /// <summary>
+@@ -900,6 +923,7 @@
+         public CommandResult CloseKernalChannel(byte secondaryAddress)
+         {
+             byte channel = (byte)(secondaryAddress & 0x0F);
++            if (channel != 15) ProcessKernalCommandChannel(15, true);
+             if (channel == 15)
+             {
+                 ProcessKernalCommandChannel(channel, true);
+@@ -918,6 +942,7 @@
+         {
+             value = 0x00;
+             endOfInformation = false;
++            ProcessKernalCommandChannel(15, true);
+ 
+             byte channel = (byte)(secondaryAddress & 0x0F);
+             if (!TryPrepareStandardReadChannel(channel))
+@@ -985,7 +1010,14 @@
+         public CommandResult WriteKernalChannelByte(byte secondaryAddress, byte value)
+         {
+             byte channel = (byte)(secondaryAddress & 0x0F);
++            if (channel != 15) ProcessKernalCommandChannel(15, true);
+             DriveChannel state = GetOrCreateChannel(channel);
++            if (IsBuffer(state)) { WriteBlockByte(state, value); return DosResult(true, "00, OK,00,00"); }
++            if (IsRelative(state))
++            {
++                state.RelativePending.Add(value);
++                return DosResult(true, "00, OK,00,00");
++            }
+             List<byte> writeBuffer = state.WriteBuffer;
+             if (writeBuffer == null)
+             {
+@@ -1029,7 +1061,10 @@
+         private CommandResult ExecuteCommand(byte[] commandBytes, bool trimTrailingCarriageReturns)
+         {
+             PulseLed(LedCommandPulseCycles);
+-            byte[] trimmed = trimTrailingCarriageReturns
++            commandBytes = NormalizeDosCommand(commandBytes);
++            bool binary = commandBytes.Length > 0 && (ToAsciiUpper(commandBytes[0]) == (byte)'P' ||
++                (commandBytes.Length >= 3 && ToAsciiUpper(commandBytes[0]) == (byte)'M' && commandBytes[1] == (byte)'-'));
++            byte[] trimmed = trimTrailingCarriageReturns && !binary
+                 ? TrimTrailingCarriageReturns(commandBytes)
+                 : (commandBytes ?? Array.Empty<byte>());
+             if (trimmed.Length == 0)
+@@ -1044,8 +1079,16 @@
+             if (MatchesInitializeCommand(trimmed))
+             {
+                 InitializeDriveState(true);
+-                return SetStatus(new CommandResult(0x00, "73, CBM DOS V2.6 1541,00,00"));
+-            }
++                _mountedImage?.RefreshDirectory();
++                return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
++            }
++
++            byte first = ToAsciiUpper(trimmed[0]);
++            if (first == (byte)'P') return ExecutePosition(trimmed);
++            if (first == (byte)'N' || first == (byte)'S' || first == (byte)'R' || first == (byte)'C' || first == (byte)'V')
++                return ExecuteFileCommand(trimmed);
++            if (trimmed.Length >= 3 && ToAsciiUpper(trimmed[0]) == (byte)'B' && trimmed[1] == (byte)'-' && ToAsciiUpper(trimmed[2]) == (byte)'E')
++                return ExecuteBlockExecute(trimmed);
+ 
+             if (IsMemoryWriteCommand(trimmed))
+             {
+@@ -1128,6 +1171,7 @@
+             if (command == OpenBase || command == SecondaryBase)
+             {
+                 AcceptChannelPayload(_listeningSecondaryAddress, _listenBuffer.ToArray());
++                if ((_listeningSecondaryAddress & 0x0F) == 15) ProcessCommandChannelIfNeeded();
+             }
+ 
+             _listenBuffer.Clear();
+@@ -2116,6 +2160,7 @@
+             {
+                 _armPayloadSendAfterAttention = false;
+                 _payloadSendArmed = true;
++                if (TryGetChannel(_channel, out DriveChannel relative) && IsRelative(relative)) PrepareRelativeRead(relative, true);
+                 PrepareTalkData();
+             }
+         }
+@@ -2390,6 +2435,266 @@
+             }
+         }
+ 
++        private byte[] SerializeChannelExtensions()
++        {
++            using var stream = new MemoryStream();
++            using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
++            writer.Write(1); writer.Write(_channels.Count);
++            foreach (var pair in _channels)
++            {
++                DriveChannel state = pair.Value; writer.Write(pair.Key);
++                writer.Write(state.BufferNumber); writer.Write(state.BufferAnnounce);
++                writer.Write(state.RelativeName ?? ""); writer.Write(state.RelativeRecordLength);
++                BinaryStateIO.WriteByteArray(writer, state.RelativeBytes);
++                writer.Write(state.RelativeRecord); writer.Write(state.RelativePosition); writer.Write(state.RelativeLocked);
++                BinaryStateIO.WriteByteList(writer, state.RelativePending);
++            }
++            return stream.ToArray();
++        }
++
++        private void DeserializeChannelExtensions()
++        {
++            if (_channelExtension == null || _channelExtension.Length == 0) return;
++            using var stream = new MemoryStream(_channelExtension, false);
++            using var reader = new BinaryReader(stream, Encoding.UTF8, true);
++            if (reader.ReadInt32() != 1) throw new InvalidDataException("Unknown DOS channel state version.");
++            int count = reader.ReadInt32();
++            if (count < 0 || count > 16) throw new InvalidDataException("Invalid DOS channel state count.");
++            for (int i = 0; i < count; i++)
++            {
++                byte channel = reader.ReadByte(); int buffer = reader.ReadInt32(); bool announce = reader.ReadBoolean();
++                string name = reader.ReadString(); int length = reader.ReadInt32();
++                byte[] bytes = BinaryStateIO.ReadByteArray(reader) ?? Array.Empty<byte>();
++                int record = reader.ReadInt32(), position = reader.ReadInt32(); bool locked = reader.ReadBoolean();
++                List<byte> pending = BinaryStateIO.ReadByteList(reader);
++                if (buffer < -1 || buffer > 4 || length < 0 || length > 254 || record < 0 || record > 65536 || position < 0 || position > 254 ||
++                    (length > 0 && bytes.Length % length != 0)) throw new InvalidDataException("Invalid DOS channel state.");
++                if (!_channels.TryGetValue(channel, out DriveChannel state)) continue;
++                state.BufferNumber = buffer; state.BufferAnnounce = announce; state.RelativeName = name.Length == 0 ? null : name;
++                state.RelativeRecordLength = length; state.RelativeBytes = bytes; state.RelativeRecord = record;
++                state.RelativePosition = position; state.RelativeLocked = locked; state.RelativePending = pending;
++            }
++        }
++
++        private static bool IsRelative(DriveChannel state) => state.RelativeRecordLength > 0;
++        private static bool IsBuffer(DriveChannel state) => state.BufferNumber >= 0;
++
++        private bool IsFileActive(string pattern, bool writersOnly = false)
++        {
++            string name = FileNameKey(pattern);
++            int qualifier = name.IndexOf('='); if (qualifier >= 0) name = name.Substring(0, qualifier);
++            foreach (var channel in _channels)
++            {
++                if (channel.Key == 15 || IsBuffer(channel.Value)) continue;
++                DriveChannel state = channel.Value;
++                bool active = IsRelative(state) || state.WriteBuffer != null || state.SequentialReader != null || state.ReadBuffer.Length > 0;
++                if (!active || (writersOnly && state.WriteBuffer == null && !IsRelative(state))) continue;
++                string opened = IsRelative(state) ? state.RelativeName : FileNameKey(DecodeFilename(state.FilenameBytes));
++                bool match = true;
++                for (int i = 0; i < name.Length; i++)
++                {
++                    if (name[i] == '*') return true;
++                    if (i >= opened.Length || (name[i] != '?' && name[i] != opened[i])) { match = false; break; }
++                }
++                if (match && name.Length == opened.Length) return true;
++            }
++            return false;
++        }
++
++        private CommandResult DosResult(bool ok, string status) => SetStatus(new CommandResult(ok ? (byte)0 : (byte)0x08, status));
++
++        private static byte[] NormalizeDosCommand(byte[] input)
++        {
++            if (input == null) return Array.Empty<byte>();
++            string ascii = Encoding.Latin1.GetString(input);
++            string[] names = { "BLOCK-ALLOCATE", "BLOCK-EXECUTE", "BLOCK-READ", "BLOCK-WRITE", "BLOCK-FREE", "BUFFER-POINTER",
++                "INITIALIZE", "VALIDATE", "SCRATCH", "RENAME", "COPY", "NEW" };
++            string[] shortNames = { "B-A", "B-E", "B-R", "B-W", "B-F", "B-P", "I", "V", "S", "R", "C", "N" };
++            for (int i = 0; i < names.Length; i++)
++            {
++                if (!ascii.StartsWith(names[i], StringComparison.OrdinalIgnoreCase)) continue;
++                int end = names[i].Length;
++                if (end < ascii.Length && ascii[end] != ':' && ascii[end] != '0' && !char.IsWhiteSpace(ascii[end])) continue;
++                return Encoding.Latin1.GetBytes(shortNames[i] + ascii.Substring(end));
++            }
++            return input;
++        }
++
++        private CommandResult ExecuteFileCommand(byte[] bytes)
++        {
++            if (_mountedImage == null) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            string command = Encoding.ASCII.GetString(bytes).Trim().ToUpperInvariant();
++            char operation = command[0];
++            if (operation == 'V')
++            {
++                if (command != "V" && command != "V0" && command != "V:") return DosResult(false, "30, SYNTAX ERROR,00,00");
++                if (IsFileActive("*", true)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++                return DosResult(_mountedImage.TryValidate(out string validation), validation);
++            }
++            int colon = command.IndexOf(':');
++            if (colon < 0) return DosResult(false, "34, SYNTAX ERROR,00,00");
++            string drive = command.Substring(1, colon - 1).Trim();
++            if (drive.Length != 0 && drive != "0") return DosResult(false, "74, DRIVE NOT READY,00,00");
++            string argument = command.Substring(colon + 1);
++            if (operation == 'N')
++            {
++                string[] parts = argument.Split(',');
++                if (parts.Length > 2) return DosResult(false, "30, SYNTAX ERROR,00,00");
++                bool formatted = _mountedImage.TryFormat(parts[0], parts.Length == 2 ? parts[1] : null, out string status);
++                if (formatted)
++                    foreach (byte channel in new List<byte>(_channels.Keys)) if (channel != 15) RemoveChannel(channel);
++                return DosResult(formatted, status);
++            }
++            if (operation == 'S')
++            {
++                string[] patterns = argument.Split(',');
++                foreach (string pattern in patterns)
++                    if (IsFileActive(pattern)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++                bool scratched = _mountedImage.TryScratchFiles(patterns, out _, out string status);
++                return DosResult(scratched, status);
++            }
++            int equals = argument.IndexOf('=');
++            if (equals < 0 || argument.IndexOf('=', equals + 1) >= 0) return DosResult(false, "30, SYNTAX ERROR,00,00");
++            string destination = argument.Substring(0, equals), source = argument.Substring(equals + 1);
++            if (operation == 'R')
++            {
++                if (IsFileActive(source) || IsFileActive(destination)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++                return DosResult(_mountedImage.TryRenameFile(destination, source, out string status), status);
++            }
++            string[] sources = source.Split(',');
++            if (IsFileActive(destination)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++            foreach (string item in sources)
++                if (IsFileActive(item, true)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++            return DosResult(_mountedImage.TryCopyFiles(destination, sources, out string copyStatus), copyStatus);
++        }
++
++        private CommandResult OpenRelativeChannel(byte channel, DriveChannel state, byte[] filenameBytes)
++        {
++            // Decode only the filename portion: record length is an arbitrary byte,
++            // including CR, comma, quote, spaces and bytes above $7F.
++            int comma = Array.IndexOf(filenameBytes, (byte)',');
++            string name = DecodeFilename(comma < 0 ? filenameBytes : CopyCommandSlice(filenameBytes, 0, comma));
++            string spec = name + (comma < 0 ? "" : Encoding.Latin1.GetString(filenameBytes, comma, filenameBytes.Length - comma));
++            if (IsFileActive(name)) return DosResult(false, "60, WRITE FILE OPEN,00,00");
++            if (!_mountedImage.TryOpenRelativeFile(spec, out D64Image.RelativeFileData file, out string status)) return DosResult(false, status);
++            state.RelativeName = file.Name; state.RelativeRecordLength = file.RecordLength;
++            state.RelativeBytes = file.Bytes; state.RelativeRecord = 1; state.RelativePosition = 0;
++            state.RelativeLocked = file.Locked; state.RelativePending = new List<byte>();
++            return DosResult(true, "00, OK,00,00");
++        }
++
++        private CommandResult ExecutePosition(byte[] bytes)
++        {
++            if (bytes.Length < 4 || bytes.Length > 5) return DosResult(false, "30, SYNTAX ERROR,00,00");
++            byte channel = (byte)(bytes[1] & 0x0F);
++            if ((bytes[1] > 14 && (bytes[1] < 0x62 || bytes[1] > 0x6E)) || channel < 2 ||
++                !TryGetChannel(channel, out DriveChannel state) || !IsRelative(state))
++                return DosResult(false, "70, NO CHANNEL,00,00");
++            CommandResult flushed = FlushRelativeWrite(state);
++            if (flushed != null && flushed.Status != 0) return flushed;
++            int record = bytes[2] | (bytes[3] << 8), position = bytes.Length > 4 ? bytes[4] : 1;
++            if (position == 0) position = 1;
++            if (position > state.RelativeRecordLength) return DosResult(false, "51, OVERFLOW IN RECORD,00,00");
++            state.RelativeRecord = record; state.RelativePosition = position - 1; state.ResetReadSource();
++            bool present = record >= 1 && record <= state.RelativeBytes.Length / state.RelativeRecordLength;
++            if (present && state.RelativeBytes[(record - 1) * state.RelativeRecordLength] == 0xFF) present = false;
++            return DosResult(present, present ? "00, OK,00,00" : "50, RECORD NOT PRESENT,00,00");
++        }
++
++        private CommandResult FlushRelativeWrite(DriveChannel state)
++        {
++            if (!IsRelative(state) || state.RelativePending == null || state.RelativePending.Count == 0) return null;
++            if (_mountedImage == null) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            if (state.RelativeLocked) { state.RelativePending.Clear(); return DosResult(false, "26, WRITE PROTECT ON,00,00"); }
++            int length = state.RelativeRecordLength, record = state.RelativeRecord, position = state.RelativePosition;
++            if (record < 1)
++            { state.RelativePending.Clear(); return DosResult(false, "50, RECORD NOT PRESENT,00,00"); }
++            if (record > 65535 || (long)record * length > 720 * 254)
++            { state.RelativePending.Clear(); return DosResult(false, "52, FILE TOO LARGE,00,00"); }
++            byte[] candidate = new byte[Math.Max(state.RelativeBytes.Length, record * length)];
++            state.RelativeBytes.CopyTo(candidate, 0);
++            for (int at = state.RelativeBytes.Length; at < candidate.Length; at += length) candidate[at] = 0xFF;
++            int start = (record - 1) * length;
++            if (candidate[start] == 0xFF) Array.Clear(candidate, start, length);
++            Array.Clear(candidate, start + position, length - position);
++            int take = Math.Min(length - position, state.RelativePending.Count);
++            state.RelativePending.CopyTo(0, candidate, start + position, take);
++            bool overflow = take < state.RelativePending.Count;
++            state.RelativePending.Clear();
++            if (!_mountedImage.TryWriteRelativeFile(state.RelativeName, length, candidate, out string status)) return DosResult(false, status);
++            state.RelativeBytes = candidate; state.RelativeRecord++; state.RelativePosition = 0; state.ResetReadSource();
++            return DosResult(!overflow, overflow ? "51, OVERFLOW IN RECORD,00,00" : "00, OK,00,00");
++        }
++
++        private bool PrepareRelativeRead(DriveChannel state, bool advance)
++        {
++            CommandResult flushed = FlushRelativeWrite(state);
++            if (flushed != null && flushed.Status != 0) return false;
++            if (state.ReadBuffer.Length > 0 && state.ReadOffset < state.ReadBuffer.Length) return true;
++            if (state.ReadBuffer.Length > 0 && !advance) return true;
++            if (state.ReadBuffer.Length > 0) { state.RelativeRecord++; state.RelativePosition = 0; }
++            int record = state.RelativeRecord, length = state.RelativeRecordLength;
++            if (record < 1 || record > state.RelativeBytes.Length / length || state.RelativeBytes[(record - 1) * length] == 0xFF)
++            {
++                state.ReadBuffer = new byte[] { 13 }; state.ReadOffset = 0;
++                DosResult(false, "50, RECORD NOT PRESENT,00,00"); return true;
++            }
++            state.ReadBuffer = new byte[length - state.RelativePosition];
++            Array.Copy(state.RelativeBytes, (record - 1) * length + state.RelativePosition, state.ReadBuffer, 0, state.ReadBuffer.Length);
++            state.ReadOffset = 0;
++            return true;
++        }
++
++        private CommandResult OpenBlockChannel(byte channel, DriveChannel state, string filename)
++        {
++            string number = filename.Substring(1).Trim(); int buffer = -1;
++            if (channel < 2 || channel > 14 || (number.Length > 0 && (!int.TryParse(number, out buffer) || buffer < 0 || buffer > 4)))
++                return DosResult(false, "70, NO CHANNEL,00,00");
++            var used = new HashSet<int>();
++            foreach (var pair in _channels) if (pair.Key != channel && IsBuffer(pair.Value)) used.Add(pair.Value.BufferNumber);
++            if (number.Length == 0) for (int i = 0; i <= 4; i++) if (!used.Contains(i)) { buffer = i; break; }
++            if (buffer < 0 || used.Contains(buffer)) return DosResult(false, "70, NO CHANNEL,00,00");
++            state.BufferNumber = buffer; state.BufferAnnounce = true;
++            state.ReadBuffer = new byte[] { (byte)('0' + buffer) }; state.ReadOffset = 0;
++            return DosResult(true, "00, OK,00,00");
++        }
++
++        private byte[] BlockBytes(DriveChannel state)
++        {
++            byte[] bytes = new byte[256]; int start = 0x0300 + state.BufferNumber * 256;
++            for (int i = 0; i < 256; i++) bytes[i] = _hardware.ReadMemory((ushort)(start + i));
++            return bytes;
++        }
++
++        private void LoadBlockBytes(DriveChannel state, byte[] bytes, int pointer, int limit)
++        {
++            int start = 0x0300 + state.BufferNumber * 256;
++            for (int i = 0; i < 256; i++) { _ram[start + i] = bytes[i]; _hardware.WriteMemory((ushort)(start + i), bytes[i]); }
++            state.BufferAnnounce = false; state.ReadBuffer = new byte[limit];
++            Array.Copy(bytes, state.ReadBuffer, limit); state.ReadOffset = pointer;
++        }
++
++        private void WriteBlockByte(DriveChannel state, byte value)
++        {
++            byte[] bytes = BlockBytes(state);
++            int pointer = state.BufferAnnounce ? 1 : state.ReadOffset & 255;
++            bytes[pointer] = value; LoadBlockBytes(state, bytes, (pointer + 1) & 255, 256);
++        }
++
++        private CommandResult ExecuteBlockExecute(byte[] bytes)
++        {
++            if (!TryParseNumericCommand(bytes, 3, out int[] values) || values.Length != 4)
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
++            if (values[1] != 0) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            CommandResult loaded = LoadSectorIntoChannel(values[0], values[2], values[3]);
++            if (loaded.Status != 0) return loaded;
++            DriveChannel state = _channels[(byte)values[0]];
++            _pendingCustomExecution = PendingCustomExecutionType.ExecuteAddress;
++            _pendingExecuteAddress = (ushort)(0x0300 + state.BufferNumber * 256);
++            _pendingUserCommand = 0; _lastExecuteAddress = _pendingExecuteAddress;
++            return DosResult(true, "00, OK,00,00");
++        }
++
+         private static bool IsWriteRequest(byte channel, string filename)
+         {
+             string[] parts = (filename ?? string.Empty).Trim().ToUpperInvariant().Split(',');
+@@ -2410,11 +2715,14 @@
+         private CommandResult InitializeFileChannel(byte channel, byte[] filenameBytes)
+         {
+             DriveChannel state = GetOrCreateChannel(channel);
+-            if (state.WriteBuffer != null)
++            if (state.WriteBuffer != null || IsRelative(state) || IsBuffer(state))
+                 return SetStatus(new CommandResult(0x08, "60, WRITE FILE OPEN,00,00"));
+             state.ResetAll();
+             state.FilenameBytes = filenameBytes ?? Array.Empty<byte>();
+             string filename = DecodeFilename(state.FilenameBytes);
++            if (filename.StartsWith("#", StringComparison.Ordinal)) return OpenBlockChannel(channel, state, filename);
++            if (_mountedImage != null && _mountedImage.IsRelativeSpecification(Encoding.Latin1.GetString(state.FilenameBytes)))
++                return OpenRelativeChannel(channel, state, state.FilenameBytes);
+             bool writing = IsWriteRequest(channel, filename);
+             if (writing)
+             {
+@@ -2429,8 +2737,8 @@
+             foreach (KeyValuePair<byte, DriveChannel> open in _channels)
+             {
+                 if (open.Key == channel || open.Key == 15) continue;
+-                bool active = open.Value.WriteBuffer != null || open.Value.SequentialReader != null || open.Value.ReadBuffer.Length > 0;
+-                if (active && (writing || open.Value.WriteBuffer != null) &&
++                bool active = IsRelative(open.Value) || open.Value.WriteBuffer != null || open.Value.SequentialReader != null || open.Value.ReadBuffer.Length > 0;
++                if (active && (writing || open.Value.WriteBuffer != null || IsRelative(open.Value)) &&
+                     FileNameKey(DecodeFilename(open.Value.FilenameBytes)) == FileNameKey(filename))
+                     return SetStatus(new CommandResult(0x08, "60, WRITE FILE OPEN,00,00"));
+             }
+@@ -2457,6 +2765,8 @@
+             DriveChannel state = GetOrCreateChannel(channel);
+             if (channel != 15)
+             {
++                if (IsBuffer(state)) { foreach (byte value in payload) WriteBlockByte(state, value); return; }
++                if (IsRelative(state)) { state.RelativePending.AddRange(payload); FlushRelativeWrite(state); return; }
+                 if (state.WriteBuffer != null) state.WriteBuffer.AddRange(payload);
+                 else if (_statusText.StartsWith("00,", StringComparison.Ordinal))
+                     SetStatus(new CommandResult(0x08, state.SequentialReader == null && state.ReadBuffer.Length == 0
+@@ -2471,8 +2781,9 @@
+         private CommandResult CommitWriteChannel(byte channel)
+         {
+             DriveChannel state;
+-            if (channel == 15 || !TryGetChannel(channel, out state) || state.WriteBuffer == null)
+-                return null;
++            if (channel == 15 || !TryGetChannel(channel, out state)) return null;
++            if (IsRelative(state)) return FlushRelativeWrite(state);
++            if (state.WriteBuffer == null) return null;
+             byte[] payload = state.WriteBuffer.ToArray();
+             state.WriteBuffer = null;
+             if (_mountedImage == null)
+@@ -2732,6 +3043,7 @@
+             }
+ 
+             DriveChannel state;
++            if (TryGetChannel(channel, out state) && IsRelative(state)) return PrepareRelativeRead(state, true);
+             if (TryGetChannel(channel, out state) && state.SequentialReader != null)
+             {
+                 return true;
+@@ -2762,6 +3074,25 @@
+                 return true;
+             }
+ 
++            if (IsRelative(state))
++            {
++                if (!PrepareRelativeRead(state, false)) return false;
++                channelData = state.ReadBuffer; return true;
++            }
++            if (IsBuffer(state))
++            {
++                // A direct channel aliases drive RAM. M-W and uploaded drive
++                // code can change it after B-P/B-R without moving its pointer.
++                // Preserve the counted/raw read limit and the initial # number.
++                if (!state.BufferAnnounce)
++                {
++                    int start = 0x0300 + state.BufferNumber * 256;
++                    for (int i = 0; i < state.ReadBuffer.Length; i++)
++                        state.ReadBuffer[i] = _hardware.ReadMemory((ushort)(start + i));
++                }
++                channelData = state.ReadBuffer;
++                return true;
++            }
+             if (state.WriteBuffer != null)
+             {
+                 SetStatus(new CommandResult(0x08, "64, FILE TYPE MISMATCH,00,00"));
+@@ -2827,7 +3158,7 @@
+             }
+             // A companion-side read must not redirect pending writes to another image.
+             foreach (KeyValuePair<byte, DriveChannel> channel in _channels)
+-                if (channel.Key != 15 && channel.Value.WriteBuffer != null) return false;
++                if (channel.Key != 15 && (channel.Value.WriteBuffer != null || IsRelative(channel.Value))) return false;
+ 
+             for (int index = 0; index < _diskSetImages.Count; index++)
+             {
+@@ -2884,14 +3215,14 @@
+         {
+             if (commandBytes.Length < 6)
+             {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
+             }
+ 
+             ushort address = (ushort)(commandBytes[3] | (commandBytes[4] << 8));
+             int count = commandBytes[5];
+-            if (count < 0 || commandBytes.Length < 6 + count)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
++            if (commandBytes.Length != 6 + count)
++            {
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
+             }
+ 
+             _memoryWriteCommandCount++;
+@@ -2918,31 +3249,14 @@
+         /// </summary>
+         private CommandResult ExecuteMemoryRead(byte[] commandBytes)
+         {
+-            if (commandBytes.Length < 6)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
++            if (commandBytes.Length != 5 && commandBytes.Length != 6)
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
+             ushort address = (ushort)(commandBytes[3] | (commandBytes[4] << 8));
+-            int count = commandBytes[5];
+-            if (count <= 0)
+-            {
+-                count = 1;
+-            }
+-
++            int count = commandBytes.Length == 5 ? 1 : commandBytes[5];
++            if (count == 0) count = 256;
+             byte[] readBuffer = new byte[count];
+             for (int index = 0; index < count; index++)
+-            {
+-                ushort currentAddress = (ushort)(address + index);
+-                byte value = _hardware.ReadMemory(currentAddress);
+-                if (currentAddress < 0x1800)
+-                {
+-                    value = _ram[currentAddress & 0x07FF];
+-                }
+-
+-                readBuffer[index] = value;
+-            }
+-
++                readBuffer[index] = _hardware.ReadMemory((ushort)(address + index));
+             return SetStatus(new CommandResult(0x00, "00, OK,00,00", readBuffer));
+         }
+ 
+@@ -2951,9 +3265,9 @@
+         /// </summary>
+         private CommandResult ExecuteMemoryExecute(byte[] commandBytes)
+         {
+-            if (commandBytes.Length < 5)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
++            if (commandBytes.Length != 5)
++            {
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
+             }
+ 
+             _pendingCustomExecution = PendingCustomExecutionType.ExecuteAddress;
+@@ -2968,12 +3282,21 @@
+         /// </summary>
+         private CommandResult ExecuteUserCommand(byte[] commandBytes)
+         {
++            // This host runs a C64. UI+ selects the existing C64 timing without
++            // closing channels; UI- would require the separate VIC20 timing profile.
++            if (commandBytes.Length == 3 && ToAsciiUpper(commandBytes[1]) == (byte)'I')
++                return commandBytes[2] == (byte)'+' ? DosResult(true, "00, OK,00,00") : DosResult(false, "31, SYNTAX ERROR,00,00");
++            if (commandBytes.Length > 2 && commandBytes[1] != (byte)'1' && commandBytes[1] != (byte)'2' &&
++                ToAsciiUpper(commandBytes[1]) != (byte)'A' && ToAsciiUpper(commandBytes[1]) != (byte)'B')
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
+             byte command = commandBytes.Length > 1 ? (byte)char.ToUpperInvariant((char)commandBytes[1]) : (byte)0x00;
+             switch (command)
+             {
+                 case (byte)'1':
++                case (byte)'A':
+                     return ExecuteUserBlockRead(commandBytes);
+                 case (byte)'2':
++                case (byte)'B':
+                     return ExecuteUserBlockWrite(commandBytes);
+                 case (byte)'3':
+                 case (byte)'C':
+@@ -3002,7 +3325,7 @@
+                     InitializeDriveState(true);
+                     return SetStatus(new CommandResult(0x00, "73, CBM DOS V2.6 1541,00,00"));
+                 default:
+-                    return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
++                    return DosResult(false, "31, SYNTAX ERROR,00,00");
+             }
+         }
+ 
+@@ -3314,6 +3637,12 @@
+             _pendingCustomExecutionWaitCycles = 0;
+ 
+             EnterCustomCodeMode();
++            // ExecuteAt enters with SP=$FD. DOS invokes M-E/B-E/U3..U8 as
++            // subroutines, so supply the matching RTS frame for the host's
++            // documented $C194 command-loop marker on every invocation.
++            // Without it, a second RTS can wander through RAM and miss IEC ATN.
++            _ram[0x01FE] = 0x93; _ram[0x01FF] = 0xC1;
++            _hardware.WriteMemory(0x01FE, 0x93); _hardware.WriteMemory(0x01FF, 0xC1);
+ 
+             if (executionType == PendingCustomExecutionType.ExecuteAddress)
+             {
+@@ -3624,43 +3953,30 @@
+                     break;
+                 }
+ 
+-                if (IsMemoryWriteCommandAt(payload, index))
++                bool memory = payload.Length - index >= 3 && ToAsciiUpper(payload[index]) == (byte)'M' && payload[index + 1] == (byte)'-';
++                bool position = ToAsciiUpper(payload[index]) == (byte)'P';
++                if (memory || position)
+                 {
+                     int remaining = payload.Length - index;
+-                    if (remaining < 6)
++                    byte op = memory ? ToAsciiUpper(payload[index + 2]) : (byte)'P';
++                    int mandatory = position ? 4 : op == (byte)'W' ? 6 : 5;
++                    if (remaining < mandatory) { if (!finalize) break; }
++                    int binaryLength = Math.Min(remaining, mandatory);
++                    if (remaining >= mandatory)
+                     {
+-                        if (!finalize)
++                        if (memory && op == (byte)'W') binaryLength = 6 + payload[index + 5];
++                        else if (position || op == (byte)'R')
+                         {
+-                            break;
++                            // The optional final byte is disambiguated by the IEC message
++                            // boundary. PRINT# appends CR; a CR *value* has a second CR.
++                            if (!finalize && remaining <= mandatory + 1) break;
++                            if (remaining > mandatory && (payload[index + mandatory] != 13 || remaining > mandatory + 1)) binaryLength++;
+                         }
+-
+-                        byte[] incomplete = CopyCommandSlice(payload, index, remaining);
+-                        lastResult = ExecuteCommand(incomplete, false);
+-                        index = payload.Length;
+-                        consumedBytes = index;
+-                        break;
+                     }
+-
+-                    int count = payload[index + 5];
+-                    int commandLength = 6 + count;
+-                    if (remaining < commandLength)
+-                    {
+-                        if (!finalize)
+-                        {
+-                            break;
+-                        }
+-
+-                        byte[] incomplete = CopyCommandSlice(payload, index, remaining);
+-                        lastResult = ExecuteCommand(incomplete, false);
+-                        index = payload.Length;
+-                        consumedBytes = index;
+-                        break;
+-                    }
+-
+-                    byte[] command = CopyCommandSlice(payload, index, commandLength);
+-                    lastResult = ExecuteCommand(command, false);
+-                    index += commandLength;
+-                    consumedBytes = index;
++                    if (remaining < binaryLength) { if (!finalize) break; binaryLength = remaining; }
++                    if (!finalize && remaining == binaryLength) break;
++                    lastResult = ExecuteCommand(CopyCommandSlice(payload, index, binaryLength), false);
++                    index += binaryLength; consumedBytes = index;
+                     continue;
+                 }
+ 
+@@ -3753,12 +4069,12 @@
+                 return false;
+             }
+ 
+-            if (commandBytes[0] != (byte)'I')
++            if (ToAsciiUpper(commandBytes[0]) != (byte)'I')
+             {
+                 return false;
+             }
+ 
+-            return commandBytes.Length == 1 || (commandBytes.Length == 2 && commandBytes[1] == (byte)'0');
++            return commandBytes.Length == 1 || (commandBytes.Length == 2 && (commandBytes[1] == (byte)'0' || commandBytes[1] == (byte)':'));
+         }
+ 
+         /// <summary>
+@@ -3828,7 +4144,7 @@
+         private static bool IsBlockReadCommand(byte[] commandBytes)
+         {
+             return commandBytes.Length >= 3 &&
+-                commandBytes[0] == (byte)'B' &&
++                ToAsciiUpper(commandBytes[0]) == (byte)'B' &&
+                 commandBytes[1] == (byte)'-' &&
+                 (commandBytes[2] == (byte)'R' || commandBytes[2] == (byte)'r');
+         }
+@@ -3839,7 +4155,7 @@
+         private static bool IsBlockPointerCommand(byte[] commandBytes)
+         {
+             return commandBytes.Length >= 3 &&
+-                commandBytes[0] == (byte)'B' &&
++                ToAsciiUpper(commandBytes[0]) == (byte)'B' &&
+                 commandBytes[1] == (byte)'-' &&
+                 (commandBytes[2] == (byte)'P' || commandBytes[2] == (byte)'p');
+         }
+@@ -3850,7 +4166,7 @@
+         private static bool IsBlockWriteCommand(byte[] commandBytes)
+         {
+             return commandBytes.Length >= 3 &&
+-                commandBytes[0] == (byte)'B' &&
++                ToAsciiUpper(commandBytes[0]) == (byte)'B' &&
+                 commandBytes[1] == (byte)'-' &&
+                 (commandBytes[2] == (byte)'W' || commandBytes[2] == (byte)'w');
+         }
+@@ -3861,7 +4177,7 @@
+         private static bool IsBlockAllocateOrFreeCommand(byte[] commandBytes)
+         {
+             return commandBytes.Length >= 3 &&
+-                commandBytes[0] == (byte)'B' &&
++                ToAsciiUpper(commandBytes[0]) == (byte)'B' &&
+                 commandBytes[1] == (byte)'-' &&
+                 ((commandBytes[2] == (byte)'A' || commandBytes[2] == (byte)'a') ||
+                  (commandBytes[2] == (byte)'F' || commandBytes[2] == (byte)'f'));
+@@ -3870,196 +4186,65 @@
+         /// <summary>
+         /// Executes user block read.
+         /// </summary>
+-        private CommandResult ExecuteUserBlockRead(byte[] commandBytes)
+-        {
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 2, out values) || values.Length < 4)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            return LoadSectorIntoChannel(values[0], values[2], values[3]);
+-        }
+-
+-        /// <summary>
+-        /// Executes user block write.
+-        /// </summary>
+-        private CommandResult ExecuteUserBlockWrite(byte[] commandBytes)
+-        {
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 2, out values) || values.Length < 4)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            return WriteChannelToSector(values[0], values[2], values[3]);
+-        }
+-
+-        /// <summary>
+-        /// Executes block allocate or free.
+-        /// </summary>
++        private CommandResult ExecuteUserBlockRead(byte[] commandBytes) => ExecuteSectorCommand(commandBytes, 2, false, false);
++        private CommandResult ExecuteUserBlockWrite(byte[] commandBytes) => ExecuteSectorCommand(commandBytes, 2, true, false);
++        private CommandResult ExecuteBlockRead(byte[] commandBytes) => ExecuteSectorCommand(commandBytes, 3, false, true);
++        private CommandResult ExecuteBlockWrite(byte[] commandBytes) => ExecuteSectorCommand(commandBytes, 3, true, true);
++
++        private CommandResult ExecuteSectorCommand(byte[] command, int prefix, bool writing, bool counted)
++        {
++            if (!TryParseNumericCommand(command, prefix, out int[] values) || values.Length != 4)
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
++            if (values[1] != 0) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            return writing ? WriteChannelToSector(values[0], values[2], values[3], counted)
++                : LoadSectorIntoChannel(values[0], values[2], values[3], counted);
++        }
++
+         private CommandResult ExecuteBlockAllocateOrFree(byte[] commandBytes)
+         {
+-            if (_mountedImage == null)
+-            {
+-                return SetStatus(new CommandResult(0x08, "74, DRIVE NOT READY,00,00"));
+-            }
+-
+-            if (_mountedImage.IsReadOnly)
+-            {
+-                return SetStatus(new CommandResult(0x08, "26, WRITE PROTECT ON,00,00"));
+-            }
+-
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 3, out values) || values.Length < 3)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            int track = values[1];
+-            int sector = values[2];
+-            bool allocate = commandBytes[2] == (byte)'A' || commandBytes[2] == (byte)'a';
+-            bool ok = allocate
+-                ? _mountedImage.TryAllocateSector(track, sector)
+-                : _mountedImage.TryFreeSector(track, sector);
+-
+-            if (!ok)
+-            {
+-                return SetStatus(new CommandResult(0x14, "66, ILLEGAL TRACK OR SECTOR,00,00"));
+-            }
+-
+-            return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
+-        }
+-
+-        /// <summary>
+-        /// Executes block read.
+-        /// </summary>
+-        private CommandResult ExecuteBlockRead(byte[] commandBytes)
+-        {
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 3, out values) || values.Length < 4)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            return LoadSectorIntoChannel(values[0], values[2], values[3]);
+-        }
+-
+-        /// <summary>
+-        /// Executes block write.
+-        /// </summary>
+-        private CommandResult ExecuteBlockWrite(byte[] commandBytes)
+-        {
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 3, out values) || values.Length < 4)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            return WriteChannelToSector(values[0], values[2], values[3]);
+-        }
+-
+-        /// <summary>
+-        /// Executes block pointer.
+-        /// </summary>
++            if (!TryParseNumericCommand(commandBytes, 3, out int[] values) || values.Length != 3)
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
++            if (values[0] != 0 || _mountedImage == null) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            return DosResult(_mountedImage.TryChangeAllocation(values[1], values[2],
++                ToAsciiUpper(commandBytes[2]) == (byte)'A', out string status), status);
++        }
++
+         private CommandResult ExecuteBlockPointer(byte[] commandBytes)
+         {
+-            int[] values;
+-            if (!TryParseNumericCommand(commandBytes, 3, out values) || values.Length < 2)
+-            {
+-                return new CommandResult(0x10, "30, SYNTAX ERROR,00,00");
+-            }
+-
+-            byte channel = (byte)(values[0] & 0x0F);
+-            GetOrCreateChannel(channel).ReadOffset = Math.Max(0, values[1]);
+-            return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
+-        }
+-
+-        /// <summary>
+-        /// Loads sector into channel.
+-        /// </summary>
+-        private CommandResult LoadSectorIntoChannel(int channelNumber, int track, int sector)
+-        {
+-            if (_mountedImage == null)
+-            {
+-                return SetStatus(new CommandResult(0x08, "74, DRIVE NOT READY,00,00"));
+-            }
+-
+-            if (TryCreateSectorErrorStatus(track, sector, out CommandResult sectorError))
+-            {
+-                return SetStatus(sectorError);
+-            }
+-
+-            byte[] sectorBytes;
+-            if (!_mountedImage.TryReadSector(track, sector, out sectorBytes) || sectorBytes == null)
+-            {
+-                return SetStatus(new CommandResult(0x14, "66, ILLEGAL TRACK OR SECTOR,00,00"));
+-            }
+-
+-            byte channel = (byte)(channelNumber & 0x0F);
+-            SetChannelReadBuffer(channel, sectorBytes);
+-            BeginSimulatedTransfer(sectorBytes.Length);
+-            return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
+-        }
+-
+-        /// <summary>
+-        /// Writes channel to sector.
+-        /// </summary>
+-        private CommandResult WriteChannelToSector(int channelNumber, int track, int sector)
+-        {
+-            if (_mountedImage == null)
+-            {
+-                return SetStatus(new CommandResult(0x08, "74, DRIVE NOT READY,00,00"));
+-            }
+-
+-            if (_mountedImage.IsReadOnly)
+-            {
+-                return SetStatus(new CommandResult(0x08, string.Format("26, WRITE PROTECT ON,{0:00},{1:00}", track, sector)));
+-            }
+-
+-            if (TryCreateSectorErrorStatus(track, sector, out CommandResult sectorError))
+-            {
+-                return SetStatus(sectorError);
+-            }
+-
+-            byte channel = (byte)(channelNumber & 0x0F);
+-            DriveChannel state;
+-            if (!TryGetChannel(channel, out state))
+-            {
+-                return SetStatus(new CommandResult(0x03, "70, NO CHANNEL,00,00"));
+-            }
+-
+-            byte[] bufferedChannelData = state.WriteBuffer != null && state.WriteBuffer.Count > 0
+-                ? state.WriteBuffer.ToArray()
+-                : state.ReadBuffer;
+-            if (bufferedChannelData == null)
+-            {
+-                return SetStatus(new CommandResult(0x03, "70, NO CHANNEL,00,00"));
+-            }
+-
+-            int offset = state.ReadOffset;
+-
+-            if (offset < 0)
+-            {
+-                offset = 0;
+-            }
+-
+-            byte[] sectorBytes = new byte[256];
+-            if (offset < bufferedChannelData.Length)
+-            {
+-                int copyLength = Math.Min(256, bufferedChannelData.Length - offset);
+-                Array.Copy(bufferedChannelData, offset, sectorBytes, 0, copyLength);
+-            }
+-
+-            if (!_mountedImage.TryWriteSector(track, sector, sectorBytes))
+-            {
+-                return SetStatus(new CommandResult(0x14, "66, ILLEGAL TRACK OR SECTOR,00,00"));
+-            }
+-
+-            SetChannelReadBuffer(channel, sectorBytes);
+-            state.WriteBuffer = null;
++            if (!TryParseNumericCommand(commandBytes, 3, out int[] values) || values.Length != 2 || values[1] < 0 || values[1] > 255)
++                return DosResult(false, "30, SYNTAX ERROR,00,00");
++            if (values[0] < 2 || values[0] > 14 || !TryGetChannel((byte)values[0], out DriveChannel state) || !IsBuffer(state))
++                return DosResult(false, "70, NO CHANNEL,00,00");
++            LoadBlockBytes(state, BlockBytes(state), values[1], 256);
++            return DosResult(true, "00, OK,00,00");
++        }
++
++        private CommandResult LoadSectorIntoChannel(int channelNumber, int track, int sector, bool counted = false)
++        {
++            if (_mountedImage == null) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            if (channelNumber < 2 || channelNumber > 14 || !TryGetChannel((byte)channelNumber, out DriveChannel state) || !IsBuffer(state))
++                return DosResult(false, "70, NO CHANNEL,00,00");
++            if (TryCreateSectorErrorStatus(track, sector, out CommandResult sectorError)) return SetStatus(sectorError);
++            if (!_mountedImage.TryReadSector(track, sector, out byte[] bytes))
++                return DosResult(false, "66, ILLEGAL TRACK OR SECTOR,00,00");
++            LoadBlockBytes(state, bytes, counted ? 1 : 0, counted ? bytes[0] + 1 : 256);
+             BeginSimulatedTransfer(256);
+-            return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
++            return DosResult(true, "00, OK,00,00");
++        }
++
++        private CommandResult WriteChannelToSector(int channelNumber, int track, int sector, bool counted = false)
++        {
++            if (_mountedImage == null) return DosResult(false, "74, DRIVE NOT READY,00,00");
++            if (channelNumber < 2 || channelNumber > 14 || !TryGetChannel((byte)channelNumber, out DriveChannel state) || !IsBuffer(state))
++                return DosResult(false, "70, NO CHANNEL,00,00");
++            if (TryCreateSectorErrorStatus(track, sector, out CommandResult sectorError)) return SetStatus(sectorError);
++            byte[] bytes = BlockBytes(state);
++            if (counted) bytes[0] = (byte)((state.ReadOffset - 1) & 255);
++            if (!_mountedImage.TryWriteSectorPersistent(track, sector, bytes, out string status)) return DosResult(false, status);
++            // U2 preserves the pointer; B-W resets it to the first data byte.
++            LoadBlockBytes(state, bytes, counted ? 1 : state.ReadOffset, 256);
++            BeginSimulatedTransfer(256);
++            return DosResult(true, status);
+         }
+ 
+         /// <summary>
+@@ -4134,7 +4319,7 @@
+                 return false;
+             }
+ 
+-            string[] parts = numericPart.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
++            string[] parts = Regex.Split(numericPart, @"[,;\s]+");
+             var parsed = new int[parts.Length];
+             for (int index = 0; index < parts.Length; index++)
+             {
+@@ -5097,7 +5282,10 @@
+                     case SendState.TurnaroundClockLowHold:
+                         PullClockLow();
+                         ReleaseData();
+-                        if (--_countdown <= 0)
++                        // The C64 may service an IRQ between releasing CLOCK
++                        // and asserting DATA as the new listener. Do not start
++                        // a byte before that hold-off is visible on the wire.
++                        if (_port.IsLineLow(IecBusLine.Data) && --_countdown <= 0)
+                         {
+                             ReleaseClock();
+                             _state = SendState.WaitListenerReady;
+diff --git a/C64Emulator/Machine/C64System.cs b/C64Emulator/Machine/C64System.cs
+--- a/C64Emulator/Machine/C64System.cs
++++ b/C64Emulator/Machine/C64System.cs
+@@ -105,7 +105,7 @@
+             _bus = new SystemBus();
+             _cia1 = new Cia1(_accuracyOptions.CiaRevision);
+             _cia2 = new Cia2(_accuracyOptions.CiaRevision);
+-            _sid = new Sid();
++            _sid = new Sid(model.CpuHz);
+             _iecBus = new IecBus();
+             _iecKernalBridge = new IecKernalBridge();
+             _mediaManager = new MediaManager();
+@@ -131,6 +131,7 @@
+             _iecKernalBridge.AttachDrive(_drive10);
+             _iecKernalBridge.AttachDrive(_drive11);
+             _bus.Connect(_vic, _cia1, _cia2, _sid);
++            _bus.ConfigurePeripheralClock(model.CpuHz);
+             _cpu = new Cpu6510(_bus, _mediaManager, _iecKernalBridge);
+             ApplyAccuracyOptions();
+             ApplyIecTransportMode();
+@@ -174,6 +175,7 @@
+             lock (_syncRoot)
+             {
+                 MountedMediaInfo mountedMedia = _mediaManager.MountedMedia;
++                MountedMediaInfo tapeMedia = _lastMountedMedia.Kind == MountedMediaKind.Tape ? _lastMountedMedia : null;
+                 string mountedHostPath = mountedMedia.HostPath;
+                 bool hadMountedMedia = mountedMedia.HasMedia && !string.IsNullOrWhiteSpace(mountedHostPath);
+                 EasyFlashCartridge easyFlash = _bus.EasyFlash;
+@@ -217,6 +219,13 @@
+ 
+                     _lastMountedMedia = mountResult.MountedMedia;
+                     resetMessage = "RESET MEDIA RELOADED";
++                }
++
++                if (tapeMedia != null)
++                {
++                    // A machine reset does not rewind or discard the physical cassette.
++                    _lastMountedMedia = tapeMedia;
++                    resetMessage = "RESET TAPE RETAINED";
+                 }
+ 
+                 return resetMessage;
+@@ -268,6 +277,9 @@
+         {
+             lock (_syncRoot)
+             {
++                writer.Write(0x33444956u); // VID3: model header before any mutable state.
++                writer.Write(_model.CyclesPerLine);
++                writer.Write(_model.RasterLines);
+                 _bus.SaveState(writer);
+                 _cpu.SaveState(writer);
+                 _vic.SaveState(writer);
+@@ -304,6 +316,21 @@
+         {
+             lock (_syncRoot)
+             {
++                long modelHeaderPosition = reader.BaseStream.CanSeek ? reader.BaseStream.Position : -1;
++                uint modelMarker = reader.ReadUInt32();
++                if (modelMarker == 0x33444956u)
++                {
++                    int savedCycles = reader.ReadInt32();
++                    int savedLines = reader.ReadInt32();
++                    if (savedCycles != _model.CyclesPerLine || savedLines != _model.RasterLines)
++                        throw new InvalidDataException("Savestate video standard differs from the current machine.");
++                }
++                else
++                {
++                    if (modelHeaderPosition < 0 || _model.IsNtsc)
++                        throw new InvalidDataException("Legacy savestates require a PAL machine and a seekable stream.");
++                    reader.BaseStream.Position = modelHeaderPosition;
++                }
+                 _bus.LoadState(reader);
+                 _cpu.LoadState(reader);
+                 _vic.LoadState(reader);
+@@ -325,10 +352,14 @@
+                 _drive1541TargetCycles = reader.ReadDouble();
+                 _drive1541ExecutedCycles = reader.ReadDouble();
+                 _catchingUpDrivesForIecAccess = reader.ReadBoolean();
++                _bus.ConfigurePeripheralClock(_model.CpuHz);
+                 RefreshMountedDriveDiskSets();
+                 _iecKernalBridge.Reset();
+             }
+         }
++
++        public TapeDeck Tape { get { return _bus.Tape; } }
++        public UserPort UserPort { get { return _bus.UserPort; } }
+ 
+         public FrameBuffer FrameBuffer
+         {
+@@ -1215,6 +1246,18 @@
+         {
+             lock (_syncRoot)
+             {
++                if (string.Equals(Path.GetExtension(path), ".tap", StringComparison.OrdinalIgnoreCase))
++                {
++                    try
++                    {
++                        _bus.Tape.Mount(File.ReadAllBytes(path));
++                        _bus.Tape.Play();
++                        _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", Path.GetFileName(path), Path.GetFullPath(path));
++                        return "TAPE MOUNTED - PLAY";
++                    }
++                    catch (Exception ex) { return "TAPE LOAD FAILED: " + ex.Message; }
++                }
++
+                 if (string.Equals(Path.GetExtension(path), ".crt", StringComparison.OrdinalIgnoreCase))
+                 {
+                     return MountEasyFlash(path, true, true);
+@@ -1233,6 +1276,100 @@
+                 }
+ 
+                 return result.Message;
++            }
++        }
++
++        /// <summary>Press the emulated cassette PLAY button; the ROM controls its motor.</summary>
++        public string PlayTape()
++        {
++            lock (_syncRoot)
++            {
++                if (_bus.Tape.PulseCount == 0) return "NO TAPE LOADED";
++                _bus.Tape.Play();
++                return "TAPE PLAY";
++            }
++        }
++
++        public string StopTape()
++        {
++            lock (_syncRoot) { _bus.Tape.Stop(); return "TAPE STOP"; }
++        }
++
++        public string RewindTape()
++        {
++            lock (_syncRoot) { _bus.Tape.Rewind(); return "TAPE REWOUND"; }
++        }
++
++        /// <summary>Keep the physical cassette, including an unsaved recording, across a frontend power cycle.</summary>
++        public TapeDeck CreateTapeSnapshot()
++        {
++            lock (_syncRoot)
++            {
++                var snapshot = new TapeDeck();
++                CopyTapeState(_bus.Tape, snapshot);
++                return snapshot;
++            }
++        }
++
++        public void InsertTapeSnapshot(TapeDeck snapshot, MountedMediaInfo media)
++        {
++            if (snapshot == null) return;
++            lock (_syncRoot)
++            {
++                CopyTapeState(snapshot, _bus.Tape);
++                _bus.Tape.ConfigureClock(_model.CpuHz);
++                _bus.Tape.WriteProcessorPort(_bus.CpuRead(0), _bus.CpuRead(1));
++                if (media != null && media.Kind == MountedMediaKind.Tape) _lastMountedMedia = media;
++            }
++        }
++
++        private static void CopyTapeState(TapeDeck source, TapeDeck destination)
++        {
++            using (var stream = new MemoryStream())
++            {
++                using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, true))
++                    StateSerializer.WriteObjectFields(writer, source);
++                stream.Position = 0;
++                using (var reader = new BinaryReader(stream))
++                    StateSerializer.ReadObjectFields(reader, destination);
++            }
++        }
++
++        /// <summary>Start a new in-memory recording; save it explicitly with SaveTape.</summary>
++        public string BeginTapeRecording()
++        {
++            lock (_syncRoot)
++            {
++                _bus.Tape.Record(_model.IsNtsc ? (byte)1 : (byte)0);
++                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", "NEW RECORDING", string.Empty);
++                return "TAPE RECORD - ENTER SAVE";
++            }
++        }
++
++        /// <summary>Export captured pulses atomically without replacing the tape in memory.</summary>
++        public string SaveTape(string path)
++        {
++            lock (_syncRoot)
++            {
++                if (_bus.Tape.PulseCount == 0) return "NO TAPE PULSES TO SAVE";
++                string temporary = null;
++                try
++                {
++                    string destination = Path.GetFullPath(path);
++                    byte[] bytes = _bus.Tape.ExportTap();
++                    temporary = Path.Combine(Path.GetDirectoryName(destination), ".c64-tape-" + Guid.NewGuid().ToString("N") + ".tmp");
++                    using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++                    {
++                        stream.Write(bytes, 0, bytes.Length);
++                        stream.Flush(true);
++                    }
++                    File.Move(temporary, destination, true);
++                    temporary = null;
++                    _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tape, "TAP", Path.GetFileName(destination), destination);
++                    return "TAPE SAVED " + Path.GetFileName(destination);
++                }
++                catch (Exception ex) { return "TAPE SAVE FAILED: " + ex.Message; }
++                finally { if (temporary != null) { try { File.Delete(temporary); } catch { } } }
+             }
+         }
+ 
+@@ -1250,6 +1387,7 @@
+                 _drive10.EjectDisk();
+                 _drive11.EjectDisk();
+                 _bus.EjectEasyFlash();
++                _bus.Tape.Eject();
+                 _lastMountedMedia = MountedMediaInfo.None;
+                 return message;
+             }
+@@ -1564,6 +1702,7 @@
+         /// </summary>
+         private void ResetCore()
+         {
++            MountedMediaInfo tapeMedia = _lastMountedMedia.Kind == MountedMediaKind.Tape ? _lastMountedMedia : null;
+             _bus.InitializeMemory();
+             _bus.LoadRoms(null);
+             _cia1.Reset();
+@@ -1576,7 +1715,7 @@
+             _drive11.Reset();
+             _iecKernalBridge.Reset();
+             _mountedDrivePaths.Clear();
+-            _lastMountedMedia = MountedMediaInfo.None;
++            _lastMountedMedia = tapeMedia ?? MountedMediaInfo.None;
+             _pressedHostKeys.Clear();
+             _pressedKeyboardOnlyHostKeys.Clear();
+             _bus.SetExternalNmi(false);
+@@ -1890,6 +2029,7 @@
+                 _bus.TickReuDmaCycle();
+             }
+ 
++            _bus.TickExternalPorts();
+             _cia1.Tick();
+             _cia2.Tick();
+             _sid.Tick();
+diff --git a/C64Emulator/Machine/C64Model.cs b/C64Emulator/Machine/C64Model.cs
+--- a/C64Emulator/Machine/C64Model.cs
++++ b/C64Emulator/Machine/C64Model.cs
+@@ -65,5 +65,43 @@
+                 return new C64Model("PAL C64", 985248.0, 312, 63, 403, 284);
+             }
+         }
++        /// <summary>NTSC-M with the common 6567R8 VIC-II (65 cycles, 263 lines).</summary>
++        public static C64Model Ntsc
++        {
++            get { return new C64Model("NTSC C64 (6567R8)", 1022727.0, 263, 65, 418, 235); }
++        }
++
++        public bool IsNtsc { get { return CyclesPerLine == 65; } }
++        public string VideoStandard { get { return IsNtsc ? "NTSC" : "PAL"; } }
++        public double FrameHz { get { return CpuHz / (RasterLines * CyclesPerLine); } }
++
++        /// <summary>Remove only video-selection switches; preserve positional mode arguments.</summary>
++        public static C64Model ParseCommandLine(ref string[] args)
++        {
++            var remaining = new System.Collections.Generic.List<string>();
++            C64Model selected = null;
++            args = args ?? new string[0];
++            for (int i = 0; i < args.Length; i++)
++            {
++                string value = null;
++                if (string.Equals(args[i], "--ntsc", System.StringComparison.OrdinalIgnoreCase)) value = "ntsc";
++                else if (string.Equals(args[i], "--pal", System.StringComparison.OrdinalIgnoreCase)) value = "pal";
++                else if (string.Equals(args[i], "--video", System.StringComparison.OrdinalIgnoreCase))
++                {
++                    if (++i >= args.Length) throw new System.ArgumentException("--video requires pal or ntsc.");
++                    value = args[i];
++                }
++                else { remaining.Add(args[i]); continue; }
++                C64Model next;
++                if (string.Equals(value, "pal", System.StringComparison.OrdinalIgnoreCase)) next = Pal;
++                else if (string.Equals(value, "ntsc", System.StringComparison.OrdinalIgnoreCase)) next = Ntsc;
++                else throw new System.ArgumentException("Unknown video standard: " + value);
++                if (selected != null && selected.IsNtsc != next.IsNtsc)
++                    throw new System.ArgumentException("Choose one video standard, PAL or NTSC.");
++                selected = next;
++            }
++            args = remaining.ToArray();
++            return selected ?? Pal;
++        }
+     }
+ }
+diff --git a/C64Emulator/Machine/SystemBus.cs b/C64Emulator/Machine/SystemBus.cs
+--- a/C64Emulator/Machine/SystemBus.cs
++++ b/C64Emulator/Machine/SystemBus.cs
+@@ -44,6 +44,9 @@
+         private Cia1 _cia1;
+         private Cia2 _cia2;
+         private Sid _sid;
++        private TapeDeck _tape = new TapeDeck();
++        public TapeDeck Tape => _tape;
++        public UserPort UserPort => _cia2?.UserPort;
+         private EasyFlashCartridge _easyFlash;
+         private ReuExpansion _reu;
+         private bool _externalIrqAsserted;
+@@ -92,6 +95,21 @@
+             _sid = sid;
+         }
+ 
++        /// <summary>Configures physical port/tape and CIA timebases for the selected machine.</summary>
++        public void ConfigurePeripheralClock(double cpuHz)
++        {
++            _tape.ConfigureClock(cpuHz);
++            _cia1?.ConfigureClock(cpuHz);
++            _cia2?.ConfigureClock(cpuHz);
++        }
++
++        /// <summary>Advances real cassette pins once per CPU Phi2 cycle, before the CIA ticks.</summary>
++        public void TickExternalPorts()
++        {
++            _tape.Tick();
++            _cia1?.SetFlagInput(_tape.ReadHigh);
++        }
++
+         /// <summary>
+         /// Sets the owner value.
+         /// </summary>
+@@ -154,6 +172,7 @@
+             _lastCpuBusValue = 0xFF;
+             _lastVicBusValue = 0xFF;
+             _processorPortInputLatch = _ram[1];
++            _tape.WriteProcessorPort(_ram[0], _ram[1]);
+             _baLow = false;
+             _aecLow = false;
+             _cpuPhi2CanAccess = true;
+@@ -1039,7 +1058,7 @@
+         {
+             byte dataDirection = _ram[0];
+             byte portData = _ram[1];
+-            byte floatingInputs = (byte)(0x17 | (_processorPortInputLatch & 0xC0));
++            byte floatingInputs = (byte)((_tape.SensePressed ? 0x07 : 0x17) | (_processorPortInputLatch & 0xC0));
+             return (byte)((portData & dataDirection) | (floatingInputs & ~dataDirection));
+         }
+ 
+@@ -1051,6 +1070,7 @@
+             byte dataDirection = _ram[0];
+             byte portData = _ram[1];
+             _processorPortInputLatch = (byte)((_processorPortInputLatch & ~dataDirection) | (portData & dataDirection));
++            _tape.WriteProcessorPort(dataDirection, portData);
+         }
+     }
+ }
+diff --git a/C64Emulator/Machine/TapImage.cs b/C64Emulator/Machine/TapImage.cs
+new file mode 100644
+--- /dev/null
++++ b/C64Emulator/Machine/TapImage.cs
+@@ -0,0 +1,89 @@
++// SPDX-License-Identifier: Apache-2.0
++// Raw timing representation; no program/ROM decoding or loader shortcut.
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Text;
++
++namespace C64Emulator.Core
++{
++    public sealed class TapImage
++    {
++        public byte Version { get; private set; }
++        public byte VideoStandard { get; private set; }
++        public int[] Durations { get; private set; }
++        public double ClockHz => ClockFor(VideoStandard);
++        public bool HalfWaves => Version == 2;
++
++        private TapImage() { Durations = Array.Empty<int>(); }
++
++        public static double ClockFor(byte videoStandard)
++        {
++            return videoStandard switch
++            {
++                0 => 985248.0,
++                1 or 2 => 1022727.0,
++                3 => 1023440.0,
++                _ => throw new InvalidDataException("Unknown C64 TAP video standard.")
++            };
++        }
++
++        public static TapImage Parse(byte[] bytes)
++        {
++            if (bytes == null || bytes.Length < 20 ||
++                Encoding.ASCII.GetString(bytes, 0, 12) != "C64-TAPE-RAW")
++                throw new InvalidDataException("Not a C64 TAP image.");
++            if (bytes[12] > 2 || bytes[13] != 0 || bytes[15] != 0)
++                throw new InvalidDataException("Unsupported TAP version, machine or reserved field.");
++            _ = ClockFor(bytes[14]);
++            uint length = (uint)(bytes[16] | bytes[17] << 8 | bytes[18] << 16 | bytes[19] << 24);
++            if (length != bytes.Length - 20)
++                throw new InvalidDataException("TAP payload length does not match its header.");
++            var pulses = new List<int>();
++            for (int i = 20; i < bytes.Length; i++)
++            {
++                int duration = bytes[i] * 8;
++                if (duration == 0)
++                {
++                    if (bytes[12] == 0) duration = 2048;
++                    else
++                    {
++                        if (i + 3 >= bytes.Length) throw new InvalidDataException("Truncated extended TAP pulse.");
++                        duration = bytes[++i] | bytes[++i] << 8 | bytes[++i] << 16;
++                        if (duration == 0) throw new InvalidDataException("A TAP pulse must have a positive duration.");
++                    }
++                }
++                pulses.Add(duration);
++            }
++            return new TapImage { Version = bytes[12], VideoStandard = bytes[14], Durations = pulses.ToArray() };
++        }
++
++        public static byte[] Encode(IEnumerable<int> durations, byte videoStandard = 0, byte version = 1)
++        {
++            if (version > 2) throw new ArgumentOutOfRangeException(nameof(version));
++            _ = ClockFor(videoStandard);
++            using var stream = new MemoryStream();
++            using var writer = new BinaryWriter(stream);
++            writer.Write(Encoding.ASCII.GetBytes("C64-TAPE-RAW"));
++            writer.Write(version); writer.Write((byte)0); writer.Write(videoStandard); writer.Write((byte)0);
++            writer.Write(0);
++            foreach (int duration in durations)
++            {
++                if (duration <= 0 || duration > 0xFFFFFF) throw new ArgumentOutOfRangeException(nameof(durations));
++                if (duration % 8 == 0 && duration <= 2040) writer.Write((byte)(duration / 8));
++                else if (version == 0 && duration == 2048) writer.Write((byte)0);
++                else if (version == 0) throw new InvalidDataException("TAP v0 cannot represent this cycle-exact pulse.");
++                else
++                {
++                    writer.Write((byte)0);
++                    writer.Write((byte)duration); writer.Write((byte)(duration >> 8)); writer.Write((byte)(duration >> 16));
++                }
++            }
++            writer.Flush();
++            stream.Position = 16;
++            writer.Write(checked((uint)(stream.Length - 20)));
++            writer.Flush();
++            return stream.ToArray();
++        }
++    }
++}
+diff --git a/C64Emulator/Machine/TapeDeck.cs b/C64Emulator/Machine/TapeDeck.cs
+new file mode 100644
+--- /dev/null
++++ b/C64Emulator/Machine/TapeDeck.cs
+@@ -0,0 +1,164 @@
++// SPDX-License-Identifier: Apache-2.0
++// Cycle-driven cassette transport: 6510 motor/WRITE pins and CIA1 FLAG READ.
++using System;
++using System.Collections.Generic;
++using System.IO;
++
++namespace C64Emulator.Core
++{
++    public sealed class TapeDeck
++    {
++        private int[] _pulses = Array.Empty<int>();
++        private List<int> _recorded = new List<int>();
++        private byte _version = 1, _videoStandard;
++        private double _cpuHz = 985248.0, _sourceHz = 985248.0, _rounding;
++        private int _position, _remaining, _currentDuration;
++        private long _recordElapsed;
++        private bool _playing, _recording, _motorOn, _writeHigh = true, _readHigh = true;
++        private bool _recordEdgeSeen, _halfWaveHigh;
++
++        public bool MotorOn => _motorOn;
++        public bool IsPlaying => _playing;
++        public bool IsRecording => _recording;
++        public bool SensePressed => _playing || _recording;
++        public bool ReadHigh => _readHigh;
++        public bool EndOfTape => _playing && _position >= _pulses.Length && _remaining == 0;
++        public int Position => _position;
++        public int PulseCount => _recording || _recorded.Count > 0 ? _recorded.Count : _pulses.Length;
++        public byte VideoStandard => _videoStandard;
++        public int[] RecordedPulses => _recorded.ToArray();
++
++        public void ConfigureClock(double cpuHz)
++        {
++            if (cpuHz < 100000 || cpuHz > 2000000) throw new ArgumentOutOfRangeException(nameof(cpuHz));
++            _cpuHz = cpuHz;
++        }
++
++        public void Mount(byte[] bytes)
++        {
++            // Parse completely before changing the mounted tape.
++            TapImage image = TapImage.Parse(bytes);
++            Stop();
++            _pulses = image.Durations;
++            _version = image.Version;
++            _videoStandard = image.VideoStandard;
++            _sourceHz = image.ClockHz;
++            _recorded.Clear();
++            Rewind();
++        }
++
++        public void Play()
++        {
++            if (_recorded.Count > 0)
++            {
++                _pulses = _recorded.ToArray();
++                _recorded.Clear();
++                _version = 1;
++            }
++            _recording = false;
++            _playing = true;
++            _readHigh = true;
++        }
++
++        public void Record(byte videoStandard = 0)
++        {
++            _sourceHz = TapImage.ClockFor(videoStandard);
++            _videoStandard = videoStandard;
++            _version = 1;
++            _playing = false;
++            _recording = true;
++            _recorded.Clear();
++            _pulses = Array.Empty<int>();
++            Rewind();
++            _recordElapsed = 0;
++            _recordEdgeSeen = false;
++            _readHigh = true;
++        }
++
++        public void Stop()
++        {
++            _playing = false;
++            _recording = false;
++            _readHigh = true;
++            _recordEdgeSeen = false;
++            _recordElapsed = 0;
++        }
++
++        public void Eject()
++        {
++            Stop();
++            _pulses = Array.Empty<int>();
++            _recorded.Clear();
++            _version = 1;
++            _videoStandard = 0;
++            _sourceHz = 985248.0;
++            Rewind();
++        }
++
++        public void Rewind()
++        {
++            _position = _remaining = _currentDuration = 0;
++            _rounding = 0;
++            _halfWaveHigh = false;
++            _readHigh = true;
++        }
++
++        public byte[] ExportTap()
++        {
++            return TapImage.Encode(_recorded.Count > 0 ? _recorded : _pulses, _videoStandard,
++                _recorded.Count > 0 ? (byte)1 : _version);
++        }
++
++        public void WriteProcessorPort(byte direction, byte data)
++        {
++            // Cassette motor is active low. Input pins are pulled up.
++            byte pins = (byte)((data & direction) | ~direction);
++            bool motor = (pins & 0x20) == 0;
++            bool write = (pins & 0x08) != 0;
++            if (_recording && motor && _motorOn && !_writeHigh && write)
++            {
++                if (_recordEdgeSeen)
++                {
++                    double scaled = _recordElapsed * _sourceHz / _cpuHz;
++                    int duration = checked((int)Math.Round(scaled));
++                    if (duration <= 0 || duration > 0xFFFFFF)
++                        throw new InvalidDataException("Recorded cassette pulse is outside TAP v1 range.");
++                    _recorded.Add(duration);
++                }
++                _recordElapsed = 0;
++                _recordEdgeSeen = true;
++            }
++            _writeHigh = write;
++            _motorOn = motor;
++        }
++
++        public void Tick()
++        {
++            if (!_motorOn) return;
++            if (_recording)
++            {
++                _recordElapsed++;
++                return;
++            }
++            if (!_playing) return;
++            if (_remaining == 0)
++            {
++                if (_position >= _pulses.Length) { _readHigh = true; return; }
++                double scaled = _pulses[_position] * _cpuHz / _sourceHz + _rounding;
++                _currentDuration = Math.Max(1, (int)Math.Round(scaled));
++                _rounding = scaled - _currentDuration;
++                _remaining = _currentDuration;
++            }
++            _remaining--;
++            if (_version == 2)
++            {
++                if (_remaining == 0) { _halfWaveHigh = !_halfWaveHigh; _readHigh = _halfWaveHigh; _position++; }
++            }
++            else
++            {
++                if (_remaining == _currentDuration / 2) _readHigh = true;
++                if (_remaining == 0) { _readHigh = false; _position++; }
++            }
++        }
++    }
++}
+diff --git a/C64Emulator/Machine/UserPort.cs b/C64Emulator/Machine/UserPort.cs
+new file mode 100644
+--- /dev/null
++++ b/C64Emulator/Machine/UserPort.cs
+@@ -0,0 +1,61 @@
++// SPDX-License-Identifier: Apache-2.0
++// Physical TTL user-port pins; external peers supply line states, never ROM bytes.
++using System;
++
++namespace C64Emulator.Core
++{
++    public sealed class UserPort
++    {
++        private byte _inputPins = 0xFF, _outputPins = 0xFF, _direction;
++        private bool _txHigh = true;
++        private long _cycles;
++        public byte InputPins => _inputPins;
++        public byte OutputPins => _outputPins;
++        public byte Direction => _direction;
++        public bool RxHigh => (_inputPins & 1) != 0;
++        public bool TxHigh => _txHigh;
++        public bool RtsAsserted => (_direction & 2) != 0 && (_outputPins & 2) == 0;
++        public bool DtrAsserted => (_direction & 4) != 0 && (_outputPins & 4) == 0;
++        public long Cycles => _cycles;
++        public Action<UserPort> Ticked { get; set; }
++        public Action<UserPort> OutputChanged { get; set; }
++
++        public void SetInputPins(byte levels) { _inputPins = levels; }
++        public void SetSerialInputs(bool receiveHigh, bool ctsAsserted, bool dsrAsserted, bool dcdAsserted)
++        {
++            byte pins = (byte)(_inputPins | 0xD1);
++            if (!receiveHigh) pins &= 0xFE;
++            if (ctsAsserted) pins &= 0xBF;
++            if (dsrAsserted) pins &= 0x7F;
++            if (dcdAsserted) pins &= 0xEF;
++            _inputPins = pins;
++        }
++
++        internal void UpdateOutputs(byte portA, byte directionA, byte portB, byte directionB)
++        {
++            bool txHigh = (directionA & 4) == 0 || (portA & 4) != 0;
++            byte outputs = (byte)((portB & directionB) | ~directionB);
++            bool changed = txHigh != _txHigh || outputs != _outputPins || directionB != _direction;
++            _txHigh = txHigh; _outputPins = outputs; _direction = directionB;
++            if (changed) OutputChanged?.Invoke(this);
++        }
++
++        // External peers attach to this stable object. Savestates restore only
++        // physical state, never replace the peer's object or its callbacks.
++        internal void CopyStateFrom(UserPort restored)
++        {
++            if (ReferenceEquals(this, restored)) return;
++            _inputPins = restored._inputPins;
++            _outputPins = restored._outputPins;
++            _direction = restored._direction;
++            _txHigh = restored._txHigh;
++            _cycles = restored._cycles;
++        }
++
++        internal void Tick()
++        {
++            _cycles++;
++            Ticked?.Invoke(this);
++        }
++    }
++}
+diff --git a/C64Emulator/Cia/Cia1.cs b/C64Emulator/Cia/Cia1.cs
+--- a/C64Emulator/Cia/Cia1.cs
++++ b/C64Emulator/Cia/Cia1.cs
+@@ -24,7 +24,8 @@
+     /// </summary>
+     public sealed class Cia1
+     {
+-        private const int TodCyclesPerTenth = 98525;
++        private int _todCyclesPerTenth = 98525;
++        private bool _flagInputHigh = true;
+         private const byte TimerStartDelayCycles = 2;
+         private const byte TimerForceLoadStartDelayCycles = 3;
+         private const byte TimerOutputEventNone = 0;
+@@ -104,6 +105,20 @@
+             Reset();
+         }
+ 
++        /// <summary>Sets the PAL/NTSC CPU-clock timebase used by the TOD counter.</summary>
++        public void ConfigureClock(double cpuHz)
++        {
++            if (cpuHz < 100000 || cpuHz > 2000000) throw new System.ArgumentOutOfRangeException(nameof(cpuHz));
++            _todCyclesPerTenth = (int)System.Math.Round(cpuHz / 10.0);
++        }
++
++        /// <summary>A falling external FLAG edge latches ICR bit 4, even while its interrupt is masked.</summary>
++        public void SetFlagInput(bool high)
++        {
++            if (_flagInputHigh && !high) RaiseTimerInterruptFlag(0x10);
++            _flagInputHigh = high;
++        }
++
+         /// <summary>
+         /// Resets the component to its power-on or idle state.
+         /// </summary>
+@@ -151,6 +166,7 @@
+             _networkJoystickPort1State = 0x1F;
+             _networkJoystickPort2State = 0x1F;
+             _serialDataRegister = 0;
++            _flagInputHigh = true;
+             _todCycleAccumulator = 0;
+             _todTenths = 0;
+             _todSeconds = 0;
+@@ -1031,12 +1047,12 @@
+         private void TickTod()
+         {
+             _todCycleAccumulator++;
+-            if (_todCycleAccumulator < TodCyclesPerTenth)
+-            {
+-                return;
+-            }
+-
+-            _todCycleAccumulator -= TodCyclesPerTenth;
++            if (_todCycleAccumulator < _todCyclesPerTenth)
++            {
++                return;
++            }
++
++            _todCycleAccumulator -= _todCyclesPerTenth;
+             IncrementTod();
+         }
+ 
+diff --git a/C64Emulator/Cia/Cia2.cs b/C64Emulator/Cia/Cia2.cs
+--- a/C64Emulator/Cia/Cia2.cs
++++ b/C64Emulator/Cia/Cia2.cs
+@@ -22,7 +22,8 @@
+     /// </summary>
+     public sealed class Cia2
+     {
+-        private const int TodCyclesPerTenth = 98525;
++        private int _todCyclesPerTenth = 98525;
++        private bool _flagInputHigh = true;
+         private const byte TimerStartDelayCycles = 4;
+         private const byte TimerOutputEventNone = 0;
+         private const byte TimerOutputEventPulse = 1;
+@@ -38,6 +39,8 @@
+         private readonly byte[] _registers = new byte[0x10];
+ 
+         private IecBusPort _iecBusPort;
++        private UserPort _userPort = new UserPort();
++        public UserPort UserPort => _userPort;
+         private ushort _timerALatch;
+         private ushort _timerACounter;
+         private ushort _timerBLatch;
+@@ -117,6 +120,20 @@
+             Reset();
+         }
+ 
++        /// <summary>Sets the PAL/NTSC CPU-clock timebase used by the TOD counter.</summary>
++        public void ConfigureClock(double cpuHz)
++        {
++            if (cpuHz < 100000 || cpuHz > 2000000) throw new System.ArgumentOutOfRangeException(nameof(cpuHz));
++            _todCyclesPerTenth = (int)System.Math.Round(cpuHz / 10.0);
++        }
++
++        /// <summary>A falling external FLAG edge latches ICR bit 4, even while its interrupt is masked.</summary>
++        public void SetFlagInput(bool high)
++        {
++            if (_flagInputHigh && !high) RaiseTimerInterruptFlag(0x10);
++            _flagInputHigh = high;
++        }
++
+         /// <summary>
+         /// Resets the component to its power-on or idle state.
+         /// </summary>
+@@ -166,11 +183,13 @@
+             _ticksSinceInterruptRead = byte.MaxValue;
+             _interruptSummaryPending = false;
+             _serialDataRegister = 0;
++            _flagInputHigh = true;
+             _todCycleAccumulator = 0;
+             _todTenths = 0;
+             _todSeconds = 0;
+             _todMinutes = 0;
+             _todHours = 0x01;
++            _userPort.UpdateOutputs(_registers[0], _registers[2], _registers[1], _registers[3]);
+             UpdateIecOutputs(false);
+         }
+ 
+@@ -179,6 +198,8 @@
+         /// </summary>
+         public void Tick()
+         {
++            _userPort.Tick();
++            SetFlagInput(_userPort.RxHigh);
+             ReleaseDelayedInterruptLine();
+             AdvancePendingTimerBTimerAInterrupt();
+             AdvanceTimerBTimerAReadHold();
+@@ -209,7 +230,7 @@
+                 case 0x00:
+                     return ReadPortA();
+                 case 0x01:
+-                    return ApplyTimerPortBOutputs(ReadPort(_registers[0x01], _registers[0x03], 0xFF));
++                    return ApplyTimerPortBOutputs(ReadPort(_registers[0x01], _registers[0x03], _userPort.InputPins));
+                 case 0x04:
+                     return ReadVisibleTimerLow(_timerACounter, _timerAReadSubtract);
+                 case 0x05:
+@@ -248,6 +269,7 @@
+             address &= 0x0F;
+             byte previousValue = _registers[address];
+             _registers[address] = value;
++            if (address <= 3) _userPort.UpdateOutputs(_registers[0], _registers[2], _registers[1], _registers[3]);
+ 
+             switch (address)
+             {
+@@ -522,6 +544,7 @@
+         public void AttachIecBus(IecBusPort iecBusPort)
+         {
+             _iecBusPort = iecBusPort;
++            _userPort.UpdateOutputs(_registers[0], _registers[2], _registers[1], _registers[3]);
+             UpdateIecOutputs(false);
+         }
+ 
+@@ -543,7 +566,11 @@
+         /// </summary>
+         public void LoadState(BinaryReader reader)
+         {
++            UserPort attachedPort = _userPort;
+             StateSerializer.ReadObjectFields(reader, this, "_iecBusPort", "<BeforeIecPortAccess>k__BackingField");
++            attachedPort.CopyStateFrom(_userPort);
++            _userPort = attachedPort;
++            _userPort.UpdateOutputs(_registers[0], _registers[2], _registers[1], _registers[3]);
+             UpdateIecOutputs(false);
+         }
+ 
+@@ -1127,12 +1154,12 @@
+         private void TickTod()
+         {
+             _todCycleAccumulator++;
+-            if (_todCycleAccumulator < TodCyclesPerTenth)
++            if (_todCycleAccumulator < _todCyclesPerTenth)
+             {
+                 return;
+             }
+ 
+-            _todCycleAccumulator -= TodCyclesPerTenth;
++            _todCycleAccumulator -= _todCyclesPerTenth;
+             IncrementTod();
+         }
+ 
+diff --git a/C64Emulator/Vic/Vic2.cs b/C64Emulator/Vic/Vic2.cs
+--- a/C64Emulator/Vic/Vic2.cs
++++ b/C64Emulator/Vic/Vic2.cs
+@@ -22,10 +22,10 @@
+     /// </summary>
+     public sealed class Vic2
+     {
+-        private const int TotalLines = 312;
+-        private const int CyclesPerLine = 63;
++        private int TotalLines { get { return _model.RasterLines; } }
++        private int CyclesPerLine { get { return _model.CyclesPerLine; } }
+         private const int PixelsPerCycle = 8;
+-        private const int TotalRasterWidth = CyclesPerLine * PixelsPerCycle;
++        private int TotalRasterWidth { get { return CyclesPerLine * PixelsPerCycle; } }
+         private const int VisibleColumns = 40;
+         private const int VisibleRows = 25;
+         private const int NarrowVisibleColumns = 38;
+@@ -40,13 +40,13 @@
+         private const int D016ModeWriteBackfillPixels = 24;
+         private const int InnerDisplayWidth = VisibleColumns * CharacterWidth;
+         private const int InnerDisplayHeight = VisibleRows * CharacterHeight;
+-        private const int CropLeft = (TotalRasterWidth - 403) / 2;
+-        private const int CropTop = (TotalLines - 284) / 2;
+-        private const int BorderLeft = 41;
+-        private const int BorderTop = 37;
+-        private const int NarrowBorderLeft = BorderLeft + 7;
+-        private const int NarrowBorderTop = BorderTop + 4;
+-        private const int NarrowBottomBorderRasterLine = CropTop + NarrowBorderTop + (NarrowVisibleRows * CharacterHeight);
++        private int CropLeft { get { return (TotalRasterWidth - _model.VisibleWidth) / 2; } }
++        private int CropTop { get { return _model.IsNtsc ? 41 : 14; } }
++        private int BorderLeft { get { return (_model.VisibleWidth - InnerDisplayWidth) / 2; } }
++        private int BorderTop { get { return StandardSpriteDisplayTop - CropTop; } }
++        private int NarrowBorderLeft { get { return BorderLeft + 7; } }
++        private int NarrowBorderTop { get { return BorderTop + 4; } }
++        private int NarrowBottomBorderRasterLine { get { return CropTop + NarrowBorderTop + (NarrowVisibleRows * CharacterHeight); } }
+         private const int NoPendingRasterLine = -1;
+         private const int StandardSpriteDisplayLeft = 24;
+         private const int StandardSpriteDisplayTop = 51;
+@@ -54,8 +54,8 @@
+         private const int NarrowSpriteDisplayTop = 55;
+         private const int SpriteSameLineDisplayX = 0x164;
+         private const int RasterIrqCompareClearLastCycle = 55;
+-        private const int SpriteVisibleOffsetX = StandardSpriteDisplayLeft - BorderLeft;
+-        private const int SpriteVisibleOffsetY = StandardSpriteDisplayTop - BorderTop;
++        private int SpriteVisibleOffsetX { get { return StandardSpriteDisplayLeft - BorderLeft; } }
++        private int SpriteVisibleOffsetY { get { return StandardSpriteDisplayTop - BorderTop; } }
+         private const int SpriteRasterStartOffsetY = 1;
+         private const ulong DisplaySequencerColumnMask = (1UL << VisibleColumns) - 1UL;
+ 
+@@ -169,7 +169,7 @@
+         private readonly byte[] _pixelRegisters = new byte[0x40];
+         private readonly byte[] _pendingPixelRegisterValues = new byte[0x40];
+         private readonly bool[] _pendingPixelRegisterWrites = new bool[0x40];
+-        private readonly VicBusPlan _busPlan = new VicBusPlan();
++        private readonly VicBusPlan _busPlan;
+         private readonly bool[] _spriteDmaActive = new bool[8];
+         private readonly bool[] _spriteDmaLatched = new bool[8];
+         private readonly bool[] _spriteLineVisible = new bool[8];
+@@ -334,7 +334,8 @@
+         {
+             _bus = bus;
+             _frameBuffer = frameBuffer;
+-            _model = model;
++            _model = model ?? throw new System.ArgumentNullException(nameof(model));
++            _busPlan = new VicBusPlan(model.CyclesPerLine);
+             ResetRegisters();
+         }
+ 
+@@ -727,7 +728,7 @@
+         /// </summary>
+         private void BackfillLateOpenedRightBorder()
+         {
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             if ((uint)frameY >= (uint)_model.VisibleHeight)
+             {
+                 return;
+@@ -768,7 +769,7 @@
+ 
+             int beamX = (_cycleInLine * PixelsPerCycle) + CpuWriteVisibleDot;
+             int frameXLimit = beamX - CropLeft;
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             if (frameXLimit <= 0 ||
+                 frameXLimit > GetCurrentBorderLeftFrame() ||
+                 (uint)frameY >= (uint)_model.VisibleHeight)
+@@ -799,7 +800,7 @@
+                 return;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             if ((uint)frameY >= (uint)_model.VisibleHeight || !IsGraphicsDisplayLine())
+             {
+                 return;
+@@ -872,7 +873,7 @@
+                 return;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             if ((uint)frameY >= (uint)_model.VisibleHeight)
+             {
+                 return;
+@@ -939,7 +940,7 @@
+                 return;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             if ((uint)frameY >= (uint)_model.VisibleHeight)
+             {
+                 return;
+@@ -1179,7 +1180,7 @@
+             _videoPatternBitmapMode = false;
+             _graphicsDisplayState = false;
+             _pendingGraphicsDisplayState = false;
+-            _pendingGraphicsDisplayStateCycle = 64;
++            _pendingGraphicsDisplayStateCycle = CyclesPerLine + 1;
+             _pendingGraphicsDisplayStateVideoCounterOffset = 0;
+             _graphicsVc = 0;
+             _graphicsVcBase = 0;
+@@ -1342,6 +1343,12 @@
+         /// <summary>
+         /// Renders current cycle pixels.
+         /// </summary>
++        private int RasterToFrameY(int rasterLine)
++        {
++            int y = rasterLine - CropTop;
++            return _model.IsNtsc && y < 0 ? y + TotalLines : y;
++        }
++
+         private void RenderCurrentCyclePixels()
+         {
+             int beamXStart = _cycleInLine * PixelsPerCycle;
+@@ -1353,7 +1360,7 @@
+ 
+                 int beamX = beamXStart + dot;
+                 int frameX = beamX - CropLeft;
+-                int frameY = beamY - CropTop;
++                int frameY = RasterToFrameY(beamY);
+                 PixelResult outputPixel = ComposePixel(frameX, frameY);
+ 
+                 if ((uint)frameX < (uint)_model.VisibleWidth && (uint)frameY < (uint)_model.VisibleHeight)
+@@ -1853,7 +1860,10 @@
+ 
+             bool xExpanded = ((_pixelRegisters[0x1D] >> spriteIndex) & 0x01) != 0;
+             bool yExpanded = ((_pixelRegisters[0x17] >> spriteIndex) & 0x01) != 0;
+-            int localY = frameY - GetSpriteFrameTop(spriteY);
++            // Sprite sequencing and collisions use physical raster coordinates.
++            // NTSC's displayed viewport wraps raster0..12 below line262; that
++            // crop must not add263 to a sprite's row or hide its collisions.
++            int localY = _rasterLine - (spriteY + SpriteRasterStartOffsetY);
+             if (localY < 0)
+             {
+                 return false;
+@@ -3211,7 +3221,7 @@
+             SynchronizeLegacyDisplaySequencerFields();
+             _displaySequencer.ClockVmli(cycle, _graphicsDisplayState);
+             _pendingGraphicsDisplayState = false;
+-            _pendingGraphicsDisplayStateCycle = 64;
++            _pendingGraphicsDisplayStateCycle = CyclesPerLine + 1;
+             _pendingGraphicsDisplayStateVideoCounterOffset = 0;
+         }
+ 
+@@ -3257,7 +3267,7 @@
+         {
+             if (!IsGraphicsDisplayLine())
+             {
+-                int frameY = _rasterLine - CropTop;
++                int frameY = RasterToFrameY(_rasterLine);
+                 bool keepOpenBorderPatternPipeline = IsOpenVerticalBorderLine(
+                     frameY,
+                     _lineDisplayTopFrame,
+@@ -3909,7 +3919,7 @@
+                 return false;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             return frameY >= _lineDisplayTopFrame && frameY < _lineDisplayBottomFrame;
+         }
+ 
+@@ -3932,7 +3942,7 @@
+                 return false;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             return frameY >= _lineDisplayTopFrame && frameY < _lineDisplayBottomFrame;
+         }
+ 
+@@ -3946,7 +3956,7 @@
+                 return false;
+             }
+ 
+-            int frameY = _rasterLine - CropTop;
++            int frameY = RasterToFrameY(_rasterLine);
+             return frameY >= _lineDisplayTopFrame && frameY < _lineDisplayBottomFrame;
+         }
+ 
+@@ -4050,7 +4060,7 @@
+         /// <summary>
+         /// Gets the sprite frame left value.
+         /// </summary>
+-        private static int GetSpriteFrameLeft(int spriteX)
++        private int GetSpriteFrameLeft(int spriteX)
+         {
+             return spriteX - SpriteVisibleOffsetX;
+         }
+@@ -4058,7 +4068,7 @@
+         /// <summary>
+         /// Gets the sprite frame top value.
+         /// </summary>
+-        private static int GetSpriteFrameTop(int spriteY)
++        private int GetSpriteFrameTop(int spriteY)
+         {
+             return (spriteY + SpriteRasterStartOffsetY) - SpriteVisibleOffsetY;
+         }
+diff --git a/C64Emulator/Vic/VicBusPlan.cs b/C64Emulator/Vic/VicBusPlan.cs
+--- a/C64Emulator/Vic/VicBusPlan.cs
++++ b/C64Emulator/Vic/VicBusPlan.cs
+@@ -47,7 +47,14 @@
+     /// </summary>
+     public sealed class VicBusPlan
+     {
+-        private readonly VicBusSlot[] _slots = new VicBusSlot[63];
++        private readonly VicBusSlot[] _slots;
++
++        public VicBusPlan(int cyclesPerLine = 63)
++        {
++            if (cyclesPerLine != 63 && cyclesPerLine != 65)
++                throw new System.ArgumentOutOfRangeException(nameof(cyclesPerLine));
++            _slots = new VicBusSlot[cyclesPerLine];
++        }
+ 
+         /// <summary>
+         /// Gets the slot value.
+@@ -96,9 +103,9 @@
+             SetPhi1Pointer(5, 5);
+             SetPhi1Pointer(7, 6);
+             SetPhi1Pointer(9, 7);
+-            SetPhi1Pointer(58, 0);
+-            SetPhi1Pointer(60, 1);
+-            SetPhi1Pointer(62, 2);
++            SetPhi1Pointer(GetPointerCycle(0), 0);
++            SetPhi1Pointer(GetPointerCycle(1), 1);
++            SetPhi1Pointer(GetPointerCycle(2), 2);
+ 
+             // RAM refresh cycles on phi1.
+             for (int cycle = 11; cycle <= 15; cycle++)
+@@ -133,7 +140,7 @@
+                 }
+ 
+                 int pointerCycle = GetPointerCycle(spriteIndex);
+-                int nextCycle = (pointerCycle % 63) + 1;
++                int nextCycle = (pointerCycle % _slots.Length) + 1;
+ 
+                 // Each active sprite consumes three half-cycles after the pointer:
+                 // phi2(pointer cycle), phi1(next cycle), phi2(next cycle).
+@@ -155,7 +162,7 @@
+             }
+ 
+             int pointerCycle = GetPointerCycle(spriteIndex);
+-            int nextCycle = (pointerCycle % 63) + 1;
++            int nextCycle = (pointerCycle % _slots.Length) + 1;
+ 
+             SetPhi2Action(pointerCycle, VicBusAction.SpriteDataFetch, spriteIndex, true);
+             SetPhi1Action(nextCycle, VicBusAction.SpriteDataFetch, spriteIndex);
+@@ -250,13 +257,13 @@
+         /// <summary>
+         /// Gets the pointer cycle value.
+         /// </summary>
+-        private static int GetPointerCycle(int spriteIndex)
++        private int GetPointerCycle(int spriteIndex)
+         {
+             switch (spriteIndex)
+             {
+-                case 0: return 58;
+-                case 1: return 60;
+-                case 2: return 62;
++                case 0: return _slots.Length - 5;
++                case 1: return _slots.Length - 3;
++                case 2: return _slots.Length - 1;
+                 case 3: return 1;
+                 case 4: return 3;
+                 case 5: return 5;
+diff --git a/C64Emulator/Sid/Sid.cs b/C64Emulator/Sid/Sid.cs
+--- a/C64Emulator/Sid/Sid.cs
++++ b/C64Emulator/Sid/Sid.cs
+@@ -32,11 +32,12 @@
+     /// </summary>
+     public sealed class Sid : IDisposable
+     {
+-        private const double SidClockHz = 985248.0;
++        private readonly double SidClockHz;
+         private const int SampleRate = 44100;
+         private const int VoiceCount = 3;
+         private const int RegistersPerVoice = 7;
+-        private const double CyclesPerSample = SidClockHz / SampleRate;
++        private readonly double CyclesPerSample;
++        public double ClockHz { get { return SidClockHz; } }
+         private const uint AccumulatorMask = 0x00FFFFFF;
+         private static readonly int[] EnvelopeRatePeriods =
+         {
+@@ -78,8 +79,14 @@
+         /// <summary>
+         /// Initializes a new Sid instance.
+         /// </summary>
+-        public Sid()
+-        {
++        public Sid() : this(985248.0) { }
++
++        public Sid(double clockHz)
++        {
++            if (double.IsNaN(clockHz) || double.IsInfinity(clockHz) || clockHz <= 0)
++                throw new ArgumentOutOfRangeException(nameof(clockHz));
++            SidClockHz = clockHz;
++            CyclesPerSample = clockHz / SampleRate;
+             for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+             {
+                 _voices[voiceIndex] = new SidVoice((uint)(0x7FFFF8u ^ (uint)(voiceIndex * 0x1F1F1Fu)));
+@@ -182,7 +189,7 @@
+         public void SaveState(BinaryWriter writer)
+         {
+             BinaryStateIO.WriteByteArray(writer, _registers);
+-            StateSerializer.WriteObjectFields(writer, this, "_registers", "_voices", "_audioOutput");
++            StateSerializer.WriteObjectFields(writer, this, "_registers", "_voices", "_audioOutput", "SidClockHz", "CyclesPerSample");
+             writer.Write(_voices.Length);
+             for (int voiceIndex = 0; voiceIndex < _voices.Length; voiceIndex++)
+             {
+@@ -201,7 +208,7 @@
+                 Array.Copy(registers, _registers, Math.Min(registers.Length, _registers.Length));
+             }
+ 
+-            StateSerializer.ReadObjectFields(reader, this, "_registers", "_voices", "_audioOutput");
++            StateSerializer.ReadObjectFields(reader, this, "_registers", "_voices", "_audioOutput", "SidClockHz", "CyclesPerSample");
+             int voiceCount = reader.ReadInt32();
+             for (int voiceIndex = 0; voiceIndex < voiceCount && voiceIndex < _voices.Length; voiceIndex++)
+             {
+diff --git a/C64Emulator/Media/MountedMediaKind.cs b/C64Emulator/Media/MountedMediaKind.cs
+--- a/C64Emulator/Media/MountedMediaKind.cs
++++ b/C64Emulator/Media/MountedMediaKind.cs
+@@ -23,6 +23,7 @@
+         None,
+         Prg,
+         D64,
+-        EasyFlash
++        EasyFlash,
++        Tape
+     }
+ }
+diff --git a/C64Emulator/Program.cs b/C64Emulator/Program.cs
+--- a/C64Emulator/Program.cs
++++ b/C64Emulator/Program.cs
+@@ -29,12 +29,14 @@
+     /// </summary>
+     static class Program
+     {
++        private static C64Model _requestedModel = C64Model.Pal;
+         /// <summary>
+         /// Der Haupteinstiegspunkt fuer die Anwendung.
+         /// </summary>
+         [STAThread]
+         static void Main(string[] args)
+         {
++            _requestedModel = C64Model.ParseCommandLine(ref args);
+             // Command-line modes are kept before any WinForms/OpenTK startup so
+             // CI, release scripts, and VICE comparisons can run headlessly.
+             if (args != null && args.Length >= 1 && string.Equals(args[0], "--self-test-cpu", StringComparison.OrdinalIgnoreCase))
+@@ -267,7 +269,7 @@
+ 
+             try
+             {
+-                using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))
++                using (var window = new C64Window(_requestedModel, "C64 Emulator - " + _requestedModel.VideoStandard))
+                 {
+                     StartupUpdateChecker.CheckForUpdatesOnStartup(window.RequestClose);
+                     window.Run();
+@@ -334,7 +336,7 @@
+ 
+             try
+             {
+-                using (var system = new C64System(C64Model.Pal))
++                using (var system = new C64System(_requestedModel))
+                 {
+                     system.RunCycles(20000);
+                     Stopwatch stopwatch = Stopwatch.StartNew();
+@@ -343,7 +345,7 @@
+ 
+                     double seconds = Math.Max(0.000001, stopwatch.Elapsed.TotalSeconds);
+                     double cyclesPerSecond = cycles / seconds;
+-                    double realtimeFactor = cyclesPerSecond / C64Model.Pal.CpuHz;
++                    double realtimeFactor = cyclesPerSecond / _requestedModel.CpuHz;
+                     log.AppendFormat(CultureInfo.InvariantCulture, "ElapsedSeconds={0:F6}", seconds).AppendLine();
+                     log.AppendFormat(CultureInfo.InvariantCulture, "CyclesPerSecond={0:F0}", cyclesPerSecond).AppendLine();
+                     log.AppendFormat(CultureInfo.InvariantCulture, "EmulatedMHz={0:F3}", cyclesPerSecond / 1000000.0).AppendLine();
+@@ -653,7 +655,7 @@
+ 
+             try
+             {
+-                using (var system = new C64System(C64Model.Pal))
++                using (var system = new C64System(_requestedModel))
+                 {
+                     log.AppendLine("Mount=" + system.MountMedia(d64Path, 8));
+ 
+@@ -711,7 +713,7 @@
+ 
+             try
+             {
+-                using (var system = new C64System(C64Model.Pal))
++                using (var system = new C64System(_requestedModel))
+                 {
+                     log.AppendLine("Mount=" + system.MountMedia(d64Path, 8));
+ 
+diff --git a/C64Emulator/C64Window.cs b/C64Emulator/C64Window.cs
+--- a/C64Emulator/C64Window.cs
++++ b/C64Emulator/C64Window.cs
+@@ -122,7 +122,8 @@
+             Settings = 0,
+             Network = 1,
+             Media = 2,
+-            Reset = 3
++            Reset = 3,
++            Tape = 4
+         }
+ 
+         private enum ControllerMapAction
+@@ -144,7 +145,7 @@
+         private const long WaitCycleQuantum = 256;
+         private const double SleepThresholdSeconds = 0.002;
+         private const double SleepSafetyMarginSeconds = 0.0005;
+-        private const int MainMenuItemCount = 4;
++        private const int MainMenuItemCount = 5;
+         private const float VolumeStep = 0.05f;
+         private const float NoiseStep = 0.05f;
+         private const int AudioOverlayItemCount = 23;
+@@ -202,6 +203,7 @@
+         private long _emulationBaseCycle;
+         private long _lastRenderedCycle;
+         private volatile bool _mainMenuVisible;
++        private volatile bool _tapeMenuVisible;
+         private volatile bool _audioOverlayVisible;
+         private bool _mediaBrowserVisible;
+         private bool _resetConfirmVisible;
+@@ -1273,6 +1275,7 @@
+         /// </summary>
+         private void ReturnToMainMenuFromSubmenu()
+         {
++            _tapeMenuVisible = false;
+             _mainMenuVisible = true;
+             _networkOverlayVisible = false;
+             _audioOverlayVisible = false;
+@@ -1292,6 +1295,7 @@
+         /// </summary>
+         private void OpenMainMenu()
+         {
++            _tapeMenuVisible = false;
+             _mainMenuVisible = true;
+             _networkOverlayVisible = false;
+             _audioOverlayVisible = false;
+@@ -1311,6 +1315,7 @@
+         /// </summary>
+         private void CloseMainMenuFamily()
+         {
++            _tapeMenuVisible = false;
+             _mainMenuVisible = false;
+             _networkOverlayVisible = false;
+             _audioOverlayVisible = false;
+@@ -1354,7 +1359,12 @@
+                     ActivateMainMenuItem();
+                     return true;
+                 case Key.Escape:
+-                    CloseMainMenuFamily();
++                    if (_tapeMenuVisible)
++                    {
++                        _tapeMenuVisible = false;
++                        _mainMenuSelection = (int)MainMenuItem.Tape;
++                    }
++                    else CloseMainMenuFamily();
+                     return true;
+                 default:
+                     return true;
+@@ -1384,6 +1394,7 @@
+         /// </summary>
+         private void ActivateMainMenuItem()
+         {
++            if (_tapeMenuVisible) { ActivateTapeMenuItem(); return; }
+             MainMenuItem selectedItem = (MainMenuItem)_mainMenuSelection;
+             if (!IsMainMenuItemEnabled(selectedItem))
+             {
+@@ -1411,14 +1422,64 @@
+                 case MainMenuItem.Reset:
+                     OpenResetConfirmation();
+                     return;
+-            }
+-        }
+-
+-        /// <summary>
+-        /// Checks whether a top-level menu item is available in the current mode.
+-        /// </summary>
+-        /// <param name="item">Top-level menu item.</param>
+-        /// <returns>True when the item can be activated.</returns>
++                case MainMenuItem.Tape:
++                    _tapeMenuVisible = true;
++                    _mainMenuSelection = 0;
++                    return;
++            }
++        }
++
++        /// <summary>
++        /// Activates a cassette transport or save operation.
++        /// </summary>
++        private void ActivateTapeMenuItem()
++        {
++            string status;
++            switch (_mainMenuSelection)
++            {
++                case 0: status = _system.PlayTape(); break;
++                case 1: status = _system.StopTape(); break;
++                case 2: status = _system.RewindTape(); break;
++                case 3:
++                    if (_system.Tape.PulseCount > 0 &&
++                        System.Windows.Forms.MessageBox.Show("Start a new tape recording? Save any recording you want to keep first.",
++                            "New tape recording", System.Windows.Forms.MessageBoxButtons.OKCancel,
++                            System.Windows.Forms.MessageBoxIcon.Question) != System.Windows.Forms.DialogResult.OK) return;
++                    status = _system.BeginTapeRecording();
++                    break;
++                case 4:
++                    using (var dialog = new System.Windows.Forms.SaveFileDialog())
++                    {
++                        dialog.Title = "Save cassette recording";
++                        dialog.Filter = "C64 tape (*.tap)|*.tap";
++                        dialog.DefaultExt = "tap";
++                        dialog.AddExtension = true;
++                        dialog.OverwritePrompt = true;
++                        dialog.FileName = "recording.tap";
++                        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
++                        status = _system.SaveTape(dialog.FileName);
++                    }
++                    break;
++                default: return;
++            }
++            CloseMainMenuFamily();
++            _overlayStatusText = status;
++            ShowTurboToast(status);
++        }
++
++        private static string GetTapeMenuLabel(int index)
++        {
++            switch (index)
++            {
++                case 0: return "PLAY";
++                case 1: return "STOP";
++                case 2: return "REWIND";
++                case 3: return "NEW RECORDING";
++                case 4: return "SAVE TAP";
++                default: return string.Empty;
++            }
++        }
++
+         private bool IsMainMenuItemEnabled(MainMenuItem item)
+         {
+             if (_networkMode != NetworkSessionMode.Client)
+@@ -1428,7 +1489,7 @@
+ 
+             // Remote clients can manage local presentation and network leave/filter
+             // options, but media and drive ownership stay with the host.
+-                return item == MainMenuItem.Settings || item == MainMenuItem.Network;
++            return item == MainMenuItem.Settings || item == MainMenuItem.Network;
+         }
+ 
+         /// <summary>
+@@ -7046,7 +7107,7 @@
+             DrawLine(overlayX, overlayY, overlayX, overlayY + overlayHeight - 1, 108, 214, 182);
+             DrawLine(overlayX + overlayWidth - 1, overlayY, overlayX + overlayWidth - 1, overlayY + overlayHeight - 1, 108, 214, 182);
+ 
+-            DrawOverlayText(overlayX + 16, overlayY + 14, "MAIN MENU", 2, 240, 248, 255);
++            DrawOverlayText(overlayX + 16, overlayY + 14, _tapeMenuVisible ? "TAPE" : "MAIN MENU", 2, 240, 248, 255);
+             DrawOverlayText(overlayX + 16, overlayY + 34, "ENTER OPEN/CHANGE  ESC CLOSE", 1, 192, 210, 225);
+ 
+             int itemX = overlayX + 26;
+@@ -7058,13 +7119,13 @@
+                 byte red = enabled ? (selected ? (byte)255 : (byte)192) : (byte)100;
+                 byte green = enabled ? (selected ? (byte)243 : (byte)210) : (byte)108;
+                 byte blue = enabled ? (selected ? (byte)168 : (byte)225) : (byte)118;
+-                DrawOverlayText(itemX, itemY + (index * 18), (selected ? "> " : "  ") + GetMainMenuLabel((MainMenuItem)index), 2, red, green, blue);
+-                if (index == (int)MainMenuItem.Media)
++                DrawOverlayText(itemX, itemY + (index * 18), (selected ? "> " : "  ") + (_tapeMenuVisible ? GetTapeMenuLabel(index) : GetMainMenuLabel((MainMenuItem)index)), 2, red, green, blue);
++                if (!_tapeMenuVisible && index == (int)MainMenuItem.Media)
+                 {
+                     DrawOverlayText(itemX + 128, itemY + (index * 18) + 4, FormatOverlayValue(FormatMainMenuMediaValue(), 20), 1, red, green, blue);
+                 }
+ 
+-                if (index == (int)MainMenuItem.Reset)
++                if (!_tapeMenuVisible && index == (int)MainMenuItem.Reset)
+                 {
+                     DrawOverlayText(itemX + 176, itemY + (index * 18), FormatResetMode(_resetMode), 2, red, green, blue);
+                 }
+@@ -7093,6 +7154,8 @@
+                     return "MEDIA";
+                 case MainMenuItem.Reset:
+                     return "RESET";
++                case MainMenuItem.Tape:
++                    return "TAPE";
+                 default:
+                     return string.Empty;
+             }
+@@ -7167,16 +7230,24 @@
+ 
+             int menuX = overlayX + 14;
+             int menuY = overlayY + 45;
+-            for (int index = 0; index < NetworkOverlayItemCount; index++)
+-            {
+-                // Rows are always drawn in fixed positions so disabled server/client
+-                // sections stay visible and explain the current mode.
+-                DrawNetworkMenuRow(menuX, GetNetworkMenuRowY(menuY, index), index);
++            // The shorter NTSC viewport needs a scrolling menu; retain room for
++            // connected clients and status below the selected settings window.
++            int visibleRows = Math.Min(NetworkOverlayItemCount, Math.Max(1, (overlayHeight - 140) / 8));
++            int firstItem = Math.Max(0, _networkOverlaySelection - visibleRows + 1);
++            for (int row = 0; row < visibleRows && firstItem + row < NetworkOverlayItemCount; row++)
++            {
++                int index = firstItem + row;
++                int gap = firstItem < NetworkOverlayServerItemCount && index >= NetworkOverlayServerItemCount ? 10 : 0;
++                DrawNetworkMenuRow(menuX, menuY + row * 8 + gap, index);
+             }
+ 
+             // Server controls live above the separator; client controls live below it.
+-            int separatorY = menuY + (NetworkOverlayServerItemCount * 8) + 3;
+-            DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
++            int separatorRow = NetworkOverlayServerItemCount - firstItem;
++            if (separatorRow > 0 && separatorRow < visibleRows)
++            {
++                int separatorY = menuY + separatorRow * 8 + 3;
++                DrawLine(menuX, separatorY, overlayX + overlayWidth - 16, separatorY, 70, 96, 112);
++            }
+ 
+             int clientsY = overlayY + overlayHeight - 85;
+             DrawOverlayText(menuX, clientsY, "CLIENTS " + clients.Count, 1, 108, 214, 182);
+@@ -7710,9 +7781,9 @@
+         private void DrawAudioOverlay(float sidMasterVolume, float sidNoiseLevel, SidChipModel sidChipModel, JoystickPort joystickPort, MountedMediaInfo mountedMediaInfo, bool enableLoadHack, bool forceSoftwareIecTransport, bool enableInputInjection)
+         {
+             int overlayWidth = 280;
+-            int overlayHeight = 236;
++            int overlayHeight = Math.Min(PixelsHeight - 8, 236);
+             int overlayX = (PixelsWidth - overlayWidth) / 2;
+-            int overlayY = 22;
++            int overlayY = Math.Min(22, Math.Max(4, (PixelsHeight - overlayHeight) / 2));
+ 
+             DrawFilledRectangleWithAlpha(overlayX, overlayY, overlayWidth, overlayHeight, 12, 16, 28, 215);
+             DrawLine(overlayX, overlayY, overlayX + overlayWidth - 1, overlayY, 182, 214, 108);
+@@ -7723,8 +7794,8 @@
+             DrawOverlayText(overlayX + 16, overlayY + 14, "SETTINGS", 2, 240, 248, 255);
+             DrawOverlayText(overlayX + 16, overlayY + 32, "ENTER CHANGE  ESC BACK  F11 FULL", 1, 192, 210, 225);
+             DrawAudioOverlayMenu(overlayX + 18, overlayY + 52, overlayWidth - 36, sidMasterVolume, sidNoiseLevel, sidChipModel, joystickPort, mountedMediaInfo, enableLoadHack, forceSoftwareIecTransport, enableInputInjection);
+-            DrawOverlayText(overlayX + 18, overlayY + 212, "MOUNTED " + FormatOverlayValue(mountedMediaInfo.DisplayName, 24), 1, 232, 238, 244);
+-            DrawOverlayText(overlayX + 18, overlayY + 222, "STATUS  " + FormatOverlayValue(_overlayStatusText, 24), 1, 182, 214, 108);
++            DrawOverlayText(overlayX + 18, overlayY + overlayHeight - 24, "MOUNTED " + FormatOverlayValue(mountedMediaInfo.DisplayName, 24), 1, 232, 238, 244);
++            DrawOverlayText(overlayX + 18, overlayY + overlayHeight - 14, "STATUS  " + FormatOverlayValue(_overlayStatusText, 24), 1, 182, 214, 108);
+ 
+             if (_mediaBrowserVisible)
+             {
+@@ -8384,7 +8455,8 @@
+                 string extension = Path.GetExtension(path);
+                 if (!string.Equals(extension, ".prg", StringComparison.OrdinalIgnoreCase) &&
+                     !string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase) &&
+-                    !string.Equals(extension, ".crt", StringComparison.OrdinalIgnoreCase))
++                    !string.Equals(extension, ".crt", StringComparison.OrdinalIgnoreCase) &&
++                    !string.Equals(extension, ".tap", StringComparison.OrdinalIgnoreCase))
+                 {
+                     continue;
+                 }
+@@ -8403,7 +8475,7 @@
+                 return;
+             }
+ 
+-            _overlayStatusText = "DROP PRG D64 OR CRT";
++            _overlayStatusText = "DROP PRG D64 CRT OR TAP";
+             ShowTurboToast(_overlayStatusText);
+         }
+ 
+@@ -8519,6 +8591,8 @@
+             StopEmulation();
+ 
+             MountedMediaInfo mountedMedia = _system.MountedMedia;
++            MountedMediaInfo tapeMedia = mountedMedia.Kind == MountedMediaKind.Tape ? mountedMedia : null;
++            TapeDeck tapeSnapshot = _system.CreateTapeSnapshot();
+             Dictionary<int, string> mountedDrivePaths = _system.GetMountedDriveHostPaths();
+             EasyFlashCartridge easyFlashSnapshot = _system.CreateEasyFlashSnapshot();
+             float sidMasterVolume = _system.SidMasterVolume;
+@@ -8564,6 +8638,8 @@
+ 
+             SaveSettings();
+             _overlayStatusText = ReloadMountedMediaAfterPowerCycle(mountedMedia, mountedDrivePaths);
++            _system.InsertTapeSnapshot(tapeSnapshot, tapeMedia);
++            if (tapeMedia != null) _overlayStatusText = "RESET TAPE RETAINED";
+             StartEmulation();
+         }
+ 
+@@ -8755,6 +8831,7 @@
+                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.prg", SearchOption.TopDirectoryOnly));
+                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.d64", SearchOption.TopDirectoryOnly));
+                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.crt", SearchOption.TopDirectoryOnly));
++                    files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.tap", SearchOption.TopDirectoryOnly));
+                     files.Sort(StringComparer.OrdinalIgnoreCase);
+                     foreach (string file in files)
+                     {
+@@ -8773,7 +8850,7 @@
+             _mediaBrowserEntries = entries;
+             if (_mediaBrowserEntries.Count == 0)
+             {
+-                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG D64 OR CRT FILES", false, false));
++                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG D64 CRT OR TAP FILES", false, false));
+             }
+ 
+             _mediaBrowserSelection = Math.Max(0, Math.Min(_mediaBrowserSelection, _mediaBrowserEntries.Count - 1));

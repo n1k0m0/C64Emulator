@@ -1,0 +1,37 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "checks": [
+    {
+      "test": "CHROUT X/Y, stack, carry and decimal mode",
+      "result": "PASS"
+    },
+    {
+      "test": "scroll copies all 960 characters and colors safely",
+      "result": "PASS"
+    },
+    {
+      "test": "all sixteen colors, charset and non-destructive clear",
+      "result": "PASS"
+    },
+    {
+      "test": "192 printable PETSCII codes in both decimal modes",
+      "result": "PASS"
+    },
+    {
+      "test": "atomic clock access and C64 daily rollover",
+      "result": "PASS"
+    },
+    {
+      "test": "deferred IRQ cannot tear SETTIM or RDTIM",
+      "result": "PASS"
+    },
+    {
+      "test": "CHRIN keeps Open BASIC's returned line offset",
+      "result": "PASS"
+    },
+    {
+      "test": "GETIN preserves bytes under immediate host queue refill",
+      "result": "PASS"
+    }
+  ]
+}

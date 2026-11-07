@@ -1,0 +1,7 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "quoted_control_cases": 62,
+  "quote_toggle": "PASS",
+  "return_resets_modes": "PASS",
+  "automatic_wrap_keeps_quote_mode": "PASS"
+}

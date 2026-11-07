@@ -1,0 +1,46 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "checks": [
+    {
+      "test": "CHRIN edits typed text instead of returning cursor-control bytes",
+      "result": "PASS"
+    },
+    {
+      "test": "RETURN re-reads a visible existing line from either physical half",
+      "result": "PASS"
+    },
+    {
+      "test": "input prompt boundaries and clear-mid-input",
+      "result": "PASS"
+    },
+    {
+      "test": "39/40/41/79/80/81/100-character limits under IRQ and rapid host refill",
+      "result": "PASS"
+    },
+    {
+      "test": "INSERT/DELETE preserve colors and expanding rows preserves following text",
+      "result": "PASS"
+    },
+    {
+      "test": "DELETE crosses a continuation and cursor movement crosses physical rows",
+      "result": "PASS"
+    },
+    {
+      "test": "quote and insert mode controls round-trip with documented DELETE exception",
+      "result": "PASS"
+    },
+    {
+      "test": "CHRIN restarts an abandoned collector after direct BASIC warm entry",
+      "result": "PASS"
+    },
+    {
+      "test": "80th-cell deletion works and full occupied line cannot lose data on INSERT",
+      "result": "PASS"
+    },
+    {
+      "test": "bottom scrolling retains 80-cell input and CLEAR preserves sprite pointers",
+      "result": "PASS"
+    }
+  ],
+  "scope": "CPU instructions + host FIFO; native VIC/raster timing is separate."
+}

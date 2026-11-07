@@ -49,6 +49,8 @@ namespace C64Emulator.Core
 
         public string ResetMode { get; set; } = "Warm";
 
+        public string RomSet { get; set; } = "Original";
+
         public bool TurboMode { get; set; }
 
         public bool Fullscreen { get; set; }

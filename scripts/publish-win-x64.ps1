@@ -43,7 +43,7 @@ dotnet publish $projectPath `
     -o $resolvedPublishDir
 
 Get-ChildItem -LiteralPath $resolvedPublishDir -Recurse -File |
-    Where-Object { $_.Extension -in ".bin", ".prg", ".d64" } |
+    Where-Object { ($_.Extension -in ".bin", ".prg", ".d64") -and ($_.DirectoryName -notlike "*\open-roms") } |
     Remove-Item -Force
 
 Write-Host "Published C64 Emulator $Version to $resolvedPublishDir"

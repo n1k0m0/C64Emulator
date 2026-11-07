@@ -1,0 +1,94 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "checks": [
+    {
+      "test": "SAVE secondary bit0 header",
+      "secondary": 0,
+      "expected_header_type": 1,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE secondary bit0 header",
+      "secondary": 1,
+      "expected_header_type": 3,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE secondary bit0 header",
+      "secondary": 2,
+      "expected_header_type": 1,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE secondary bit0 header",
+      "secondary": 3,
+      "expected_header_type": 3,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD tape relocation policy",
+      "header_type": 1,
+      "secondary": 0,
+      "destination": 20480,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD tape relocation policy",
+      "header_type": 1,
+      "secondary": 1,
+      "destination": 16384,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD tape relocation policy",
+      "header_type": 3,
+      "secondary": 0,
+      "destination": 16384,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD tape relocation policy",
+      "header_type": 3,
+      "secondary": 1,
+      "destination": 16384,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE actual header/data/EOT encoder",
+      "secondary": 0,
+      "blocks": 4,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE actual header/data/EOT encoder",
+      "secondary": 1,
+      "blocks": 4,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE actual header/data/EOT encoder",
+      "secondary": 2,
+      "blocks": 6,
+      "result": "PASS"
+    },
+    {
+      "test": "SAVE actual header/data/EOT encoder",
+      "secondary": 3,
+      "blocks": 6,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD terminates on EOT",
+      "named": false,
+      "status": 128,
+      "result": "PASS"
+    },
+    {
+      "test": "LOAD terminates on EOT",
+      "named": true,
+      "status": 128,
+      "result": "PASS"
+    }
+  ],
+  "scope": "Real block byte/checksum encoders; physical pulse timing remains a separate test."
+}

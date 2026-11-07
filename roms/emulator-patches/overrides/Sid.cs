@@ -1,0 +1,1063 @@
+/*
+   Copyright 2026 Nils Kopal <Nils.Kopal<at>kopaldev.de
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+using System;
+using System.IO;
+
+namespace C64Emulator.Core
+{
+    /// <summary>
+    /// Emulates SID register state and audio sample generation.
+    /// </summary>
+    public enum SidChipModel
+    {
+        Mos6581,
+        Mos8580
+    }
+
+    /// <summary>
+    /// Emulates SID register state and audio sample generation.
+    /// </summary>
+    public sealed class Sid : IDisposable
+    {
+        private readonly double SidClockHz;
+        private const int SampleRate = 44100;
+        private const int VoiceCount = 3;
+        private const int RegistersPerVoice = 7;
+        private readonly double CyclesPerSample;
+        public double ClockHz { get { return SidClockHz; } }
+        private const uint AccumulatorMask = 0x00FFFFFF;
+        private static readonly int[] EnvelopeRatePeriods =
+        {
+            9, 32, 63, 95,
+            149, 220, 267, 313,
+            392, 977, 1954, 3126,
+            3907, 11720, 19532, 31251
+        };
+
+        private readonly byte[] _registers = new byte[0x20];
+        private readonly SidVoice[] _voices = new SidVoice[VoiceCount];
+        private readonly bool[] _voiceMsbRising = new bool[VoiceCount];
+        private readonly float[] _voiceOutputs = new float[VoiceCount];
+        private readonly byte[] _audioBytes = new byte[2048];
+        private readonly SidAudioOutput _audioOutput;
+
+        private int _audioByteCount;
+        private double _sampleCycleAccumulator;
+        private byte _oscillator3Value;
+        private byte _envelope3Value;
+        private float _masterVolume = 1.0f;
+        private float _noiseLevel = 0.55f;
+        private SidChipModel _chipModel = SidChipModel.Mos6581;
+        private float _filterLow;
+        private float _filterBand;
+        private float _volumeDacTarget;
+        private float _volumeDacCurrent;
+        private float _volumeDacDcBlock;
+
+        /// <summary>
+        /// Raised whenever the SID output buffer is flushed.
+        /// </summary>
+        /// <remarks>
+        /// The network host uses this event to mirror the exact PCM bytes that are also
+        /// sent to the local audio device, keeping remote audio aligned with host output.
+        /// </remarks>
+        public event Action<byte[], int> AudioBytesGenerated;
+
+        /// <summary>
+        /// Initializes a new Sid instance.
+        /// </summary>
+        public Sid() : this(985248.0) { }
+
+        public Sid(double clockHz)
+        {
+            if (double.IsNaN(clockHz) || double.IsInfinity(clockHz) || clockHz <= 0)
+                throw new ArgumentOutOfRangeException(nameof(clockHz));
+            SidClockHz = clockHz;
+            CyclesPerSample = clockHz / SampleRate;
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                _voices[voiceIndex] = new SidVoice((uint)(0x7FFFF8u ^ (uint)(voiceIndex * 0x1F1F1Fu)));
+            }
+
+            try
+            {
+                _audioOutput = new SidAudioOutput(SampleRate);
+            }
+            catch
+            {
+                _audioOutput = null;
+            }
+
+            Reset();
+        }
+
+        /// <summary>
+        /// Gets or sets whether this SID instance writes to the local audio device.
+        /// </summary>
+        /// <remarks>
+        /// A remote client keeps its local emulator stopped and plays audio from
+        /// C64NetClient instead, so the window disables local SID playback while joined.
+        /// </remarks>
+        public bool LocalAudioEnabled { get; set; } = true;
+
+        public float MasterVolume
+        {
+            get { return _masterVolume; }
+            set { _masterVolume = Clamp(value, 0.0f, 1.5f); }
+        }
+
+        public float NoiseLevel
+        {
+            get { return _noiseLevel; }
+            set { _noiseLevel = Clamp(value, 0.0f, 1.0f); }
+        }
+
+        public SidChipModel ChipModel
+        {
+            get { return _chipModel; }
+            set
+            {
+                _chipModel = value;
+                _filterLow = 0.0f;
+                _filterBand = 0.0f;
+                _volumeDacCurrent = 0.0f;
+                _volumeDacDcBlock = 0.0f;
+                _volumeDacTarget = ComputeVolumeDacTarget(_registers[0x18]);
+            }
+        }
+
+        /// <summary>
+        /// Gets compact debug information for the SID.
+        /// </summary>
+        public string GetDebugInfo()
+        {
+            int cutoff = ((_registers[0x16] << 3) | (_registers[0x15] & 0x07)) & 0x07FF;
+            return string.Format(
+                "model={0} vol={1:X1} fc={2:X3} res={3:X1} mode={4:X2} osc3={5:X2} env3={6:X2} v0={7} v1={8} v2={9}",
+                _chipModel == SidChipModel.Mos6581 ? "6581" : "8580",
+                _registers[0x18] & 0x0F,
+                cutoff,
+                (_registers[0x17] >> 4) & 0x0F,
+                _registers[0x18],
+                _oscillator3Value,
+                _envelope3Value,
+                _voices[0].GetDebugInfo(),
+                _voices[1].GetDebugInfo(),
+                _voices[2].GetDebugInfo());
+        }
+
+        /// <summary>
+        /// Resets the component to its power-on or idle state.
+        /// </summary>
+        public void Reset()
+        {
+            Array.Clear(_registers, 0, _registers.Length);
+            Array.Clear(_voiceMsbRising, 0, _voiceMsbRising.Length);
+            Array.Clear(_voiceOutputs, 0, _voiceOutputs.Length);
+            _audioByteCount = 0;
+            _sampleCycleAccumulator = 0.0;
+            _oscillator3Value = 0;
+            _envelope3Value = 0;
+            _filterLow = 0.0f;
+            _filterBand = 0.0f;
+            _volumeDacTarget = 0.0f;
+            _volumeDacCurrent = 0.0f;
+            _volumeDacDcBlock = 0.0f;
+
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                _voices[voiceIndex].Reset((uint)(0x7FFFF8u ^ (uint)(voiceIndex * 0x1F1F1Fu)));
+            }
+        }
+
+        /// <summary>
+        /// Writes the complete SID state into a savestate stream.
+        /// </summary>
+        public void SaveState(BinaryWriter writer)
+        {
+            BinaryStateIO.WriteByteArray(writer, _registers);
+            StateSerializer.WriteObjectFields(writer, this, "_registers", "_voices", "_audioOutput", "SidClockHz", "CyclesPerSample");
+            writer.Write(_voices.Length);
+            for (int voiceIndex = 0; voiceIndex < _voices.Length; voiceIndex++)
+            {
+                _voices[voiceIndex].SaveState(writer);
+            }
+        }
+
+        /// <summary>
+        /// Restores the complete SID state from a savestate stream.
+        /// </summary>
+        public void LoadState(BinaryReader reader)
+        {
+            byte[] registers = BinaryStateIO.ReadByteArray(reader);
+            if (registers != null)
+            {
+                Array.Copy(registers, _registers, Math.Min(registers.Length, _registers.Length));
+            }
+
+            StateSerializer.ReadObjectFields(reader, this, "_registers", "_voices", "_audioOutput", "SidClockHz", "CyclesPerSample");
+            int voiceCount = reader.ReadInt32();
+            for (int voiceIndex = 0; voiceIndex < voiceCount && voiceIndex < _voices.Length; voiceIndex++)
+            {
+                _voices[voiceIndex].LoadState(reader);
+            }
+
+            for (int voiceIndex = _voices.Length; voiceIndex < voiceCount; voiceIndex++)
+            {
+                SidVoice.SkipState(reader);
+            }
+        }
+
+        /// <summary>
+        /// Advances the component by one emulated tick.
+        /// </summary>
+        public void Tick()
+        {
+            AdvanceVoicesOneSidCycle();
+
+            _sampleCycleAccumulator += 1.0;
+            while (_sampleCycleAccumulator >= CyclesPerSample)
+            {
+                _sampleCycleAccumulator -= CyclesPerSample;
+                AppendSample(RenderNextSample());
+            }
+        }
+
+        /// <summary>
+        /// Handles the read operation.
+        /// </summary>
+        public byte Read(ushort address)
+        {
+            address &= 0x1F;
+            switch (address)
+            {
+                case 0x19:
+                case 0x1A:
+                    return 0xFF;
+                case 0x1B:
+                    return _oscillator3Value;
+                case 0x1C:
+                    return _envelope3Value;
+                default:
+                    return _registers[address];
+            }
+        }
+
+        /// <summary>
+        /// Handles the write operation.
+        /// </summary>
+        public void Write(ushort address, byte value)
+        {
+            address &= 0x1F;
+            byte previousValue = _registers[address];
+            _registers[address] = value;
+
+            if (address < RegistersPerVoice * VoiceCount)
+            {
+                SyncVoiceFromRegisters(address / RegistersPerVoice);
+            }
+
+            if (address == 0x18)
+            {
+                UpdateVolumeDac(previousValue, value);
+            }
+        }
+
+        /// <summary>
+        /// Releases resources owned by the component.
+        /// </summary>
+        public void Dispose()
+        {
+            FlushAudio();
+            if (_audioOutput != null)
+            {
+                _audioOutput.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Handles the advance voices one sid cycle operation.
+        /// </summary>
+        private void AdvanceVoicesOneSidCycle()
+        {
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                _voiceMsbRising[voiceIndex] = _voices[voiceIndex].Advance();
+            }
+
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                int sourceVoiceIndex = GetSyncSourceIndex(voiceIndex);
+                SidVoice voice = _voices[voiceIndex];
+                SidVoice sourceVoice = _voices[sourceVoiceIndex];
+                if (voice.SyncEnabled && _voiceMsbRising[sourceVoiceIndex] && !sourceVoice.TestEnabled)
+                {
+                    voice.ApplySyncReset();
+                }
+            }
+
+            _oscillator3Value = _voices[2].GetOscillatorByte();
+            _envelope3Value = _voices[2].GetEnvelopeByte();
+        }
+
+        /// <summary>
+        /// Handles the sync voice from registers operation.
+        /// </summary>
+        private void SyncVoiceFromRegisters(int voiceIndex)
+        {
+            int registerBase = voiceIndex * RegistersPerVoice;
+            SidVoice voice = _voices[voiceIndex];
+            voice.FrequencyRegister = (ushort)(_registers[registerBase] | (_registers[registerBase + 1] << 8));
+            voice.PulseWidthRegister = (ushort)((_registers[registerBase + 2] | ((_registers[registerBase + 3] & 0x0F) << 8)) & 0x0FFF);
+            voice.AttackDecay = _registers[registerBase + 5];
+            voice.SustainRelease = _registers[registerBase + 6];
+            voice.SetControl(_registers[registerBase + 4]);
+        }
+
+        /// <summary>
+        /// Renders next sample.
+        /// </summary>
+        private short RenderNextSample()
+        {
+            byte filterRouteRegister = _registers[0x17];
+            byte modeVolumeRegister = _registers[0x18];
+            bool voice3Off = (modeVolumeRegister & 0x80) != 0;
+
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                int sourceVoiceIndex = GetSyncSourceIndex(voiceIndex);
+                _voiceOutputs[voiceIndex] = _voices[voiceIndex].Render(_voices[sourceVoiceIndex].MostSignificantBitSet, _noiseLevel);
+            }
+
+            float directMix = 0.0f;
+            float filterInput = 0.0f;
+            for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
+            {
+                bool routedToFilter = (filterRouteRegister & (1 << voiceIndex)) != 0;
+                bool muteVoice3 = voiceIndex == 2 && voice3Off && !routedToFilter;
+                if (muteVoice3)
+                {
+                    continue;
+                }
+
+                if (routedToFilter)
+                {
+                    filterInput += _voiceOutputs[voiceIndex];
+                }
+                else
+                {
+                    directMix += _voiceOutputs[voiceIndex];
+                }
+            }
+
+            float filteredMix = ApplyFilter(filterInput, modeVolumeRegister, filterRouteRegister);
+            float volume = (modeVolumeRegister & 0x0F) / 15.0f;
+            float normalOutput = ((directMix + filteredMix) / VoiceCount) * volume;
+            float digiOutput = GetVolumeDacSample();
+            float output = (normalOutput + digiOutput) * _masterVolume * 0.35f;
+            output = Clamp(output, -1.0f, 1.0f);
+            return (short)(output * short.MaxValue);
+        }
+
+        /// <summary>
+        /// Applies filter.
+        /// </summary>
+        private float ApplyFilter(float input, byte modeVolumeRegister, byte filterRouteRegister)
+        {
+            int cutoffRegister = ((_registers[0x16] << 3) | (_registers[0x15] & 0x07)) & 0x07FF;
+            float cutoffHz = MapCutoffToFrequency(cutoffRegister, _chipModel);
+            float normalizedCutoff = 2.0f * (float)Math.Sin(Math.PI * Math.Min(cutoffHz, SampleRate * 0.45f) / SampleRate);
+            normalizedCutoff = Clamp(normalizedCutoff, 0.0f, 0.99f);
+
+            float resonance = ((_registers[0x17] >> 4) & 0x0F) / 15.0f;
+            float damping = _chipModel == SidChipModel.Mos6581
+                ? 0.22f + (1.70f * (1.0f - resonance))
+                : 0.14f + (1.35f * (1.0f - resonance));
+
+            if (_chipModel == SidChipModel.Mos6581)
+            {
+                input *= 0.92f;
+            }
+
+            _filterLow += normalizedCutoff * _filterBand;
+            float high = input - _filterLow - (_filterBand * damping);
+            _filterBand += normalizedCutoff * high;
+
+            float filteredOutput = 0.0f;
+            if ((modeVolumeRegister & 0x10) != 0)
+            {
+                filteredOutput += _filterLow;
+            }
+
+            if ((modeVolumeRegister & 0x20) != 0)
+            {
+                filteredOutput += _filterBand;
+            }
+
+            if ((modeVolumeRegister & 0x40) != 0)
+            {
+                filteredOutput += high;
+            }
+
+            if ((filterRouteRegister & 0x08) != 0)
+            {
+                filteredOutput += 0.0f;
+            }
+
+            return filteredOutput;
+        }
+
+        /// <summary>
+        /// Gets the volume dac sample value.
+        /// </summary>
+        private float GetVolumeDacSample()
+        {
+            float response = _chipModel == SidChipModel.Mos6581 ? 0.35f : 0.22f;
+            float dcBlockResponse = _chipModel == SidChipModel.Mos6581 ? 0.0024f : 0.0038f;
+            _volumeDacCurrent += (_volumeDacTarget - _volumeDacCurrent) * response;
+            float acSample = _volumeDacCurrent - _volumeDacDcBlock;
+            _volumeDacDcBlock += acSample * dcBlockResponse;
+            return acSample;
+        }
+
+        /// <summary>
+        /// Updates volume dac.
+        /// </summary>
+        private void UpdateVolumeDac(byte previousValue, byte newValue)
+        {
+            if ((previousValue & 0x0F) == (newValue & 0x0F))
+            {
+                return;
+            }
+
+            _volumeDacTarget = ComputeVolumeDacTarget(newValue);
+        }
+
+        /// <summary>
+        /// Computes volume dac target.
+        /// </summary>
+        private float ComputeVolumeDacTarget(byte modeVolumeRegister)
+        {
+            float centered = ((modeVolumeRegister & 0x0F) - 7.5f) / 15.0f;
+            return centered * (_chipModel == SidChipModel.Mos6581 ? 0.85f : 0.42f);
+        }
+
+        /// <summary>
+        /// Maps cutoff to frequency.
+        /// </summary>
+        private static float MapCutoffToFrequency(int cutoffRegister, SidChipModel chipModel)
+        {
+            float normalized = cutoffRegister / 2047.0f;
+            if (chipModel == SidChipModel.Mos6581)
+            {
+                normalized = (float)Math.Pow(normalized, 1.55);
+            }
+            else
+            {
+                normalized = (float)Math.Pow(normalized, 1.20);
+            }
+
+            double minimumFrequency = chipModel == SidChipModel.Mos6581 ? 220.0 : 30.0;
+            double maximumFrequency = chipModel == SidChipModel.Mos6581 ? 12000.0 : 18000.0;
+            double mapped = minimumFrequency * Math.Pow(maximumFrequency / minimumFrequency, normalized);
+            return (float)mapped;
+        }
+
+        /// <summary>
+        /// Appends one 16-bit PCM sample to the SID output buffer.
+        /// </summary>
+        /// <param name="sample">Mono signed PCM sample.</param>
+        private void AppendSample(short sample)
+        {
+            // Audio is stored little-endian because NAudio and the network transport both
+            // consume the same byte layout.
+            _audioBytes[_audioByteCount++] = (byte)(sample & 0xFF);
+            _audioBytes[_audioByteCount++] = (byte)((sample >> 8) & 0xFF);
+
+            if (_audioByteCount >= _audioBytes.Length - 2)
+            {
+                FlushAudio();
+            }
+        }
+
+        /// <summary>
+        /// Flushes buffered PCM to network subscribers and optionally to local audio.
+        /// </summary>
+        private void FlushAudio()
+        {
+            if (_audioByteCount == 0)
+            {
+                return;
+            }
+
+            Action<byte[], int> handler = AudioBytesGenerated;
+            if (handler != null)
+            {
+                // Network clients need a stable buffer after this method resets
+                // _audioByteCount and reuses _audioBytes for future samples.
+                byte[] networkCopy = new byte[_audioByteCount];
+                Buffer.BlockCopy(_audioBytes, 0, networkCopy, 0, _audioByteCount);
+                handler(networkCopy, networkCopy.Length);
+            }
+
+            if (LocalAudioEnabled && _audioOutput != null)
+            {
+                // Host/local mode plays the same PCM bytes locally. Remote client mode
+                // leaves this disabled and listens to the host stream instead.
+                _audioOutput.Write(_audioBytes, _audioByteCount);
+            }
+
+            _audioByteCount = 0;
+        }
+
+        /// <summary>
+        /// Gets the sync source index value.
+        /// </summary>
+        private static int GetSyncSourceIndex(int voiceIndex)
+        {
+            return (voiceIndex + VoiceCount - 1) % VoiceCount;
+        }
+
+        /// <summary>
+        /// Handles the clamp operation.
+        /// </summary>
+        private static float Clamp(float value, float minimum, float maximum)
+        {
+            if (value < minimum)
+            {
+                return minimum;
+            }
+
+            if (value > maximum)
+            {
+                return maximum;
+            }
+
+            return value;
+        }
+
+        /// <summary>
+        /// Emulates SID register state and audio sample generation.
+        /// </summary>
+        private sealed class SidVoice
+        {
+            private uint _noiseLfsr;
+            private uint _accumulator;
+            private float _envelope;
+            private int _envelopeCounter;
+            private int _envelopeRateCounter;
+            private int _envelopeExponentialCounter;
+            private int _envelopeExponentialPeriod;
+            private EnvelopeStage _envelopeStage;
+            private bool _gate;
+
+            /// <summary>
+            /// Initializes a new SidVoice instance.
+            /// </summary>
+            public SidVoice(uint seed)
+            {
+                Reset(seed);
+            }
+
+            /// <summary>
+            /// Gets or sets the SID voice frequency register.
+            /// </summary>
+            public ushort FrequencyRegister { get; set; }
+
+            /// <summary>
+            /// Gets or sets the SID voice pulse-width register.
+            /// </summary>
+            public ushort PulseWidthRegister { get; set; }
+
+            /// <summary>
+            /// Gets the SID voice control register.
+            /// </summary>
+            public byte Control { get; private set; }
+
+            /// <summary>
+            /// Gets or sets the SID attack/decay envelope register.
+            /// </summary>
+            public byte AttackDecay { get; set; }
+
+            /// <summary>
+            /// Gets or sets the SID sustain/release envelope register.
+            /// </summary>
+            public byte SustainRelease { get; set; }
+
+            public bool SyncEnabled
+            {
+                get { return (Control & 0x02) != 0; }
+            }
+
+            public bool RingModEnabled
+            {
+                get { return (Control & 0x04) != 0; }
+            }
+
+            public bool TestEnabled
+            {
+                get { return (Control & 0x08) != 0; }
+            }
+
+            public bool MostSignificantBitSet
+            {
+                get { return (_accumulator & 0x00800000) != 0; }
+            }
+
+            /// <summary>
+            /// Resets the component to its power-on or idle state.
+            /// </summary>
+            public void Reset(uint seed)
+            {
+                _noiseLfsr = seed == 0 ? 0x7FFFF8u : seed;
+                _accumulator = 0u;
+                _envelope = 0.0f;
+                _envelopeCounter = 0;
+                _envelopeRateCounter = 0;
+                _envelopeExponentialCounter = 0;
+                _envelopeExponentialPeriod = 1;
+                _envelopeStage = EnvelopeStage.Release;
+                _gate = false;
+                FrequencyRegister = 0;
+                PulseWidthRegister = 0x0800;
+                Control = 0;
+                AttackDecay = 0;
+                SustainRelease = 0;
+            }
+
+            /// <summary>
+            /// Sets the control value.
+            /// </summary>
+            public void SetControl(byte control)
+            {
+                bool newGate = (control & 0x01) != 0;
+                if (!_gate && newGate)
+                {
+                    _envelopeStage = EnvelopeStage.Attack;
+                    _envelopeExponentialCounter = 0;
+                    _envelopeExponentialPeriod = 1;
+                }
+                else if (_gate && !newGate)
+                {
+                    _envelopeStage = EnvelopeStage.Release;
+                    _envelopeExponentialCounter = 0;
+                    UpdateEnvelopeExponentialPeriod();
+                }
+
+                _gate = newGate;
+                Control = control;
+
+                if ((control & 0x08) != 0)
+                {
+                    _accumulator = 0u;
+                    _noiseLfsr = 0x7FFFF8u;
+                }
+            }
+
+            /// <summary>
+            /// Handles the advance operation.
+            /// </summary>
+            public bool Advance()
+            {
+                bool msbRising = false;
+                if (!TestEnabled)
+                {
+                    uint oldAccumulator = _accumulator;
+                    _accumulator = (_accumulator + FrequencyRegister) & AccumulatorMask;
+
+                    bool oldMsb = (oldAccumulator & 0x00800000) != 0;
+                    bool newMsb = (_accumulator & 0x00800000) != 0;
+                    msbRising = !oldMsb && newMsb;
+
+                    bool oldNoiseClock = (oldAccumulator & 0x00080000) != 0;
+                    bool newNoiseClock = (_accumulator & 0x00080000) != 0;
+                    if (!oldNoiseClock && newNoiseClock)
+                    {
+                        ClockNoise();
+                    }
+                }
+                else
+                {
+                    _accumulator = 0u;
+                }
+
+                ClockEnvelope();
+                return msbRising;
+            }
+
+            /// <summary>
+            /// Applies sync reset.
+            /// </summary>
+            public void ApplySyncReset()
+            {
+                if (!TestEnabled)
+                {
+                    _accumulator = 0u;
+                }
+            }
+
+            /// <summary>
+            /// Handles the render operation.
+            /// </summary>
+            public float Render(bool sourceMsb, float noiseLevel)
+            {
+                if (TestEnabled)
+                {
+                    return 0.0f;
+                }
+
+                int activeWaveforms = 0;
+                float waveformSum = 0.0f;
+
+                if ((Control & 0x10) != 0)
+                {
+                    waveformSum += GetTriangleSample(sourceMsb && RingModEnabled);
+                    activeWaveforms++;
+                }
+
+                if ((Control & 0x20) != 0)
+                {
+                    waveformSum += GetSawSample();
+                    activeWaveforms++;
+                }
+
+                if ((Control & 0x40) != 0)
+                {
+                    waveformSum += GetPulseSample();
+                    activeWaveforms++;
+                }
+
+                if ((Control & 0x80) != 0)
+                {
+                    waveformSum += GetNoiseSample() * noiseLevel;
+                    activeWaveforms++;
+                }
+
+                if (activeWaveforms == 0)
+                {
+                    return 0.0f;
+                }
+
+                float waveform = waveformSum / activeWaveforms;
+                if (activeWaveforms > 1)
+                {
+                    float drive = 1.2f + (activeWaveforms - 1) * 0.3f;
+                    waveform = (float)Math.Tanh(waveform * drive);
+                    if ((Control & 0x80) != 0)
+                    {
+                        waveform *= 0.85f;
+                    }
+                }
+
+                return waveform * _envelope;
+            }
+
+            /// <summary>
+            /// Gets the oscillator byte value.
+            /// </summary>
+            public byte GetOscillatorByte()
+            {
+                return (byte)((_accumulator >> 16) & 0xFF);
+            }
+
+            /// <summary>
+            /// Gets the envelope byte value.
+            /// </summary>
+            public byte GetEnvelopeByte()
+            {
+                return (byte)_envelopeCounter;
+            }
+
+            /// <summary>
+            /// Gets compact debug information for this voice.
+            /// </summary>
+            public string GetDebugInfo()
+            {
+                return string.Format(
+                    "f={0:X4} pw={1:X3} c={2:X2} e={3:X2} s={4}",
+                    FrequencyRegister,
+                    PulseWidthRegister,
+                    Control,
+                    GetEnvelopeByte(),
+                    _envelopeStage);
+            }
+
+            /// <summary>
+            /// Writes the complete SID voice state into a savestate stream.
+            /// </summary>
+            public void SaveState(BinaryWriter writer)
+            {
+                StateSerializer.WriteObjectFields(writer, this);
+            }
+
+            /// <summary>
+            /// Restores the complete SID voice state from a savestate stream.
+            /// </summary>
+            public void LoadState(BinaryReader reader)
+            {
+                StateSerializer.ReadObjectFields(reader, this);
+                RepairEnvelopeAfterLoad();
+            }
+
+            /// <summary>
+            /// Skips one serialized voice state.
+            /// </summary>
+            public static void SkipState(BinaryReader reader)
+            {
+                var temporary = new SidVoice(0x7FFFF8u);
+                temporary.LoadState(reader);
+            }
+
+            /// <summary>
+            /// Gets the triangle sample value.
+            /// </summary>
+            private float GetTriangleSample(bool invertWithRingMod)
+            {
+                uint phase = _accumulator;
+                if (invertWithRingMod)
+                {
+                    phase ^= 0x00800000;
+                }
+
+                uint folded = ((phase & 0x00800000) != 0) ? ((~phase) & 0x007FFFFF) : (phase & 0x007FFFFF);
+                return (folded / 4194303.5f) - 1.0f;
+            }
+
+            /// <summary>
+            /// Gets the saw sample value.
+            /// </summary>
+            private float GetSawSample()
+            {
+                return (_accumulator / 8388607.5f) - 1.0f;
+            }
+
+            /// <summary>
+            /// Gets the pulse sample value.
+            /// </summary>
+            private float GetPulseSample()
+            {
+                uint pulseWidth = (uint)Math.Max(16, Math.Min(4080, (int)PulseWidthRegister));
+                return ((_accumulator >> 12) & 0x0FFF) < pulseWidth ? 1.0f : -1.0f;
+            }
+
+            /// <summary>
+            /// Clocks the SID-style 8-bit envelope counter once per chip cycle.
+            /// </summary>
+            private void ClockEnvelope()
+            {
+                int ratePeriod = GetCurrentEnvelopeRatePeriod();
+                _envelopeRateCounter++;
+                if (_envelopeRateCounter < ratePeriod)
+                {
+                    return;
+                }
+
+                _envelopeRateCounter = 0;
+                switch (_envelopeStage)
+                {
+                    case EnvelopeStage.Attack:
+                        if (_envelopeCounter < 0xFF)
+                        {
+                            _envelopeCounter++;
+                            if (_envelopeCounter == 0xFF)
+                            {
+                                _envelopeStage = EnvelopeStage.Decay;
+                                _envelopeExponentialCounter = 0;
+                                _envelopeExponentialPeriod = 1;
+                            }
+                        }
+                        break;
+                    case EnvelopeStage.Decay:
+                        ClockEnvelopeDown(GetSustainCounter(), true);
+                        break;
+                    case EnvelopeStage.Sustain:
+                        if (_envelopeCounter > GetSustainCounter())
+                        {
+                            _envelopeStage = EnvelopeStage.Decay;
+                            _envelopeExponentialCounter = 0;
+                            UpdateEnvelopeExponentialPeriod();
+                        }
+                        break;
+                    case EnvelopeStage.Release:
+                        ClockEnvelopeDown(0, false);
+                        break;
+                }
+
+                _envelope = _envelopeCounter / 255.0f;
+            }
+
+            /// <summary>
+            /// Clocks a decay or release step through the exponential counter divider.
+            /// </summary>
+            private void ClockEnvelopeDown(int targetCounter, bool enterSustainAtTarget)
+            {
+                if (_envelopeCounter <= targetCounter)
+                {
+                    if (enterSustainAtTarget)
+                    {
+                        _envelopeStage = EnvelopeStage.Sustain;
+                    }
+
+                    return;
+                }
+
+                _envelopeExponentialCounter++;
+                if (_envelopeExponentialCounter < _envelopeExponentialPeriod)
+                {
+                    return;
+                }
+
+                _envelopeExponentialCounter = 0;
+                _envelopeCounter--;
+                UpdateEnvelopeExponentialPeriod();
+
+                if (enterSustainAtTarget && _envelopeCounter <= targetCounter)
+                {
+                    _envelopeCounter = targetCounter;
+                    _envelopeStage = EnvelopeStage.Sustain;
+                }
+            }
+
+            /// <summary>
+            /// Restores newly added envelope counter fields after loading older savestates.
+            /// </summary>
+            private void RepairEnvelopeAfterLoad()
+            {
+                if (_envelopeCounter == 0 && _envelope > 0.0f)
+                {
+                    _envelopeCounter = (int)Math.Round(Clamp(_envelope, 0.0f, 1.0f) * 255.0f);
+                }
+
+                if (_envelopeExponentialPeriod <= 0)
+                {
+                    _envelopeExponentialPeriod = GetEnvelopeExponentialPeriod(_envelopeCounter);
+                }
+
+                _envelopeRateCounter = Math.Max(0, _envelopeRateCounter);
+                _envelopeExponentialCounter = Math.Max(0, _envelopeExponentialCounter);
+                _envelope = _envelopeCounter / 255.0f;
+            }
+
+            /// <summary>
+            /// Gets the current rate-counter period from the active ADSR stage.
+            /// </summary>
+            private int GetCurrentEnvelopeRatePeriod()
+            {
+                switch (_envelopeStage)
+                {
+                    case EnvelopeStage.Attack:
+                        return EnvelopeRatePeriods[(AttackDecay >> 4) & 0x0F];
+                    case EnvelopeStage.Decay:
+                    case EnvelopeStage.Sustain:
+                        return EnvelopeRatePeriods[AttackDecay & 0x0F];
+                    default:
+                        return EnvelopeRatePeriods[SustainRelease & 0x0F];
+                }
+            }
+
+            /// <summary>
+            /// Gets the 8-bit sustain level used by the SID envelope counter.
+            /// </summary>
+            private int GetSustainCounter()
+            {
+                return ((SustainRelease >> 4) & 0x0F) * 0x11;
+            }
+
+            /// <summary>
+            /// Updates the exponential divider at the SID envelope threshold points.
+            /// </summary>
+            private void UpdateEnvelopeExponentialPeriod()
+            {
+                _envelopeExponentialPeriod = GetEnvelopeExponentialPeriod(_envelopeCounter);
+            }
+
+            /// <summary>
+            /// Gets the exponential divider for a given envelope counter value.
+            /// </summary>
+            private static int GetEnvelopeExponentialPeriod(int envelopeCounter)
+            {
+                if (envelopeCounter > 0x5D)
+                {
+                    return 1;
+                }
+
+                if (envelopeCounter > 0x36)
+                {
+                    return 2;
+                }
+
+                if (envelopeCounter > 0x1A)
+                {
+                    return 4;
+                }
+
+                if (envelopeCounter > 0x0E)
+                {
+                    return 8;
+                }
+
+                if (envelopeCounter > 0x06)
+                {
+                    return 16;
+                }
+
+                return envelopeCounter == 0 ? 1 : 30;
+            }
+
+            /// <summary>
+            /// Clocks noise.
+            /// </summary>
+            private void ClockNoise()
+            {
+                uint feedback = ((_noiseLfsr >> 22) ^ (_noiseLfsr >> 17)) & 0x01;
+                _noiseLfsr = ((_noiseLfsr << 1) | feedback) & 0x007FFFFF;
+                if (_noiseLfsr == 0)
+                {
+                    _noiseLfsr = 0x7FFFF8u;
+                }
+            }
+
+            /// <summary>
+            /// Gets the noise sample value.
+            /// </summary>
+            private float GetNoiseSample()
+            {
+                int sample =
+                    (int)(((_noiseLfsr >> 22) & 0x01) << 7) |
+                    (int)(((_noiseLfsr >> 20) & 0x01) << 6) |
+                    (int)(((_noiseLfsr >> 16) & 0x01) << 5) |
+                    (int)(((_noiseLfsr >> 13) & 0x01) << 4) |
+                    (int)(((_noiseLfsr >> 11) & 0x01) << 3) |
+                    (int)(((_noiseLfsr >> 7) & 0x01) << 2) |
+                    (int)(((_noiseLfsr >> 4) & 0x01) << 1) |
+                    (int)((_noiseLfsr >> 2) & 0x01);
+
+                return (sample / 127.5f) - 1.0f;
+            }
+
+            /// <summary>
+            /// Lists the supported envelope stage values.
+            /// </summary>
+            private enum EnvelopeStage
+            {
+                Attack,
+                Decay,
+                Sustain,
+                Release
+            }
+        }
+    }
+}

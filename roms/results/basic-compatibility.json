@@ -1,0 +1,334 @@
+{
+  "suite": "C64 BASIC RAM-vector, USR, STOP/CONT and input-error contracts.",
+  "passed": 30,
+  "total": 30,
+  "results": [
+    {
+      "name": "ICRNCH tokenization vector",
+      "passed": true,
+      "detail": {
+        "vector": "0x304",
+        "calls": 2,
+        "output": [
+          "",
+          "HOOK"
+        ]
+      }
+    },
+    {
+      "name": "IMAIN direct-mode input vector",
+      "passed": true,
+      "detail": {
+        "vector": "0x302",
+        "calls": 2,
+        "output": [
+          "",
+          "7"
+        ]
+      }
+    },
+    {
+      "name": "IQPLOP character/token listing vector",
+      "passed": true,
+      "detail": {
+        "vector": "0x306",
+        "calls": 8,
+        "output": [
+          "",
+          "10 PRINT \"HOOK\""
+        ]
+      }
+    },
+    {
+      "name": "IGONE per-statement dispatch vector",
+      "passed": true,
+      "detail": {
+        "vector": "0x308",
+        "calls": 2,
+        "output": [
+          "A\nB"
+        ]
+      }
+    },
+    {
+      "name": "IEVAL single-term evaluation vector",
+      "passed": true,
+      "detail": {
+        "vector": "0x30a",
+        "calls": 3,
+        "output": [
+          "14"
+        ]
+      }
+    },
+    {
+      "name": "IERROR 10: NEXT WITHOUT FOR",
+      "passed": true,
+      "detail": {
+        "command": "NEXT",
+        "error_number": 10,
+        "output": "?NEXT WITHOUT FOR ERROR"
+      }
+    },
+    {
+      "name": "IERROR 11: SYNTAX",
+      "passed": true,
+      "detail": {
+        "command": "PRINT (",
+        "error_number": 11,
+        "output": "?SYNTAX ERROR"
+      }
+    },
+    {
+      "name": "IERROR 12: RETURN WITHOUT GOSUB",
+      "passed": true,
+      "detail": {
+        "command": "RETURN",
+        "error_number": 12,
+        "output": "?RETURN WITHOUT GOSUB ERROR"
+      }
+    },
+    {
+      "name": "IERROR 13: OUT OF DATA",
+      "passed": true,
+      "detail": {
+        "command": "READ A",
+        "error_number": 13,
+        "output": "?OUT OF DATA ERROR"
+      }
+    },
+    {
+      "name": "IERROR 14: ILLEGAL QUANTITY",
+      "passed": true,
+      "detail": {
+        "command": "PRINT SQR(-1)",
+        "error_number": 14,
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "IERROR 15: OVERFLOW",
+      "passed": true,
+      "detail": {
+        "command": "PRINT 1E40",
+        "error_number": 15,
+        "output": "?OVERFLOW ERROR"
+      }
+    },
+    {
+      "name": "IERROR 17: UNDEF'D STATEMENT",
+      "passed": true,
+      "detail": {
+        "command": "GOTO 123",
+        "error_number": 17,
+        "output": "?UNDEF'D STATEMENT ERROR"
+      }
+    },
+    {
+      "name": "IERROR 20: DIVISION BY ZERO",
+      "passed": true,
+      "detail": {
+        "command": "PRINT 1/0",
+        "error_number": 20,
+        "output": "?DIVISION BY ZERO ERROR"
+      }
+    },
+    {
+      "name": "IERROR 21: ILLEGAL DIRECT",
+      "passed": true,
+      "detail": {
+        "command": "INPUT A",
+        "error_number": 21,
+        "output": "?ILLEGAL DIRECT ERROR"
+      }
+    },
+    {
+      "name": "IERROR 22: TYPE MISMATCH",
+      "passed": true,
+      "detail": {
+        "command": "A=CHR$(65)",
+        "error_number": 22,
+        "output": "?TYPE MISMATCH ERROR"
+      }
+    },
+    {
+      "name": "IERROR 26: CAN'T CONTINUE",
+      "passed": true,
+      "detail": {
+        "command": "CONT",
+        "error_number": 26,
+        "output": "?CAN'T CONTINUE ERROR"
+      }
+    },
+    {
+      "name": "IERROR 27: UNDEF'D FUNCTION",
+      "passed": true,
+      "detail": {
+        "command": "PRINT FNA(1)",
+        "error_number": 27,
+        "output": "?UNDEF'D FUNCTION ERROR"
+      }
+    },
+    {
+      "name": "IERROR 3: FILE NOT OPEN",
+      "passed": true,
+      "detail": {
+        "command": "PRINT#1,\"BAD\"",
+        "error_number": 3,
+        "output": "?FILE NOT OPEN ERROR"
+      }
+    },
+    {
+      "name": "USR default error",
+      "passed": true,
+      "detail": {
+        "command": "PRINT USR(1)",
+        "error_number": 14,
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "USR floating argument and RTS return",
+      "passed": true,
+      "detail": {
+        "command": "PRINT USR(1.25);USR(-2.5)",
+        "output": "1.25 -2.5",
+        "usr_vector": 49664
+      }
+    },
+    {
+      "name": "USR FAC result returned to BASIC",
+      "passed": true,
+      "detail": {
+        "command": "PRINT USR(1.25);USR(-2.5)",
+        "output": "2.5 -5",
+        "usr_vector": 49664
+      }
+    },
+    {
+      "name": "warm entry honors IMAIN and preserves BASIC RAM",
+      "passed": true,
+      "detail": {
+        "program_preserved": true,
+        "variables_preserved": true,
+        "main_hook_calls": 3,
+        "stack": 244
+      }
+    },
+    {
+      "name": "CONT retains nested FOR and GOSUB frames",
+      "passed": true,
+      "detail": {
+        "commands": [
+          "10 FOR I=1 TO 3:GOSUB 100:NEXT:END",
+          "100 PRINT I;:IF I=2 THEN STOP",
+          "110 RETURN",
+          "RUN",
+          "LIST",
+          "CONT"
+        ],
+        "output": [
+          "",
+          "",
+          "",
+          "1 2 \nBREAK IN 100",
+          "10 FOR I=1 TO 3:GOSUB 100:NEXT:END\n 100 PRINT I;:IF I=2 THEN STOP\n 110 RETURN",
+          "3"
+        ]
+      }
+    },
+    {
+      "name": "CONT after END resumes next statement",
+      "passed": true,
+      "detail": {
+        "commands": [
+          "10 A=4:END:A=A+1:PRINT A",
+          "RUN",
+          "CONT"
+        ],
+        "output": [
+          "",
+          "",
+          "5"
+        ]
+      }
+    },
+    {
+      "name": "error invalidates CONT",
+      "passed": true,
+      "detail": {
+        "commands": [
+          "10 STOP:PRINT \"BAD\"",
+          "RUN",
+          "PRINT (",
+          "CONT"
+        ],
+        "output": [
+          "",
+          "BREAK IN 10",
+          "?SYNTAX ERROR",
+          "?CAN'T CONTINUE ERROR"
+        ]
+      }
+    },
+    {
+      "name": "program edit invalidates CONT",
+      "passed": true,
+      "detail": {
+        "commands": [
+          "10 STOP:PRINT \"BAD\"",
+          "RUN",
+          "10 STOP:PRINT \"BAD\"",
+          "CONT"
+        ],
+        "output": [
+          "",
+          "BREAK IN 10",
+          "",
+          "?CAN'T CONTINUE ERROR"
+        ]
+      }
+    },
+    {
+      "name": "RESTORE resets DATA without changing variables",
+      "passed": true,
+      "detail": {
+        "commands": [
+          "10 DATA 7,\"A:B\"",
+          "20 READ A,B$:RESTORE:READ C,D$:PRINT A;B$;C;D$",
+          "RUN"
+        ],
+        "output": [
+          "",
+          "",
+          "7 A:B 7 A:B"
+        ]
+      }
+    },
+    {
+      "name": "RUN/STOP key stops program and allows CONT",
+      "passed": true,
+      "detail": {
+        "output": "BREAK IN 10",
+        "continued": "2"
+      }
+    },
+    {
+      "name": "RUN/STOP key interrupts LIST",
+      "passed": true,
+      "detail": {
+        "output": "BREAK",
+        "continued": null
+      }
+    },
+    {
+      "name": "INPUT# numeric type error survives CLRCHN clobber",
+      "passed": true,
+      "detail": {
+        "output": "?FILE DATA ERROR IN 10",
+        "input_channel": 0,
+        "output_channel": 3
+      }
+    }
+  ]
+}

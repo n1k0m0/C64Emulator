@@ -1,0 +1,776 @@
+{
+  "suite": "BASIC I/O adapter contract tests through RESET and BASIC command parsing.",
+  "passed": 58,
+  "total": 58,
+  "results": [
+    {
+      "name": "SAVE",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE",
+        "call": {
+          "op": "SAVE",
+          "a": 43,
+          "x": 3,
+          "y": 8,
+          "lfn": 1,
+          "device": 1,
+          "secondary": 0,
+          "filename": "",
+          "start": 2049,
+          "end": 2051,
+          "bytes": [
+            0,
+            0
+          ]
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "SAVE \"FILE\",8",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE \"FILE\",8",
+        "call": {
+          "op": "SAVE",
+          "a": 43,
+          "x": 3,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 0,
+          "filename": "FILE",
+          "start": 2049,
+          "end": 2051,
+          "bytes": [
+            0,
+            0
+          ]
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "SAVE \"FILE\",1,3",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE \"FILE\",1,3",
+        "call": {
+          "op": "SAVE",
+          "a": 43,
+          "x": 3,
+          "y": 8,
+          "lfn": 1,
+          "device": 1,
+          "secondary": 3,
+          "filename": "FILE",
+          "start": 2049,
+          "end": 2051,
+          "bytes": [
+            0,
+            0
+          ]
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "LOAD",
+      "pass_": true,
+      "detail": {
+        "command": "LOAD",
+        "call": {
+          "op": "LOAD",
+          "a": 0,
+          "x": 1,
+          "y": 8,
+          "lfn": 1,
+          "device": 1,
+          "secondary": 0,
+          "filename": ""
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "LOAD \"FILE\",8",
+      "pass_": true,
+      "detail": {
+        "command": "LOAD \"FILE\",8",
+        "call": {
+          "op": "LOAD",
+          "a": 0,
+          "x": 1,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 0,
+          "filename": "FILE"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "LOAD \"ML\",8,1",
+      "pass_": true,
+      "detail": {
+        "command": "LOAD \"ML\",8,1",
+        "call": {
+          "op": "LOAD",
+          "a": 0,
+          "x": 1,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 1,
+          "filename": "ML"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "VERIFY \"FILE\",8",
+      "pass_": true,
+      "detail": {
+        "command": "VERIFY \"FILE\",8",
+        "call": {
+          "op": "LOAD",
+          "a": 1,
+          "x": 1,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 0,
+          "filename": "FILE"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "VERIFY \"ML\",8,1",
+      "pass_": true,
+      "detail": {
+        "command": "VERIFY \"ML\",8,1",
+        "call": {
+          "op": "LOAD",
+          "a": 1,
+          "x": 1,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 1,
+          "filename": "ML"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "OPEN 2",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 2",
+        "call": {
+          "op": "OPEN",
+          "a": 2,
+          "x": 1,
+          "y": 0,
+          "lfn": 2,
+          "device": 1,
+          "secondary": 0,
+          "filename": ""
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "OPEN 3,8",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 3,8",
+        "call": {
+          "op": "OPEN",
+          "a": 3,
+          "x": 8,
+          "y": 0,
+          "lfn": 3,
+          "device": 8,
+          "secondary": 0,
+          "filename": ""
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "OPEN 4,8,4",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 4,8,4",
+        "call": {
+          "op": "OPEN",
+          "a": 4,
+          "x": 8,
+          "y": 4,
+          "lfn": 4,
+          "device": 8,
+          "secondary": 4,
+          "filename": ""
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "OPEN 15,8,15,\"I\"",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 15,8,15,\"I\"",
+        "call": {
+          "op": "OPEN",
+          "a": 15,
+          "x": 8,
+          "y": 15,
+          "lfn": 15,
+          "device": 8,
+          "secondary": 15,
+          "filename": "I"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "CLOSE 15",
+      "pass_": true,
+      "detail": {
+        "command": "CLOSE 15",
+        "call": {
+          "op": "CLOSE",
+          "a": 15,
+          "x": 15,
+          "y": 0,
+          "lfn": 0,
+          "device": 0,
+          "secondary": 0,
+          "filename": ""
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "SAVE \"F\"+CHR$(65),VAL(\"8\"+\"\"),LEN(\"A\"+\"B\")-2",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE \"F\"+CHR$(65),VAL(\"8\"+\"\"),LEN(\"A\"+\"B\")-2",
+        "call": {
+          "op": "SAVE",
+          "a": 43,
+          "x": 3,
+          "y": 8,
+          "lfn": 1,
+          "device": 8,
+          "secondary": 0,
+          "filename": "FA",
+          "start": 2049,
+          "end": 2051,
+          "bytes": [
+            0,
+            0
+          ]
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "OPEN 2+1,4*2,7-4,\"P\"+CHR$(82)+\"G\"",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 2+1,4*2,7-4,\"P\"+CHR$(82)+\"G\"",
+        "call": {
+          "op": "OPEN",
+          "a": 3,
+          "x": 8,
+          "y": 3,
+          "lfn": 3,
+          "device": 8,
+          "secondary": 3,
+          "filename": "PRG"
+        },
+        "output": "",
+        "sp": 244
+      }
+    },
+    {
+      "name": "SAVE exact tokenized program bounds",
+      "pass_": true,
+      "detail": {
+        "start": 2049,
+        "end": 2065,
+        "bytes": [
+          15,
+          8,
+          10,
+          0,
+          153,
+          32,
+          34,
+          83,
+          65,
+          86,
+          69,
+          68,
+          34,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "LOAD in direct mode relinks without running",
+      "pass_": true,
+      "detail": {
+        "chained": false,
+        "output": "",
+        "end": 2066
+      }
+    },
+    {
+      "name": "LOAD in program mode chains and keeps variables",
+      "pass_": true,
+      "detail": {
+        "chained": true,
+        "output": "LOADED",
+        "end": 2066
+      }
+    },
+    {
+      "name": "VERIFY preserves program and variables",
+      "pass_": true,
+      "detail": {
+        "vartab": 2064,
+        "mode": 1
+      }
+    },
+    {
+      "name": "absolute direct LOAD updates BASIC end and clears variables",
+      "pass_": true,
+      "detail": {
+        "load_end": 49154,
+        "bytes": [
+          96,
+          66
+        ]
+      }
+    },
+    {
+      "name": "absolute direct BASIC LOAD supports variables",
+      "pass_": true,
+      "detail": {
+        "program_end": 2063,
+        "output": "5"
+      }
+    },
+    {
+      "name": "chained LOAD keeps scalar string array state and resets DATA",
+      "pass_": true,
+      "detail": {
+        "output": "99 KEPT 8 7",
+        "variables_begin": 2116,
+        "new_program_end": 2081
+      }
+    },
+    {
+      "name": "absolute program LOAD restarts loader preserving state",
+      "pass_": true,
+      "detail": {
+        "output": "42",
+        "loads": 1,
+        "loaded_byte": 42
+      }
+    },
+    {
+      "name": "I/O error 1",
+      "pass_": true,
+      "detail": {
+        "code": 1,
+        "output": "?TOO MANY FILES ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 2",
+      "pass_": true,
+      "detail": {
+        "code": 2,
+        "output": "?FILE OPEN ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 3",
+      "pass_": true,
+      "detail": {
+        "code": 3,
+        "output": "?FILE NOT OPEN ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 4",
+      "pass_": true,
+      "detail": {
+        "code": 4,
+        "output": "?FILE NOT FOUND ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 5",
+      "pass_": true,
+      "detail": {
+        "code": 5,
+        "output": "?DEVICE NOT PRESENT ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 6",
+      "pass_": true,
+      "detail": {
+        "code": 6,
+        "output": "?NOT INPUT FILE ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 7",
+      "pass_": true,
+      "detail": {
+        "code": 7,
+        "output": "?NOT OUTPUT FILE ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 8",
+      "pass_": true,
+      "detail": {
+        "code": 8,
+        "output": "?MISSING FILE NAME ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 9",
+      "pass_": true,
+      "detail": {
+        "code": 9,
+        "output": "?ILLEGAL DEVICE NUMBER ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 28",
+      "pass_": true,
+      "detail": {
+        "code": 28,
+        "output": "?VERIFY ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 29",
+      "pass_": true,
+      "detail": {
+        "code": 29,
+        "output": "?LOAD ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "I/O error 127",
+      "pass_": true,
+      "detail": {
+        "code": 127,
+        "output": "?I/O ERROR",
+        "sp": 244
+      }
+    },
+    {
+      "name": "SAVE 123",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE 123",
+        "output": "?TYPE MISMATCH ERROR"
+      }
+    },
+    {
+      "name": "LOAD \"X\",256",
+      "pass_": true,
+      "detail": {
+        "command": "LOAD \"X\",256",
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "OPEN 256,8",
+      "pass_": true,
+      "detail": {
+        "command": "OPEN 256,8",
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "CLOSE 1,2",
+      "pass_": true,
+      "detail": {
+        "command": "CLOSE 1,2",
+        "output": "?SYNTAX ERROR"
+      }
+    },
+    {
+      "name": "SAVE \"X\",8,1,2",
+      "pass_": true,
+      "detail": {
+        "command": "SAVE \"X\",8,1,2",
+        "output": "?SYNTAX ERROR"
+      }
+    },
+    {
+      "name": "SYS -1",
+      "pass_": true,
+      "detail": {
+        "command": "SYS -1",
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "SYS 65536",
+      "pass_": true,
+      "detail": {
+        "command": "SYS 65536",
+        "output": "?ILLEGAL QUANTITY ERROR"
+      }
+    },
+    {
+      "name": "PRINT# unopened channel",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#1,\"HELLO\"",
+        "output": "?FILE NOT OPEN ERROR"
+      }
+    },
+    {
+      "name": "GET# unopened channel",
+      "pass_": true,
+      "detail": {
+        "statement": "GET#1,A$",
+        "output": "?FILE NOT OPEN ERROR IN 10",
+        "sp": 244
+      }
+    },
+    {
+      "name": "INPUT# unopened channel",
+      "pass_": true,
+      "detail": {
+        "statement": "INPUT#1,A$",
+        "output": "?FILE NOT OPEN ERROR IN 10",
+        "sp": 244
+      }
+    },
+    {
+      "name": "CHKOUT preserves first PRINT# token",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#2,SPC(3);\"A\"",
+        "output": "   A",
+        "sp": 244
+      }
+    },
+    {
+      "name": "CHKIN preserves logical file number",
+      "pass_": true,
+      "detail": {
+        "channels_seen": [
+          2
+        ],
+        "output": "A"
+      }
+    },
+    {
+      "name": "INPUT# preserves buffer index across serial receiver",
+      "pass_": true,
+      "detail": {
+        "serial_bytes": [
+          49,
+          50,
+          51,
+          44,
+          65,
+          66,
+          67,
+          13
+        ],
+        "output": "123 :ABC",
+        "sp": 244
+      }
+    },
+    {
+      "name": "PRINT# 2 record terminator",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#2,\"ABC\"",
+        "bytes": [
+          65,
+          66,
+          67,
+          13
+        ],
+        "hex": "4142430d"
+      }
+    },
+    {
+      "name": "PRINT# 127 record terminator",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#127,\"ABC\"",
+        "bytes": [
+          65,
+          66,
+          67,
+          13
+        ],
+        "hex": "4142430d"
+      }
+    },
+    {
+      "name": "PRINT# 128 record terminator",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#128,\"ABC\"",
+        "bytes": [
+          65,
+          66,
+          67,
+          13,
+          10
+        ],
+        "hex": "4142430d0a"
+      }
+    },
+    {
+      "name": "PRINT# 130 record terminator",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#130,\"ABC\"",
+        "bytes": [
+          65,
+          66,
+          67,
+          13,
+          10
+        ],
+        "hex": "4142430d0a"
+      }
+    },
+    {
+      "name": "PRINT# 2 trailing semicolon",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#2,\"ABC\";",
+        "bytes": [
+          65,
+          66,
+          67
+        ],
+        "hex": "414243"
+      }
+    },
+    {
+      "name": "PRINT# 2 explicit CHR$(13)",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#2,\"A\";CHR$(13);\"B\";",
+        "bytes": [
+          65,
+          13,
+          66
+        ],
+        "hex": "410d42"
+      }
+    },
+    {
+      "name": "PRINT# 130 trailing semicolon",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#130,\"ABC\";",
+        "bytes": [
+          65,
+          66,
+          67
+        ],
+        "hex": "414243"
+      }
+    },
+    {
+      "name": "PRINT# 130 explicit CHR$(13)",
+      "pass_": true,
+      "detail": {
+        "command": "PRINT#130,\"A\";CHR$(13);\"B\";",
+        "bytes": [
+          65,
+          13,
+          10,
+          66
+        ],
+        "hex": "410d0a42"
+      }
+    },
+    {
+      "name": "high logical file CR preserves output registers",
+      "pass_": true,
+      "detail": {
+        "bytes": [
+          13,
+          10
+        ],
+        "a": 13,
+        "x": 90,
+        "y": 165,
+        "sp": 253
+      }
+    },
+    {
+      "name": "SYS register exchange and colon continuation",
+      "pass_": true,
+      "detail": {
+        "entry": [
+          17,
+          34,
+          51,
+          48
+        ],
+        "return": [
+          66,
+          36,
+          24,
+          49
+        ],
+        "output": "7"
+      }
+    }
+  ]
+}

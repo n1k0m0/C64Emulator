@@ -54,6 +54,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The bundled open ROM set shipped with the emulator and installer. -->
+    <Content Include="..\roms\build\roms\open-basic64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="open-roms\open-basic64.bin" />
+    <Content Include="..\roms\build\roms\open-kernal64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="open-roms\open-kernal64.bin" />
+    <Content Include="..\roms\build\roms\open-character-rom64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="open-roms\open-character-rom64.bin" />
+    <Content Include="..\roms\build\roms\open-1541-dos.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="open-roms\open-1541-dos.bin" />
+    <Content Include="..\roms\build\manifest.json" CopyToOutputDirectory="PreserveNewest" TargetPath="open-roms\manifest.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="NAudio" Version="2.3.0" />
   </ItemGroup>
 </Project>

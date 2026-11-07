@@ -41,7 +41,8 @@ namespace C64Emulator
         private enum ConfirmationAction
         {
             None,
-            Reset
+            Reset,
+            SwitchRomSet
         }
 
         /// <summary>
@@ -87,6 +88,15 @@ namespace C64Emulator
             Warm,
             Reload,
             Power
+        }
+
+        /// <summary>
+        /// Lists the ROM image sets the emulator can run.
+        /// </summary>
+        private enum RomSet
+        {
+            Original,
+            Open
         }
 
         /// <summary>
@@ -147,7 +157,7 @@ namespace C64Emulator
         private const int MainMenuItemCount = 4;
         private const float VolumeStep = 0.05f;
         private const float NoiseStep = 0.05f;
-        private const int AudioOverlayItemCount = 23;
+        private const int AudioOverlayItemCount = 24;
         private const int AudioOverlayVisibleRows = 4;
         private const int AudioOverlayRowSpacing = 36;
         private const int ControllerMapActionCount = 10;
@@ -226,6 +236,8 @@ namespace C64Emulator
         private VideoFilterMode _videoFilterMode = VideoFilterMode.Sharp;
         private VideoUpscaleMode _videoUpscaleMode = VideoUpscaleMode.None;
         private ResetMode _resetMode = ResetMode.Warm;
+        private RomSet _romSet = RomSet.Original;
+        private RomSet _confirmationRomSetTarget = RomSet.Original;
         private NetworkSessionMode _networkMode = NetworkSessionMode.Local;
         private bool _videoZoomEnabled;
         private byte _lastGamepadJoystickState = 0x1F;
@@ -343,13 +355,33 @@ namespace C64Emulator
         /// <summary>
         /// Handles the c64 window operation.
         /// </summary>
-        private readonly string _openRomDirectory;
+        private string _openRomDirectory;
 
         public C64Window(C64Model model, string title, string openRomDirectory = null) : base(model.VisibleWidth, model.VisibleHeight, title)
         {
             _model = model;
             _openRomDirectory = openRomDirectory;
             _loadedSettings = EmulatorSettingsStore.Load();
+            if (_openRomDirectory != null)
+            {
+                _romSet = RomSet.Open;
+            }
+            else
+            {
+                _romSet = ParseEnum(_loadedSettings.RomSet, RomSet.Original);
+                if (_romSet == RomSet.Open)
+                {
+                    if (RomStartupDownloader.BundledOpenRomsAvailable())
+                    {
+                        _openRomDirectory = RomStartupDownloader.GetBundledOpenRomDirectory();
+                    }
+                    else
+                    {
+                        _romSet = RomSet.Original;
+                    }
+                }
+            }
+
             InitializeSystem();
             ApplyLoadedSettings(_loadedSettings);
             SaveSettings();
@@ -509,6 +541,7 @@ namespace C64Emulator
                 VideoUpscaleMode = _videoUpscaleMode.ToString(),
                 VideoZoomEnabled = _videoZoomEnabled,
                 ResetMode = _resetMode.ToString(),
+                RomSet = _romSet.ToString(),
                 TurboMode = _turboMode,
                 Fullscreen = _windowFullscreen,
                 GamepadEnabled = _gamepadEnabled,
@@ -6787,35 +6820,41 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 17)
             {
-                ToggleDriveOverlay();
+                RequestRomSetSwitch(_romSet == RomSet.Open ? RomSet.Original : RomSet.Open);
                 return;
             }
 
             if (_audioOverlaySelection == 18)
             {
-                ToggleEasyFlash();
+                ToggleDriveOverlay();
                 return;
             }
 
             if (_audioOverlaySelection == 19)
             {
-                SaveEasyFlash();
+                ToggleEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 20)
             {
-                EjectEasyFlash();
+                SaveEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 21)
             {
-                ToggleReu();
+                EjectEasyFlash();
                 return;
             }
 
             if (_audioOverlaySelection == 22)
+            {
+                ToggleReu();
+                return;
+            }
+
+            if (_audioOverlaySelection == 23)
             {
                 CycleReuSize(direction);
                 return;
@@ -7845,21 +7884,24 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "ROM SET", _romSet == RomSet.Open ? 1.0f : 0.0f, FormatRomSet(_romSet), "ORIGINAL", "OPEN", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 18:
-                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 19:
-                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EASYFLASH", GetEasyFlashFill(), FormatEasyFlashState(), "OFF", "ON", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 20:
-                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
+                    DrawOverlayItem(x, y, "EF SAVE", _system.IsEasyFlashDirty ? 1.0f : 0.0f, FormatEasyFlashSaveState(), "CLEAN", "SAVE", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 21:
-                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "EF EJECT", _system.IsEasyFlashInserted ? 1.0f : 0.0f, FormatEasyFlashName(), "EMPTY", "EJECT", _audioOverlaySelection == menuIndex, enabled && _system.IsEasyFlashInserted);
                     break;
                 case 22:
+                    DrawOverlayItem(x, y, "REU", _system.ReuEnabled ? 1.0f : 0.0f, _system.ReuEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
+                    break;
+                case 23:
                     DrawOverlayItem(x, y, "REU SIZE", GetReuSizeFill(_system.ReuSize), FormatReuSize(_system.ReuSize), "128K", "16M", _audioOverlaySelection == menuIndex, enabled);
                     break;
             }
@@ -8425,6 +8467,54 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Formats a ROM set for the settings overlay.
+        /// </summary>
+        private static string FormatRomSet(RomSet romSet)
+        {
+            return romSet == RomSet.Open ? "OPEN" : "ORIGINAL";
+        }
+
+        /// <summary>
+        /// Opens the confirmation for switching between the original and the bundled open ROM set.
+        /// </summary>
+        private void RequestRomSetSwitch(RomSet targetRomSet)
+        {
+            if (targetRomSet == _romSet)
+            {
+                return;
+            }
+
+            if (targetRomSet == RomSet.Open && !RomStartupDownloader.BundledOpenRomsAvailable())
+            {
+                _overlayStatusText = "OPEN ROMS MISSING";
+                return;
+            }
+
+            if (targetRomSet == RomSet.Original && !RomPathResolver.HasCompleteRomSet())
+            {
+                _overlayStatusText = "ORIGINAL ROMS MISSING";
+                return;
+            }
+
+            _confirmationRomSetTarget = targetRomSet;
+            OpenConfirmation(ConfirmationAction.SwitchRomSet);
+        }
+
+        /// <summary>
+        /// Applies the confirmed ROM set and power-cycles the machine with it.
+        /// </summary>
+        private void PerformRomSetSwitch(RomSet targetRomSet)
+        {
+            _romSet = targetRomSet;
+            _openRomDirectory = targetRomSet == RomSet.Open
+                ? RomStartupDownloader.GetBundledOpenRomDirectory()
+                : null;
+            PerformSystemReset();
+            _system.EnableLoadHack = _openRomDirectory == null && _loadedSettings.EnableLoadHack;
+            _overlayStatusText = "ROM SET " + FormatRomSet(targetRomSet);
+        }
+
+        /// <summary>
         /// Opens confirmation.
         /// </summary>
         private void OpenConfirmation(ConfirmationAction confirmationAction)
@@ -8433,7 +8523,9 @@ namespace C64Emulator
             _resetConfirmVisible = true;
             _resetConfirmYesSelected = true;
             _confirmationAction = confirmationAction;
-            _overlayStatusText = "CONFIRM " + FormatResetMode(_resetMode);
+            _overlayStatusText = confirmationAction == ConfirmationAction.SwitchRomSet
+                ? "CONFIRM SWITCH ROM SET"
+                : "CONFIRM " + FormatResetMode(_resetMode);
         }
 
         /// <summary>
@@ -8451,7 +8543,9 @@ namespace C64Emulator
         /// </summary>
         private string GetConfirmationCanceledStatusText()
         {
-            return "RESET CANCELED";
+            return _confirmationAction == ConfirmationAction.SwitchRomSet
+                ? "ROM SET UNCHANGED"
+                : "RESET CANCELED";
         }
 
         /// <summary>
@@ -8466,6 +8560,9 @@ namespace C64Emulator
             {
                 case ConfirmationAction.Reset:
                     PerformSelectedReset();
+                    break;
+                case ConfirmationAction.SwitchRomSet:
+                    PerformRomSetSwitch(_confirmationRomSetTarget);
                     break;
                 default:
                     _overlayStatusText = "NO ACTION";
@@ -9143,21 +9240,32 @@ namespace C64Emulator
             string title;
             string infoLine1;
             string infoLine2;
-            title = "RESET " + FormatResetMode(_resetMode);
-            if (_resetMode == ResetMode.Warm)
+            if (_confirmationAction == ConfirmationAction.SwitchRomSet)
             {
-                infoLine1 = "RAM AND MEDIA STAY";
-                infoLine2 = "CPU RESTARTS";
-            }
-            else if (_resetMode == ResetMode.Reload)
-            {
-                infoLine1 = hasMountedMedia ? "MOUNTED MEDIA RELOADS" : "NO MEDIA INSERTED";
-                infoLine2 = "MACHINE RESTARTS";
+                title = "SWITCH ROM SET";
+                infoLine1 = _confirmationRomSetTarget == RomSet.Open
+                    ? "USE BUNDLED OPEN ROMS"
+                    : "USE ORIGINAL ROMS";
+                infoLine2 = "MACHINE RESETS";
             }
             else
             {
-                infoLine1 = hasMountedMedia ? "MEDIA REMOUNTS" : "NO MEDIA INSERTED";
-                infoLine2 = "POWER CYCLE";
+                title = "RESET " + FormatResetMode(_resetMode);
+                if (_resetMode == ResetMode.Warm)
+                {
+                    infoLine1 = "RAM AND MEDIA STAY";
+                    infoLine2 = "CPU RESTARTS";
+                }
+                else if (_resetMode == ResetMode.Reload)
+                {
+                    infoLine1 = hasMountedMedia ? "MOUNTED MEDIA RELOADS" : "NO MEDIA INSERTED";
+                    infoLine2 = "MACHINE RESTARTS";
+                }
+                else
+                {
+                    infoLine1 = hasMountedMedia ? "MEDIA REMOUNTS" : "NO MEDIA INSERTED";
+                    infoLine2 = "POWER CYCLE";
+                }
             }
 
             DrawOverlayText(x + 14, y + 10, title, 2, 255, 243, 168);

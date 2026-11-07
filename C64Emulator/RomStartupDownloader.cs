@@ -70,20 +70,14 @@ namespace C64Emulator
         {
             if (!string.IsNullOrWhiteSpace(openRomDirectory))
             {
-                string[] files = { "open-basic64.bin", "open-kernal64.bin",
-                    "open-character-rom64.bin" };
-                foreach (string file in files)
+                if (!IsOpenRomSetComplete(openRomDirectory))
                 {
-                    if (!File.Exists(Path.Combine(openRomDirectory, file)))
-                    {
-                        MessageBox.Show(
-                            "The open ROM profile is missing " + file +
-                            ". Rebuild it with python roms/build.py.",
-                            "Open ROM profile incomplete",
-                            MessageBoxButtons.OK,
-                            MessageBoxIcon.Error);
-                        return false;
-                    }
+                    MessageBox.Show(
+                        "The open ROM profile is incomplete. Rebuild it with python roms/build.py.",
+                        "Open ROM profile incomplete",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                    return false;
                 }
                 return true;
             }
@@ -156,6 +150,45 @@ namespace C64Emulator
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             return false;
+        }
+
+        /// <summary>
+        /// Returns the directory of the open ROM set shipped next to the executable.
+        /// </summary>
+        public static string GetBundledOpenRomDirectory()
+        {
+            return Path.Combine(AppContext.BaseDirectory, "open-roms");
+        }
+
+        /// <summary>
+        /// Checks whether the open ROM set shipped next to the executable is complete.
+        /// </summary>
+        public static bool BundledOpenRomsAvailable()
+        {
+            return IsOpenRomSetComplete(GetBundledOpenRomDirectory());
+        }
+
+        /// <summary>
+        /// Checks whether a directory contains the complete open ROM set.
+        /// </summary>
+        public static bool IsOpenRomSetComplete(string openRomDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(openRomDirectory))
+            {
+                return false;
+            }
+
+            string[] files = { "open-basic64.bin", "open-kernal64.bin",
+                "open-character-rom64.bin", "open-1541-dos.bin" };
+            foreach (string file in files)
+            {
+                if (!File.Exists(Path.Combine(openRomDirectory, file)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static List<RequiredRom> GetMissingRoms(bool useOpenCharacterRom, string openRomDirectory)

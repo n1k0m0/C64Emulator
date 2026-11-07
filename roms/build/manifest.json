@@ -1,0 +1,63 @@
+{
+  "format_version": 1,
+  "version": "2026.11.06-rc3",
+  "name": "C64 freie ROMs",
+  "basic_origin": "Microsoft BASIC-M6502 1.1, MIT license, adapted to C64 interfaces",
+  "upstream_basic_commit": "7460af2c03ae19c0e60ff327489229d2005b9357",
+  "conversion_commit": "fa31daddafa6f1280efce9d66f60a4d2bf4ea474",
+  "target_emulator": "https://github.com/n1k0m0/C64Emulator",
+  "reference_emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "drive_architecture": "1541 helper for the emulator's software IEC transport",
+  "basic_cold_start": "$E197",
+  "kernal_reset_vector": "$E600",
+  "basic_extension_range": "$E000..$E4BF",
+  "platform_timing_range": "$E4C0..$E4FF",
+  "files": {
+    "roms/open-basic64.bin": {
+      "bytes": 8192,
+      "sha256": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9"
+    },
+    "roms/open-kernal64.bin": {
+      "bytes": 8192,
+      "sha256": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+    },
+    "roms/open-character-rom64.bin": {
+      "bytes": 4096,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    "roms/open-1541-dos.bin": {
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522"
+    },
+    "emulator-roms/c64-basic-kernal.bin": {
+      "bytes": 16384,
+      "sha256": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5"
+    },
+    "emulator-roms/c64-character.bin": {
+      "bytes": 4096,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    "emulator-roms/1541-c000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686"
+    },
+    "emulator-roms/1541-e000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc"
+    }
+  },
+  "source_sha256": {
+    "src/assemble.py": "9b39a75e86518939ebb1707a62a6f21cb6f1ccc112cfe9ab57f636f28decfac7",
+    "src/character_glyphs.py": "2090d34d91ea1a0d0b36bd3aedd3569d8c240419a5f66b0def10171732113b8b",
+    "src/character_rom.py": "674e899f925a3429e718b7c18c7af5d7d924a9262d971f849f2998d51465e7b0",
+    "src/drive1541.asm": "ad7b184a6a39d78767b92e3fb4ed3764a9e30c4374edbdd8daed01b5dc32c0f7",
+    "src/drive_build.py": "9ac7b85cab64d33d227f8e9dac674bceefae3d9abd1270a10383e55924a255c5",
+    "src/kernal_mit.asm": "bcc56de55e2ebd5d973df1e19a3a2f5c986afc32d08669e49c9a21371f5b882a",
+    "src/keyboard_mit.asm": "0afbb0452c4cdaaf5188999804fdde26588713bf625f6a201fe995003b30973c",
+    "src/mit_basic/basic64.cfg": "d3d26a8dfccd6c154f5ffd971aad9f23af26ebb45600bdf458d33ed13be8d320",
+    "src/mit_basic/basic64.s": "47255939de695fc4ceafbf3381ff59bb8ba08b944c3ea103a628d79c767af8c8",
+    "src/mit_basic/io_adapters.s": "ac7466df215a409caef7cd8cdfae241637230e90575f2732779a4cb74db8cd65",
+    "src/mit_basic/platform_adapters.s": "cc4e08cdc26c68812f44f11706f0b4c3efdb7b1b7da859e8e8a4cfe4283feae3",
+    "src/system_mit.asm": "62deacc3c10c7d5229051ff55387e97ff0116a806f51adc6188be16976c3af76"
+  }
+}

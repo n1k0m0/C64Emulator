@@ -1,0 +1,47 @@
+{
+  "version": "2026.11.06-rc3",
+  "total_files": 8,
+  "identical_files": 8,
+  "files": [
+    {
+      "file": "roms/open-basic64.bin",
+      "identical": true,
+      "sha256": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9"
+    },
+    {
+      "file": "roms/open-kernal64.bin",
+      "identical": true,
+      "sha256": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+    },
+    {
+      "file": "roms/open-character-rom64.bin",
+      "identical": true,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    {
+      "file": "roms/open-1541-dos.bin",
+      "identical": true,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522"
+    },
+    {
+      "file": "emulator-roms/c64-basic-kernal.bin",
+      "identical": true,
+      "sha256": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5"
+    },
+    {
+      "file": "emulator-roms/c64-character.bin",
+      "identical": true,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    {
+      "file": "emulator-roms/1541-c000-rom.bin",
+      "identical": true,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686"
+    },
+    {
+      "file": "emulator-roms/1541-e000-rom.bin",
+      "identical": true,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc"
+    }
+  ]
+}

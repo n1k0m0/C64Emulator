@@ -1,0 +1,100 @@
+{
+  "suite": "BASIC memory and control-flow stress",
+  "total": 8,
+  "passed": 8,
+  "results": [
+    {
+      "name": "string garbage collection",
+      "commands": [
+        "10 FOR I=1 TO 150:A$=STR$(I)+\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\":NEXT",
+        "20 PRINT A$",
+        "POKE55,0:POKE56,16:CLR",
+        "RUN"
+      ],
+      "actual": "150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "expected": "150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "passed": true,
+      "instructions": 702984
+    },
+    {
+      "name": "string array survives collection",
+      "commands": [
+        "10 DIM A$(2):A$(2)=\"KEEP\"",
+        "20 FOR I=1 TO 150:B$=STR$(I)+\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\":NEXT",
+        "30 PRINT A$(2);B$",
+        "POKE55,0:POKE56,16:CLR",
+        "RUN"
+      ],
+      "actual": "KEEP 150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "expected": "KEEP 150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "passed": true,
+      "instructions": 740154
+    },
+    {
+      "name": "nested FOR loops",
+      "commands": [
+        "10 S=0:FOR I=1 TO 5:FOR J=1 TO 4:S=S+I*J:NEXT J,I",
+        "20 PRINT S",
+        "RUN"
+      ],
+      "actual": "150",
+      "expected": "150",
+      "passed": true,
+      "instructions": 151669
+    },
+    {
+      "name": "array survives new scalar variable",
+      "commands": [
+        "DIM A(2,3)",
+        "A(2,3)=42",
+        "B=99",
+        "PRINT A(2,3);B"
+      ],
+      "actual": "42 99",
+      "expected": "42 99",
+      "passed": true,
+      "instructions": 111928
+    },
+    {
+      "name": "DEF FN restores parameter",
+      "commands": [
+        "10 X=2:DEF FNA(X)=X*X:PRINT FNA(3);X",
+        "RUN"
+      ],
+      "actual": "9 2",
+      "expected": "9 2",
+      "passed": true,
+      "instructions": 98323
+    },
+    {
+      "name": "TI$ sets actual jiffy counter",
+      "commands": [
+        "TI$=\"010203\"",
+        "PRINT TI"
+      ],
+      "actual": "223380",
+      "expected": "223380",
+      "passed": true,
+      "instructions": 75721,
+      "jiffy_counter": 223380
+    },
+    {
+      "name": "CONT after STOP",
+      "commands": [
+        "10 PRINT \"A\":STOP:PRINT \"B\"",
+        "RUN",
+        "CONT"
+      ],
+      "actual": "B",
+      "expected": "B",
+      "passed": true,
+      "instructions": 76558
+    },
+    {
+      "name": "80 consecutive errors recover the stack",
+      "passed": true,
+      "stack_pointer": 244,
+      "final_output": "2"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "pinned_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "patches": [
+    {
+      "name": "0001-c64-free-roms-rc3.patch",
+      "sha256": "ca20628a1feb7ac1633ae34f9275e918ba933a1acf4fb03d84f97b9aed4e1074",
+      "verified": "isolated git apply --check, git apply and byte comparison",
+      "files": [
+        "D64Image.cs",
+        "IecDrive1541.cs",
+        "C64System.cs",
+        "C64Model.cs",
+        "SystemBus.cs",
+        "TapImage.cs",
+        "TapeDeck.cs",
+        "UserPort.cs",
+        "Cia1.cs",
+        "Cia2.cs",
+        "Vic2.cs",
+        "VicBusPlan.cs",
+        "Sid.cs",
+        "MountedMediaKind.cs",
+        "Program.cs",
+        "C64Window.cs"
+      ]
+    },
+    {
+      "name": "0002-rc2-to-rc3.patch",
+      "sha256": "1845a7366c5dd2f3bed322e2419552f17df764628607240195dcda7dec772ce4",
+      "verified": "isolated git apply --check, git apply and byte comparison",
+      "files": [
+        "D64Image.cs",
+        "IecDrive1541.cs",
+        "C64System.cs",
+        "C64Model.cs",
+        "SystemBus.cs",
+        "TapImage.cs",
+        "TapeDeck.cs",
+        "UserPort.cs",
+        "Cia1.cs",
+        "Cia2.cs",
+        "Vic2.cs",
+        "VicBusPlan.cs",
+        "Sid.cs",
+        "MountedMediaKind.cs",
+        "Program.cs",
+        "C64Window.cs"
+      ]
+    },
+    {
+      "name": "0003-rc2-without-restore-to-rc3.patch",
+      "sha256": "03b8c252f4fe6c8edda954689941eec69c3b844316a2725b25a75f4bc7904336",
+      "verified": "isolated git apply --check, git apply and byte comparison",
+      "files": [
+        "D64Image.cs",
+        "IecDrive1541.cs",
+        "C64System.cs",
+        "C64Model.cs",
+        "SystemBus.cs",
+        "TapImage.cs",
+        "TapeDeck.cs",
+        "UserPort.cs",
+        "Cia1.cs",
+        "Cia2.cs",
+        "Vic2.cs",
+        "VicBusPlan.cs",
+        "Sid.cs",
+        "MountedMediaKind.cs",
+        "Program.cs",
+        "C64Window.cs"
+      ]
+    }
+  ],
+  "override_sha256": {
+    "D64Image.cs": "bae2eea6470bc3e7559e43122819b838194e1cefc441874b1cc8b3dd317906fa",
+    "IecDrive1541.cs": "f9a01c05061deb66b0cb15ba06f4b61cec06e08aa73ad27c35dc6c10ee7c3e47",
+    "C64System.cs": "e8cea12ff187751745cdd43b65da18e69fcb0e5f4a9708af4e64b8126d0f97b3",
+    "C64Model.cs": "7e3f32064f844e5f6896370ade3dafc78028731d893326035884cfcf0fd1e50f",
+    "SystemBus.cs": "814e16259716b383791d7a4b8e1109a1f12baaa5d0f55637b3d70231c6d4d807",
+    "TapImage.cs": "fa1aa33769625bcd1b041194adaafb36e23fb7bd68d6f092c9aaf3aa94eb7695",
+    "TapeDeck.cs": "07add18cc3b40e94fce81698f2a521a8fed5dd9686b3444c4eb96e8c4885c16f",
+    "UserPort.cs": "4df85b7317ffb30c02891c60fa016d71cde9af38c7dc6d863157225fda17fbbe",
+    "Cia1.cs": "ecc0a4c6e565d5d11de7e104c29f9185aaeffb125e4efeec4662e1f90e2c79ca",
+    "Cia2.cs": "8059370321570803795789518edfcf348c6e7bb3a6e732b974887f33d70f20db",
+    "Vic2.cs": "c4ed05d8a921bf0d17c0c582161efa6d8480f63d3a832b17af725becd3a282fc",
+    "VicBusPlan.cs": "d9194cb3744963bfe27a076747bea3abf5500d9527495db43acd29bdf4db7967",
+    "Sid.cs": "4d395912fb6401b27c87b88c4431f461e42f233e47b3bdbd2963b067089d5ab0",
+    "MountedMediaKind.cs": "47182ac5f9dbddd9b5187883fa7f1b8b0749bcab0b0bb31bc972c5282ceddd86",
+    "Program.cs": "a37666d87b5dadc62be4c16bf0b42b67bf0e18375459cd65adbef5353009ff64",
+    "C64Window.cs": "598f11c44dd439cc5cc2c1abc6ff17d269fbb47ce77e137c31152293b2da3408"
+  }
+}

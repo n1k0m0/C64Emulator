@@ -1,0 +1,319 @@
+{
+  "version": "2026.11.06-rc3",
+  "reference_emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "scope": "Release integrity for the actual shipped RC3 ROMs and sources. Native runner totals include component and host-API checks; physical hardware and interactive Windows desktop are not certified.",
+  "rom_files": {
+    "roms/open-basic64.bin": {
+      "bytes": 8192,
+      "sha256": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9"
+    },
+    "roms/open-kernal64.bin": {
+      "bytes": 8192,
+      "sha256": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+    },
+    "roms/open-character-rom64.bin": {
+      "bytes": 4096,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    "roms/open-1541-dos.bin": {
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522"
+    },
+    "emulator-roms/c64-basic-kernal.bin": {
+      "bytes": 16384,
+      "sha256": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5"
+    },
+    "emulator-roms/c64-character.bin": {
+      "bytes": 4096,
+      "sha256": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+    },
+    "emulator-roms/1541-c000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686"
+    },
+    "emulator-roms/1541-e000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc"
+    }
+  },
+  "isolated_cpu": {
+    "passed_suites": 14,
+    "total_suites": 14,
+    "failed_suites": 0,
+    "report": "results/summary.json"
+  },
+  "integration": [
+    {
+      "model": "PAL",
+      "suite": "all",
+      "passed": 279,
+      "failed": 0,
+      "groups": [
+        {
+          "name": "boot",
+          "passed": 1,
+          "failed": 0
+        },
+        {
+          "name": "video",
+          "passed": 13,
+          "failed": 0
+        },
+        {
+          "name": "video-sprites",
+          "passed": 2,
+          "failed": 0
+        },
+        {
+          "name": "basic",
+          "passed": 16,
+          "failed": 0
+        },
+        {
+          "name": "control",
+          "passed": 5,
+          "failed": 0
+        },
+        {
+          "name": "editor",
+          "passed": 3,
+          "failed": 0
+        },
+        {
+          "name": "editor-rc3",
+          "passed": 8,
+          "failed": 0
+        },
+        {
+          "name": "iec",
+          "passed": 12,
+          "failed": 0
+        },
+        {
+          "name": "data",
+          "passed": 7,
+          "failed": 0
+        },
+        {
+          "name": "dos",
+          "passed": 10,
+          "failed": 0
+        },
+        {
+          "name": "tape-format",
+          "passed": 3,
+          "failed": 0
+        },
+        {
+          "name": "tape",
+          "passed": 18,
+          "failed": 0
+        },
+        {
+          "name": "serial",
+          "passed": 21,
+          "failed": 0
+        },
+        {
+          "name": "media",
+          "passed": 14,
+          "failed": 0
+        },
+        {
+          "name": "media-data",
+          "passed": 52,
+          "failed": 0
+        },
+        {
+          "name": "dos-media",
+          "passed": 82,
+          "failed": 0
+        },
+        {
+          "name": "tape-host",
+          "passed": 12,
+          "failed": 0
+        }
+      ],
+      "report": "results/native-pal.json",
+      "load_hack": false,
+      "kernal_iec_hooks": false
+    },
+    {
+      "model": "NTSC",
+      "suite": "machine",
+      "passed": 131,
+      "failed": 0,
+      "groups": [
+        {
+          "name": "boot",
+          "passed": 1,
+          "failed": 0
+        },
+        {
+          "name": "video",
+          "passed": 13,
+          "failed": 0
+        },
+        {
+          "name": "video-sprites",
+          "passed": 2,
+          "failed": 0
+        },
+        {
+          "name": "basic",
+          "passed": 16,
+          "failed": 0
+        },
+        {
+          "name": "control",
+          "passed": 5,
+          "failed": 0
+        },
+        {
+          "name": "editor",
+          "passed": 3,
+          "failed": 0
+        },
+        {
+          "name": "editor-rc3",
+          "passed": 8,
+          "failed": 0
+        },
+        {
+          "name": "iec",
+          "passed": 12,
+          "failed": 0
+        },
+        {
+          "name": "data",
+          "passed": 7,
+          "failed": 0
+        },
+        {
+          "name": "dos",
+          "passed": 10,
+          "failed": 0
+        },
+        {
+          "name": "tape-format",
+          "passed": 3,
+          "failed": 0
+        },
+        {
+          "name": "tape",
+          "passed": 18,
+          "failed": 0
+        },
+        {
+          "name": "serial",
+          "passed": 21,
+          "failed": 0
+        },
+        {
+          "name": "tape-host",
+          "passed": 12,
+          "failed": 0
+        }
+      ],
+      "report": "results/native-ntsc.json",
+      "load_hack": false,
+      "kernal_iec_hooks": false
+    }
+  ],
+  "model_independent_d64_checks_run_once": 148,
+  "builds": {
+    "reproducible_rom_files": 8,
+    "total_rom_files": 8,
+    "native_core_compiled": true,
+    "windows_application_compiled": true,
+    "native_warnings": 0,
+    "native_errors": 0,
+    "windows_warnings": 0,
+    "windows_errors": 0,
+    "windows_override_files_match": 16,
+    "windows_desktop_run": false,
+    "native_assembly_sha256": "7a916433bd81a88e451be23fa042430fc8329ff7eac4987e2124a84411bff13b"
+  },
+  "integrity": {
+    "reference_checkout_clean": true,
+    "rom_source_hashes_match": 12,
+    "test_and_build_source_hashes_match": 30,
+    "emulator_override_hashes_match": 16,
+    "patch_routes_verified": 3,
+    "final_report_rom_hashes_match": true,
+    "native_pal_compatibility_alias_identical": true
+  },
+  "patch_files": [
+    {
+      "file": "emulator-patches/0001-c64-free-roms-rc3.patch",
+      "sha256": "ca20628a1feb7ac1633ae34f9275e918ba933a1acf4fb03d84f97b9aed4e1074"
+    },
+    {
+      "file": "emulator-patches/0002-rc2-to-rc3.patch",
+      "sha256": "1845a7366c5dd2f3bed322e2419552f17df764628607240195dcda7dec772ce4"
+    },
+    {
+      "file": "emulator-patches/0003-rc2-without-restore-to-rc3.patch",
+      "sha256": "03b8c252f4fe6c8edda954689941eec69c3b844316a2725b25a75f4bc7904336"
+    }
+  ],
+  "tap_artifacts": {
+    "results/tapes-ntsc/independent-c2n-pal.tap": {
+      "bytes": 101124,
+      "sha256": "df073ba6b168067a6c157a4e7fb93f9372d49a2006cf6efd54a068cc575b68ea"
+    },
+    "results/tapes-ntsc/independent-first-data-checksum-bad.tap": {
+      "bytes": 101124,
+      "sha256": "a0d49b91387e74cc5c5077ec9c12eb197fb4df97b1d44fde3e2b53e93a78e812"
+    },
+    "results/tapes-ntsc/independent-type5-eot.tap": {
+      "bytes": 40548,
+      "sha256": "dbcd8dddd2bd96829ddf9b23d4ee287e2568e9cbd52943805babee1e4a29d0f2"
+    },
+    "results/tapes-ntsc/rom-save-with-eot.tap": {
+      "bytes": 80051,
+      "sha256": "555283796ce85bf7355b0f2efc73130a94ff4cfc4a7460c894e4a6b37464d557"
+    },
+    "results/tapes-pal/independent-c2n-pal.tap": {
+      "bytes": 101124,
+      "sha256": "df073ba6b168067a6c157a4e7fb93f9372d49a2006cf6efd54a068cc575b68ea"
+    },
+    "results/tapes-pal/independent-first-data-checksum-bad.tap": {
+      "bytes": 101124,
+      "sha256": "a0d49b91387e74cc5c5077ec9c12eb197fb4df97b1d44fde3e2b53e93a78e812"
+    },
+    "results/tapes-pal/independent-type5-eot.tap": {
+      "bytes": 40548,
+      "sha256": "dbcd8dddd2bd96829ddf9b23d4ee287e2568e9cbd52943805babee1e4a29d0f2"
+    },
+    "results/tapes-pal/rom-save-with-eot.tap": {
+      "bytes": 80051,
+      "sha256": "c279a5a1fdce1bb554dc67516d5bb9d21bec9e4dd3fe2aeb624cc6346bc51227"
+    }
+  },
+  "report_sha256": {
+    "build/manifest.json": "83a5134d62d908493f30008fc8abc336a3bc1aa1ccaf3dc7f76d8576905d39e0",
+    "results/summary.json": "86fdfe0d0fa8e1fc01098609cb279f359ae4d7c640953f4c504c193c6fa16bfa",
+    "results/native-pal.json": "b35c61f00c1e97c582d6128295e17c510bea1e76a0bffb338d403058c04b7947",
+    "results/native-ntsc.json": "01dc65a39348a43e0f726e1fb0274c196c57042218196e9afd088fc3d1f06c13",
+    "results/native-emulator.json": "b35c61f00c1e97c582d6128295e17c510bea1e76a0bffb338d403058c04b7947",
+    "results/reproducible-build.json": "f56d4a473949c36e9ef58c259fe843449a15d089e0f935180ccad1b53acc319b",
+    "results/emulator-patch-verification.json": "b9b4a1c5c8f8df1a09230db023dd4b99cbfab0f5a287e7dd658e33b5a724e965",
+    "results/build-verification.json": "5503fe9105fb7f3ee4e873066ce1c6c82593722298676f471274f3303c7e1dab",
+    "results/native-build.log": "2430b1daa3b614856cab5994966ed75e61dd5d5a85f57e70cf6e08e557b94108",
+    "results/windows-build.log": "5d961df9d6b3b6562fed36a1a8045dd91ec53d748ed4360e26e00fb00f0fc62e",
+    "results/logs/native-pal.log": "06ac784c5f372ed8e6276432f76caba0fc7045aadc5e046cab0c6e34528bd52b",
+    "results/logs/native-ntsc.log": "4e01ebf7862b03eb385143336ee7f6282ec5c4af31ac4f2b8276977af0e7d663"
+  },
+  "limits": {
+    "physical_datasette_tested": false,
+    "physical_rs232_tested": false,
+    "physical_1541_tested": false,
+    "windows_desktop_run": false,
+    "asynchronous_rs232_background_fifo": false,
+    "automatic_host_com_backend": false,
+    "autonomous_1541_dos_firmware": false,
+    "universal_private_rom_entry_or_fastloader_compatibility": false
+  }
+}

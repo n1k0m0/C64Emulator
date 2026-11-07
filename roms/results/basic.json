@@ -1,0 +1,804 @@
+{
+  "suite": "BASIC semantics through RESET/input loop; isolated CPU, not full C64",
+  "passed": 63,
+  "total": 63,
+  "results": [
+    {
+      "name": "arithmetic",
+      "commands": [
+        "PRINT 2+3*4"
+      ],
+      "expected": "14",
+      "actual": "14",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 61270,
+      "sp": 244
+    },
+    {
+      "name": "decimal equality",
+      "commands": [
+        "PRINT 0.1=0.1"
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 65785,
+      "sp": 244
+    },
+    {
+      "name": "decimal greater",
+      "commands": [
+        "PRINT 0.1>0.1"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 63371,
+      "sp": 244
+    },
+    {
+      "name": "decimal subtraction",
+      "commands": [
+        "PRINT 0.1-0.1"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 63255,
+      "sp": 244
+    },
+    {
+      "name": "positive INT",
+      "commands": [
+        "PRINT INT(1.1)=1"
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 68892,
+      "sp": 244
+    },
+    {
+      "name": "negative INT",
+      "commands": [
+        "PRINT INT(-1.1)+2"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 67756,
+      "sp": 244
+    },
+    {
+      "name": "signed logic",
+      "commands": [
+        "PRINT (-1 AND 3);(1 OR 2);NOT 0"
+      ],
+      "expected": "3 3 -1",
+      "actual": "3 3 -1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 84173,
+      "sp": 244
+    },
+    {
+      "name": "logic positive overflow",
+      "commands": [
+        "PRINT 32768 OR 0"
+      ],
+      "expected": "?ILLEGAL QUANTITY ERROR",
+      "actual": "?ILLEGAL QUANTITY ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 64888,
+      "sp": 244
+    },
+    {
+      "name": "logic high overflow",
+      "commands": [
+        "PRINT 65536 AND 1"
+      ],
+      "expected": "?ILLEGAL QUANTITY ERROR",
+      "actual": "?ILLEGAL QUANTITY ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 65342,
+      "sp": 244
+    },
+    {
+      "name": "division by zero",
+      "commands": [
+        "PRINT 1/0"
+      ],
+      "expected": "?DIVISION BY ZERO ERROR",
+      "actual": "?DIVISION BY ZERO ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 61032,
+      "sp": 244
+    },
+    {
+      "name": "square root domain",
+      "commands": [
+        "PRINT SQR(-1)"
+      ],
+      "expected": "?ILLEGAL QUANTITY ERROR",
+      "actual": "?ILLEGAL QUANTITY ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 66816,
+      "sp": 244
+    },
+    {
+      "name": "power integer",
+      "commands": [
+        "PRINT 2^10"
+      ],
+      "expected": "1024",
+      "actual": "1024",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 68281,
+      "sp": 244
+    },
+    {
+      "name": "power negative base",
+      "commands": [
+        "PRINT (-2)^3"
+      ],
+      "expected": "-8",
+      "actual": "-8",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 73026,
+      "sp": 244
+    },
+    {
+      "name": "power reciprocal",
+      "commands": [
+        "PRINT 2^-3"
+      ],
+      "expected": ".125",
+      "actual": ".125",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 68759,
+      "sp": 244
+    },
+    {
+      "name": "power zero",
+      "commands": [
+        "PRINT 0^0"
+      ],
+      "expected": "1",
+      "actual": "1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 60035,
+      "sp": 244
+    },
+    {
+      "name": "power fraction",
+      "commands": [
+        "PRINT 9^.5"
+      ],
+      "expected": "3",
+      "actual": "3",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 75709,
+      "sp": 244
+    },
+    {
+      "name": "power negative fraction",
+      "commands": [
+        "PRINT (-2)^.5"
+      ],
+      "expected": "?ILLEGAL QUANTITY ERROR",
+      "actual": "?ILLEGAL QUANTITY ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 69060,
+      "sp": 244
+    },
+    {
+      "name": "remark",
+      "commands": [
+        "REM HELLO"
+      ],
+      "expected": "",
+      "actual": "",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 52386,
+      "sp": 244
+    },
+    {
+      "name": "variable assignment",
+      "commands": [
+        "A=1.25",
+        "PRINT A+2"
+      ],
+      "expected": "3.25",
+      "actual": "3.25",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 73326,
+      "sp": 244
+    },
+    {
+      "name": "integer variable",
+      "commands": [
+        "A%=12.5",
+        "PRINT A%"
+      ],
+      "expected": "12",
+      "actual": "12",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 73965,
+      "sp": 244
+    },
+    {
+      "name": "LEFT$",
+      "commands": [
+        "PRINT LEFT$(\"ABCDE\",2)"
+      ],
+      "expected": "AB",
+      "actual": "AB",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 65538,
+      "sp": 244
+    },
+    {
+      "name": "RIGHT$",
+      "commands": [
+        "PRINT RIGHT$(\"ABCDE\",2)"
+      ],
+      "expected": "DE",
+      "actual": "DE",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 65892,
+      "sp": 244
+    },
+    {
+      "name": "MID$ two arguments",
+      "commands": [
+        "PRINT MID$(\"ABCDE\",3)"
+      ],
+      "expected": "CDE",
+      "actual": "CDE",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 65483,
+      "sp": 244
+    },
+    {
+      "name": "MID$ three arguments",
+      "commands": [
+        "PRINT MID$(\"ABCDE\",2,3)"
+      ],
+      "expected": "BCD",
+      "actual": "BCD",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 68179,
+      "sp": 244
+    },
+    {
+      "name": "string variable",
+      "commands": [
+        "A$=\"HELLO\"",
+        "B$=A$",
+        "PRINT B$"
+      ],
+      "expected": "HELLO",
+      "actual": "HELLO",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 82310,
+      "sp": 244
+    },
+    {
+      "name": "string concatenation",
+      "commands": [
+        "A$=\"AB\"+\"CD\"",
+        "PRINT A$"
+      ],
+      "expected": "ABCD",
+      "actual": "ABCD",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 70872,
+      "sp": 244
+    },
+    {
+      "name": "string nested functions",
+      "commands": [
+        "PRINT LEFT$(RIGHT$(\"ABCDE\",4),2)"
+      ],
+      "expected": "BC",
+      "actual": "BC",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 75779,
+      "sp": 244
+    },
+    {
+      "name": "STR$ concatenation",
+      "commands": [
+        "PRINT STR$(12)+STR$(34)"
+      ],
+      "expected": "12 34",
+      "actual": "12 34",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 76589,
+      "sp": 244
+    },
+    {
+      "name": "CHR$ assignment",
+      "commands": [
+        "A$=CHR$(65)",
+        "PRINT A$"
+      ],
+      "expected": "A",
+      "actual": "A",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 74595,
+      "sp": 244
+    },
+    {
+      "name": "LEN expression",
+      "commands": [
+        "PRINT LEN(\"A\"+\"BC\")"
+      ],
+      "expected": "3",
+      "actual": "3",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 66283,
+      "sp": 244
+    },
+    {
+      "name": "ASC expression",
+      "commands": [
+        "PRINT ASC(RIGHT$(\"ABC\",1))"
+      ],
+      "expected": "67",
+      "actual": "67",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 74484,
+      "sp": 244
+    },
+    {
+      "name": "VAL expression",
+      "commands": [
+        "PRINT VAL(MID$(\"X123\",2))"
+      ],
+      "expected": "123",
+      "actual": "123",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 75046,
+      "sp": 244
+    },
+    {
+      "name": "CHR$ range",
+      "commands": [
+        "PRINT CHR$(256)"
+      ],
+      "expected": "?ILLEGAL QUANTITY ERROR",
+      "actual": "?ILLEGAL QUANTITY ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 67146,
+      "sp": 244
+    },
+    {
+      "name": "string equality",
+      "commands": [
+        "PRINT \"ABC\"=\"ABC\""
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 60858,
+      "sp": 244
+    },
+    {
+      "name": "string ordering",
+      "commands": [
+        "PRINT \"ABC\"<\"ABD\""
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 60867,
+      "sp": 244
+    },
+    {
+      "name": "FOR integer",
+      "commands": [
+        "10 FOR I=1 TO 3:PRINT I;:NEXT",
+        "RUN"
+      ],
+      "expected": "1 2 3",
+      "actual": "1 2 3",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 81662,
+      "sp": 244
+    },
+    {
+      "name": "FOR fractional",
+      "commands": [
+        "10 FOR I=.1 TO .3 STEP .1:PRINT I;:NEXT",
+        "RUN"
+      ],
+      "expected": ".1 .2 .3",
+      "actual": ".1 .2 .3",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 93062,
+      "sp": 244
+    },
+    {
+      "name": "FOR variable assignment",
+      "commands": [
+        "10 FOR I=1 TO 3:A=I*2:PRINT A;:NEXT",
+        "RUN"
+      ],
+      "expected": "2 4 6",
+      "actual": "2 4 6",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 92098,
+      "sp": 244
+    },
+    {
+      "name": "GOSUB RETURN",
+      "commands": [
+        "10 GOSUB 100:PRINT \"DONE\":END",
+        "100 PRINT \"SUB\":RETURN",
+        "RUN"
+      ],
+      "expected": "SUB\nDONE",
+      "actual": "SUB\nDONE",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 77494,
+      "sp": 244
+    },
+    {
+      "name": "IF THEN",
+      "commands": [
+        "10 IF 1 THEN PRINT \"YES\"",
+        "RUN"
+      ],
+      "expected": "YES",
+      "actual": "YES",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 64928,
+      "sp": 244
+    },
+    {
+      "name": "IF false",
+      "commands": [
+        "10 IF 0 THEN PRINT \"NO\"",
+        "RUN"
+      ],
+      "expected": "",
+      "actual": "",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 63747,
+      "sp": 244
+    },
+    {
+      "name": "IF comparison",
+      "commands": [
+        "10 A=.1:IF A=.1 THEN PRINT \"YES\"",
+        "RUN"
+      ],
+      "expected": "YES",
+      "actual": "YES",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 78678,
+      "sp": 244
+    },
+    {
+      "name": "ON GOTO",
+      "commands": [
+        "10 ON 2 GOTO 100,200",
+        "100 PRINT \"BAD\":END",
+        "200 PRINT \"OK\":END",
+        "RUN"
+      ],
+      "expected": "OK",
+      "actual": "OK",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 82628,
+      "sp": 244
+    },
+    {
+      "name": "GO TO",
+      "commands": [
+        "10 GO TO 30",
+        "20 PRINT \"BAD\":END",
+        "30 PRINT \"OK\"",
+        "RUN"
+      ],
+      "expected": "OK",
+      "actual": "OK",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 76839,
+      "sp": 244
+    },
+    {
+      "name": "DATA READ",
+      "commands": [
+        "10 DATA 12,34",
+        "20 READ A,B:PRINT A;B",
+        "RUN"
+      ],
+      "expected": "12 34",
+      "actual": "12 34",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 83713,
+      "sp": 244
+    },
+    {
+      "name": "quoted DATA colon",
+      "commands": [
+        "10 DATA \"A:B\",PRINT",
+        "20 READ A$,B$:PRINT A$;B$",
+        "RUN"
+      ],
+      "expected": "A:BPRINT",
+      "actual": "A:BPRINT",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 87676,
+      "sp": 244
+    },
+    {
+      "name": "DATA RESTORE",
+      "commands": [
+        "10 DATA 7",
+        "20 READ A:RESTORE:READ B:PRINT A;B",
+        "RUN"
+      ],
+      "expected": "7 7",
+      "actual": "7 7",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 85232,
+      "sp": 244
+    },
+    {
+      "name": "DIM numeric",
+      "commands": [
+        "DIM A(2)",
+        "A(2)=42",
+        "PRINT A(2)"
+      ],
+      "expected": "42",
+      "actual": "42",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 88658,
+      "sp": 244
+    },
+    {
+      "name": "DIM multidimensional",
+      "commands": [
+        "DIM A(2,3)",
+        "A(2,3)=42",
+        "PRINT A(2,3)"
+      ],
+      "expected": "42",
+      "actual": "42",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 97659,
+      "sp": 244
+    },
+    {
+      "name": "implicit array",
+      "commands": [
+        "A(5)=23",
+        "PRINT A(5)"
+      ],
+      "expected": "23",
+      "actual": "23",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 76946,
+      "sp": 244
+    },
+    {
+      "name": "DIM string",
+      "commands": [
+        "DIM A$(2)",
+        "A$(1)=\"ABC\"",
+        "PRINT A$(1)"
+      ],
+      "expected": "ABC",
+      "actual": "ABC",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 92005,
+      "sp": 244
+    },
+    {
+      "name": "array subscript range",
+      "commands": [
+        "DIM A(2)",
+        "PRINT A(3)"
+      ],
+      "expected": "?BAD SUBSCRIPT ERROR",
+      "actual": "?BAD SUBSCRIPT ERROR",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 76454,
+      "sp": 244
+    },
+    {
+      "name": "DEF FN",
+      "commands": [
+        "10 DEF FNA(X)=X*X+1",
+        "20 PRINT FNA(3)",
+        "RUN"
+      ],
+      "expected": "10",
+      "actual": "10",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 93366,
+      "sp": 244
+    },
+    {
+      "name": "PEEK POKE",
+      "commands": [
+        "POKE 49152,42",
+        "PRINT PEEK(49152)"
+      ],
+      "expected": "42",
+      "actual": "42",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 79007,
+      "sp": 244
+    },
+    {
+      "name": "SGN ABS",
+      "commands": [
+        "PRINT SGN(-2);ABS(-3)"
+      ],
+      "expected": "-1 3",
+      "actual": "-1 3",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 76004,
+      "sp": 244
+    },
+    {
+      "name": "FRE signed result",
+      "commands": [
+        "PRINT FRE(0)>0"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 63038,
+      "sp": 244
+    },
+    {
+      "name": "POS",
+      "commands": [
+        "PRINT POS(0)>=0"
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 66825,
+      "sp": 244
+    },
+    {
+      "name": "TI numeric",
+      "commands": [
+        "PRINT TI>=0"
+      ],
+      "expected": "-1",
+      "actual": "-1",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 64045,
+      "sp": 244
+    },
+    {
+      "name": "TI$ assignment",
+      "commands": [
+        "TI$=\"000100\"",
+        "PRINT TI$"
+      ],
+      "expected": "000100",
+      "actual": "000100",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 75905,
+      "sp": 244
+    },
+    {
+      "name": "SPC",
+      "commands": [
+        "PRINT \"A\";SPC(3);\"B\""
+      ],
+      "expected": "A B",
+      "actual": "A B",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 61726,
+      "sp": 244
+    },
+    {
+      "name": "TAB",
+      "commands": [
+        "PRINT \"A\";TAB(4);\"B\""
+      ],
+      "expected": "A B",
+      "actual": "A B",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 61647,
+      "sp": 244
+    },
+    {
+      "name": "GET empty string",
+      "commands": [
+        "10 GET A$:PRINT LEN(A$)",
+        "RUN"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 75774,
+      "sp": 244
+    },
+    {
+      "name": "CLR variables",
+      "commands": [
+        "A=99",
+        "CLR",
+        "PRINT A"
+      ],
+      "expected": "0",
+      "actual": "0",
+      "pass_": true,
+      "prior_errors": [],
+      "steps": 69889,
+      "sp": 244
+    }
+  ]
+}

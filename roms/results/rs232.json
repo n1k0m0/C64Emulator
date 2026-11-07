@@ -1,0 +1,816 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "cases": [
+    {
+      "rate_code": 1,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 1,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 2,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 3,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 4,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 5,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 6,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 7,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 8,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 9,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "8N1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "8N1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 165,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "8N1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 255,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "7E1",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "7E1",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 37,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "7E1",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 127,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "5O2",
+      "value": 0,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 0,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "5O2",
+      "value": 165,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 5,
+      "actual_tx": null
+    },
+    {
+      "rate_code": 10,
+      "format": "5O2",
+      "value": 255,
+      "tx": true,
+      "rx": true,
+      "actual_rx": 31,
+      "actual_tx": null
+    }
+  ],
+  "all_pass": true
+}

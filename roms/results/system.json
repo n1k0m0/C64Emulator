@@ -1,0 +1,94 @@
+{
+  "suite": "Public KERNAL and interrupt recovery contracts",
+  "scope": "Independent 6502 CPU with explicit matrix/CIA status partner; no hardware timing claim",
+  "rom_sha256": {
+    "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+    "open-basic64.bin": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9",
+    "open-character-rom64.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb",
+    "open-kernal64.bin": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+  },
+  "passed": 20,
+  "total": 20,
+  "results": [
+    {
+      "name": "VECTOR read/write and RESTOR",
+      "passed": true
+    },
+    {
+      "name": "MEMBOT and MEMTOP read/set",
+      "passed": true
+    },
+    {
+      "name": "SCREEN/PLOT/IOBASE",
+      "passed": true
+    },
+    {
+      "name": "SETLFS/SETNAM",
+      "passed": true
+    },
+    {
+      "name": "STOP unpressed register/flag contract",
+      "passed": true
+    },
+    {
+      "name": "STOP pressed flags/queue/channel contract",
+      "passed": true
+    },
+    {
+      "name": "RESTORE alone resumes original CPU state",
+      "passed": true
+    },
+    {
+      "name": "CIA2 NMI acknowledges without warm restart",
+      "passed": true
+    },
+    {
+      "name": "custom NMI vector receives raw hardware frame",
+      "passed": true
+    },
+    {
+      "name": "custom IRQ vector and return frame",
+      "passed": true
+    },
+    {
+      "name": "custom BRK vector and return frame",
+      "passed": true
+    },
+    {
+      "name": "RUN/STOP+RESTORE preserves program and variables",
+      "passed": true
+    },
+    {
+      "name": "default BRK returns to BASIC without cold reset",
+      "passed": true
+    },
+    {
+      "name": "CBM80 cartridge cold-start vector",
+      "passed": true
+    },
+    {
+      "name": "reject malformed cartridge signature byte 0",
+      "passed": true
+    },
+    {
+      "name": "reject malformed cartridge signature byte 1",
+      "passed": true
+    },
+    {
+      "name": "reject malformed cartridge signature byte 2",
+      "passed": true
+    },
+    {
+      "name": "reject malformed cartridge signature byte 3",
+      "passed": true
+    },
+    {
+      "name": "reject malformed cartridge signature byte 4",
+      "passed": true
+    },
+    {
+      "name": "CBM80 cartridge warm-start vector",
+      "passed": true
+    }
+  ]
+}

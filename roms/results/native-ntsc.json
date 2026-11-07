@@ -1,0 +1,1280 @@
+{
+  "rom_directory": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/emulator-roms",
+  "rom_sha256": {
+    "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+    "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+    "c64-basic-kernal.bin": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5",
+    "c64-character.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
+  },
+  "emulator_source_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "emulator_save_patch": true,
+  "emulator_data_file_patch": true,
+  "emulator_restore_key_patch": true,
+  "observed_nmi_entries": 3,
+  "model": "NTSC",
+  "cpu_hz": 1022727,
+  "raster_lines": 263,
+  "cycles_per_line": 65,
+  "frame_hz": 59.82608949985376,
+  "load_hack": false,
+  "kernal_iec_hooks": false,
+  "drive_transport": "real C64 CIA2 IEC signaling to software drive; supplied 1541 ROM provides bootstrap and drive CPU helper ABI",
+  "state": "ExecuteInstruction",
+  "pc": "E95D",
+  "sp": "E9",
+  "public_entries": {
+    "FFD2": 2431,
+    "FFE7": 447,
+    "FFCF": 6952,
+    "FFE1": 1174,
+    "FFCC": 153,
+    "FFBA": 125,
+    "FFC0": 63,
+    "FFC6": 97,
+    "FFC3": 63,
+    "FFBD": 69,
+    "FFD5": 18,
+    "FFE4": 55,
+    "FFD8": 2,
+    "FFC9": 56,
+    "FF81": 1,
+    "FFB7": 42
+  },
+  "getin_trace": [
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=01 X=01 Y=02 SP=F6 P=20 status90=00 data0351=01 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=08 X=01 Y=02 SP=F6 P=20 status90=00 data0351=08 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=01 X=01 Y=02 SP=F6 P=20 status90=00 data0351=01 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=08 X=01 Y=02 SP=F6 P=20 status90=00 data0351=08 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=01 X=01 Y=02 SP=E4 P=20 status90=00 data0351=01 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=08 X=01 Y=02 SP=E4 P=20 status90=00 data0351=08 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=15 X=01 Y=02 SP=E4 P=20 status90=00 data0351=15 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=08 X=01 Y=02 SP=E4 P=20 status90=00 data0351=08 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=0A X=01 Y=02 SP=E4 P=20 status90=00 data0351=0A cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=99 X=01 Y=02 SP=E4 P=A0 status90=00 data0351=99 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=20 X=01 Y=02 SP=E4 P=20 status90=00 data0351=20 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=22 X=01 Y=02 SP=E4 P=20 status90=00 data0351=22 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=49 X=01 Y=02 SP=E4 P=20 status90=00 data0351=49 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=45 X=01 Y=02 SP=E4 P=20 status90=00 data0351=45 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=43 X=01 Y=02 SP=E4 P=20 status90=00 data0351=43 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=20 X=01 Y=02 SP=E4 P=20 status90=00 data0351=20 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4C X=01 Y=02 SP=E4 P=20 status90=00 data0351=4C cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4F X=01 Y=02 SP=E4 P=20 status90=00 data0351=4F cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=41 X=01 Y=02 SP=E4 P=20 status90=00 data0351=41 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=44 X=01 Y=02 SP=E4 P=20 status90=00 data0351=44 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=20 X=01 Y=02 SP=E4 P=20 status90=00 data0351=20 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4F X=01 Y=02 SP=E4 P=20 status90=00 data0351=4F cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4B X=01 Y=02 SP=E4 P=20 status90=00 data0351=4B cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=22 X=01 Y=02 SP=E4 P=20 status90=00 data0351=22 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=40 data0351=00 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=F6 P=22 status90=40 data0351=00 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=FF X=01 Y=02 SP=E4 P=A0 status90=00 data0351=FF cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=0D X=01 Y=02 SP=E4 P=20 status90=00 data0351=0D cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=41 X=01 Y=02 SP=E4 P=20 status90=00 data0351=41 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=80 X=01 Y=02 SP=E4 P=A0 status90=00 data0351=80 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=40 data0351=00 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=41 X=01 Y=02 SP=E4 P=20 status90=00 data0351=41 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=42 X=01 Y=02 SP=E4 P=20 status90=00 data0351=42 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=40 data0351=00 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=41 X=01 Y=02 SP=E4 P=20 status90=00 data0351=41 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=42 X=01 Y=02 SP=E4 P=20 status90=00 data0351=42 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=0D X=01 Y=02 SP=E4 P=20 status90=00 data0351=0D cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=40 data0351=00 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=04 X=01 Y=02 SP=F6 P=20 status90=00 data0351=04 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=0D X=01 Y=02 SP=E4 P=20 status90=00 data0351=0D cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=FF X=01 Y=02 SP=E4 P=A0 status90=00 data0351=FF cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4D X=01 Y=02 SP=E4 P=20 status90=00 data0351=4D cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=0D X=01 Y=02 SP=E4 P=20 status90=00 data0351=0D cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=00 X=01 Y=02 SP=E4 P=22 status90=00 data0351=00 cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=FF X=01 Y=02 SP=E4 P=A0 status90=00 data0351=FF cia2=pra=A7 ddra=3F readA=67 outA=False outC=False outD=True atnLow=False(-) clkLow=False(-) dataLow=True(C64)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=E2 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=4D X=01 Y=02 SP=E4 P=20 status90=40 data0351=4D cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=5A X=01 Y=02 SP=F6 P=20 status90=40 data0351=5A cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=01 X=01 Y=02 SP=F6 P=20 status90=40 data0351=01 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)",
+    "entry PC=FFE4 A=00 X=01 Y=02 SP=F4 return=AB54 input99=08 deviceBA=08 status90=00 0349=A7 034F=48",
+    "return PC=AB54 A=02 X=01 Y=02 SP=F6 P=20 status90=40 data0351=02 cia2=pra=07 ddra=3F readA=87 outA=False outC=False outD=False atnLow=False(-) clkLow=True(Drive8) dataLow=False(-)"
+  ],
+  "passed": 131,
+  "failed": 0,
+  "groups": [
+    {
+      "name": "boot",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "name": "video",
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "name": "video-sprites",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "name": "basic",
+      "passed": 16,
+      "failed": 0
+    },
+    {
+      "name": "control",
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "name": "editor",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "name": "editor-rc3",
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "name": "iec",
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "name": "data",
+      "passed": 7,
+      "failed": 0
+    },
+    {
+      "name": "dos",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "name": "tape-format",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "name": "tape",
+      "passed": 18,
+      "failed": 0
+    },
+    {
+      "name": "serial",
+      "passed": 21,
+      "failed": 0
+    },
+    {
+      "name": "tape-host",
+      "passed": 12,
+      "failed": 0
+    }
+  ],
+  "tests": [
+    {
+      "Name": "ntsc_boot",
+      "Group": "boot",
+      "Passed": true,
+      "Expected": "BASIC 64 banner and READY prompt",
+      "Output": "**** FREE BASIC 64 ****\n\n 38911 BYTES FREE\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "video_model_constants",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "PAL6569 and NTSC6567R8 use independent documented timing constants",
+      "Output": "NTSC: 1022727Hz, 65cycles/line, 263lines/frame, 59.826089Hz frame",
+      "Recent": null
+    },
+    {
+      "Name": "video_exact_frame_period",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "Every raster register value, full line length and exact frame wrap follow the selected model",
+      "Output": "cycles=17095, raster=0:0, frames=1",
+      "Recent": null
+    },
+    {
+      "Name": "video_high_raster_irq",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "Raster260 triggers exactly at its first cycle and write-one acknowledges it",
+      "Output": "notEarly=True, irq=True, acknowledged=True",
+      "Recent": null
+    },
+    {
+      "Name": "video_sprite_bus_slots",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "All eight pointer/data DMA slots, including NTSC cycles64/65, occur without PAL wrapping",
+      "Output": "pointer cycles=60,62,64,1,3,5,7,9",
+      "Recent": null
+    },
+    {
+      "Name": "video_badline_bus_slots",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "Both standards retain forty matrix/character fetches and the three-cycle BA lead",
+      "Output": "matrix=40, graphics=40, BA lead=3",
+      "Recent": null
+    },
+    {
+      "Name": "video_sid_sample_clock",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "One second of the selected CPU/SID clock produces44100 mono samples, within one output buffer",
+      "Output": "SID clock=1022727, flushed bytes=87978, expected=88200",
+      "Recent": null
+    },
+    {
+      "Name": "video_frontend_selection",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "Frontend video switches preserve mode arguments and reject conflicting selections",
+      "Output": "NTSC C64 (6567R8): --benchmark 1000 result.log",
+      "Recent": null
+    },
+    {
+      "Name": "video_native_frame_pacing",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "The complete running machine produces exactly three frames in three model frame periods",
+      "Output": "frames=3",
+      "Recent": null
+    },
+    {
+      "Name": "video_rom_autodetection",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "The ROM detects the actual raster standard and publishes PAL1/NTSC0 at$02A6",
+      "Output": "$02A6=0, machine=NTSC",
+      "Recent": null
+    },
+    {
+      "Name": "video_rom_jiffy_rate",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "The native CIA/ROM clock advances60 jiffies per emulated second under either video standard",
+      "Output": "elapsed=60",
+      "Recent": null
+    },
+    {
+      "Name": "video_last_text_row_visible",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "The actual VIC renders the last text row inside the PAL/NTSC framebuffer with its color RAM",
+      "Output": "frame=418x235, glyph=(49,202), red pixels=18",
+      "Recent": null
+    },
+    {
+      "Name": "video_savestate_same_model",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "A same-model savestate restores RAM and the machine\u0027s raster/peripheral state",
+      "Output": "restored C000=0",
+      "Recent": null
+    },
+    {
+      "Name": "video_savestate_model_guard",
+      "Group": "video",
+      "Passed": true,
+      "Expected": "A mismatched video-standard snapshot is rejected before mutating RAM",
+      "Output": "rejected=True, C000=90",
+      "Recent": null
+    },
+    {
+      "Name": "video_sprite_visible_control",
+      "Group": "video-sprites",
+      "Passed": true,
+      "Expected": "Overlapping solid sprites3/4 at X100/Y60 set both collision bits and render one complete24x21 red sprite",
+      "Output": "NTSC: D01E=18, active row=True, border=False, red pixels=504",
+      "Recent": null
+    },
+    {
+      "Name": "video_sprite_precrop_collision",
+      "Group": "video-sprites",
+      "Passed": true,
+      "Expected": "Sprites3/4 at Y0 collide behind the closed border; viewport cropping/wrapping cannot suppress D01E",
+      "Output": "NTSC: D01E=18, active row=True, border=True",
+      "Recent": null
+    },
+    {
+      "Name": "keyboard_paste_buffer_boundary",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "0123456789012345678901234567890123456789",
+      "Output": "0123456789012345678901234567890123456789\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "integer_arithmetic",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "2",
+      "Output": " 2 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "operator_precedence",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "14",
+      "Output": " 14 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "decimal_arithmetic",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "1.75",
+      "Output": " 1.75 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "square_root",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "9",
+      "Output": " 9 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "string_slices",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "AB:DE:BCD",
+      "Output": "AB:DE:BCD\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "rem_program",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "REM OK",
+      "Output": "REM OK\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "quoted_data_colon",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "A:B:PRINT",
+      "Output": "A:B:PRINT\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "fractional_for_step",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "1 1.5 2",
+      "Output": " 1  1.5  2 \nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "gosub_return",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "SUB then DONE",
+      "Output": "SUB\nDONE\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "division_by_zero",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "DIVISION BY ZERO error",
+      "Output": "\n?DIVISION BY ZERO ERROR\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "error_recovery",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "3",
+      "Output": " 3 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "poke_memory",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "$C000 = 173",
+      "Output": "\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "peek_memory",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "173",
+      "Output": " 173 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "sys_returns",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "SYS OK",
+      "Output": "SYS OK\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "physical_cia_keyboard",
+      "Group": "basic",
+      "Passed": true,
+      "Expected": "CIA1 matrix key presses type PRINT 1\u002B1 and produce 2 with host input injection disabled",
+      "Output": " 2 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "physical_run_stop",
+      "Group": "control",
+      "Passed": true,
+      "Expected": "Actual Tab matrix key stops an infinite program with BREAK and preserves its counter/program",
+      "Output": "\nBREAK IN  20\nREADY.\nCOUNT 117 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "physical_stop_cont",
+      "Group": "control",
+      "Passed": true,
+      "Expected": "CONT resumes the interrupted loop and increases the existing A counter before another RUN/STOP",
+      "Output": "\nBREAK IN  20\nREADY.\nCOUNT 231 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "physical_restore_alone",
+      "Group": "control",
+      "Passed": true,
+      "Expected": "PageUp alone triggers exactly one NMI while held and returns without clearing program or variables",
+      "Output": "COUNT 231 \n\nREADY.\n\nNMI entries: 0 -\u003E 1",
+      "Recent": null
+    },
+    {
+      "Name": "physical_stop_restore",
+      "Group": "control",
+      "Passed": true,
+      "Expected": "Tab\u002BPageUp performs warm recovery from a running loop while preserving program and variables",
+      "Output": "\nREADY.\nCOUNT 296 \n\nREADY.\n\nNMI entries: 1 -\u003E 2",
+      "Recent": null
+    },
+    {
+      "Name": "physical_restore_repress",
+      "Group": "control",
+      "Passed": true,
+      "Expected": "Releasing and pressing RESTORE again produces a second independent warm recovery",
+      "Output": "\nREADY.\nCOUNT 296 \n\nREADY.\n\nNMI entries: 2 -\u003E 3",
+      "Recent": null
+    },
+    {
+      "Name": "editor_insert_delete_execute",
+      "Group": "editor",
+      "Passed": true,
+      "Expected": "LEFT, DELETE, INSERT and overwrite change PRINT 12 into PRINT 32 before execution",
+      "Output": " 32 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "editor_recaptures_listed_line",
+      "Group": "editor",
+      "Passed": true,
+      "Expected": "HOME/DOWN/RIGHT edits the visible LIST row; RETURN retokenizes the corrected line and RUN prints 2",
+      "Output": "Before edit:\n\n\nREADY.\nLIST\n\n 10 PRINT 1\nREADY.\nProgram before=010809080A00992031000000\nProgram after=010809080A00992032000000\nRUN:\n 2 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "editor_clear_preserves_sprite_pointers",
+      "Group": "editor",
+      "Passed": true,
+      "Expected": "Clear screen leaves the sprite pointer byte at $07F8 unchanged",
+      "Output": "\n 77 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_relocated_basic",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "BASIC input/output at C000 works while the old 0400 screen and application VIC bank remain unchanged",
+      "Output": "\n\nREADY.\n 42 \n\nREADY.\n\nHIBASE=C0, CIA2=C4, VIC=03",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_relocated_vic_pixels",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "Actual VIC renders the bank3 C000 screen through the generated C800 RAM font and fixed D800 color RAM",
+      "Output": "screen code=1, color=2, red pixels=64",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_native_cursor_blinks",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "Idle CHRIN draws and removes its reverse-space cursor in completed VIC frames, preserving the original cell/color",
+      "Output": "row=5, column=0, original=32, color=2, phase=1, background pixels=64, cursor pixels=64",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_native_cursor_disable",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "Setting BLNSW while visible restores both underlays on the next actual CIA timer IRQ",
+      "Output": "CC=1, CF=0, cell=32, color=2",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_capture_after_blink",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "Input resumes after an active cursor and its reverse overlay never becomes a BASIC token",
+      "Output": " 56 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_relocated_list_edit",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "LIST/cursor editing on the relocated screen retokenizes exact changed bytes and RUN produces the changed value",
+      "Output": "                                        \n                                        \nREADY.                                  \nLIST                                    \n                                        \n 10 PRINT 1                             \nREADY.                                  \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n\nProgram=010809080A00992032000000\n 2 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_relocated_iec_bank",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "A real IEC status-channel transaction preserves bank3, the screen page and RAM charset selection",
+      "Output": "DISK MOUNTED IN DRIVE 8\nDOS 73 \n\nREADY.\n\nCIA2=C4",
+      "Recent": null
+    },
+    {
+      "Name": "editor_rc3_relocated_sprite_tail",
+      "Group": "editor-rc3",
+      "Passed": true,
+      "Expected": "Clearing a relocated C000 screen preserves its C3F8 sprite pointer",
+      "Output": "\n 77 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "mount_fixture_d64",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "D64 mounted in drive 8",
+      "Output": "DISK MOUNTED IN DRIVE 8",
+      "Recent": null
+    },
+    {
+      "Name": "iec_load_bytes",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "Exact PRG bytes at $0801; public LOAD executed with IEC shortcuts disabled",
+      "Output": "\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_loaded_program_run",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "IEC LOAD OK",
+      "Output": "IEC LOAD OK\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_open_get_close",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "OPEN/GET#/CLOSE reads exact PRG address bytes $01 and $08 through public KERNAL entries",
+      "Output": " 1 : 8 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_separate_get_statements",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "Separate GET# statements retain the next unread channel byte across UNTALK/TALK",
+      "Output": " 1 : 8 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_channel_eof",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "Read entire file with exact checksum and EOI=64; one additional GET# returns empty without timeout",
+      "Output": "END 1016 : 64 \nEXTRA 64 : 0 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_input_number_and_string",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "INPUT# reads number 123 and string ABC from a sequential file through real IEC",
+      "Output": " 123 :ABC\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_save_returns",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "SAVE returns without an error",
+      "Output": "\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_saved_file_reload",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "Saved PRG can be reloaded",
+      "Output": "\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_save_load_roundtrip",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "IEC SAVE OK",
+      "Output": "IEC SAVE OK\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "iec_save_persists_d64",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "Freshly reopened host D64 contains exact saved PRG bytes",
+      "Output": "010814080A0099224945432053415645204F4B22001A08140080000000",
+      "Recent": null
+    },
+    {
+      "Name": "iec_program_load_chain",
+      "Group": "iec",
+      "Passed": true,
+      "Expected": "In-program LOAD reruns the smaller loaded program from its start and preserves A=42",
+      "Output": "CHAIN 42 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_seq_create_read",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "OPEN/PRINT#/CLOSE creates persistent SEQ data; INPUT# reads 123 and ABC; status is 00",
+      "Output": "123,ABC\nWRITE 0 OK\nSEQ 123 :ABC\n\nREADY.\n\nD64 NOTES=3132332C4142430D",
+      "Recent": null
+    },
+    {
+      "Name": "native_seq_append_read",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "Plain ,A preserves the first record and appends the second; separate INPUT# calls read both",
+      "Output": "456,DEF\nAPP 0 OK\n 123 :ABC: 456 :DEF\n\nREADY.\n\nD64 NOTES=3132332C4142430D3435362C4445460D",
+      "Recent": null
+    },
+    {
+      "Name": "native_usr_binary_append",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "USR write/append preserves NUL, CR and high-bit bytes; GET# reaches EOI with exact checksum",
+      "Output": "\nAUSR 461 : 64 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_file_open_status_errors",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "The command channel reports 63/64/62 and resets an acknowledged error to 00; failed opens leave disk unchanged",
+      "Output": "DUP 63 FILE EXISTS\nRESET 0 OK\nTYPE 64 FILE TYPE MISMATCH\nMISS 62 FILE NOT FOUND\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_status_channel_reusable",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "Consecutive success responses can be read through one continuously open command channel",
+      "Output": "FIRST 0 OK\nSECOND 0 OK\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_close_15_commits_files",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "CLOSE 15 closes and commits all ordinary file channels",
+      "Output": "ONE\nTWO\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_empty_and_replace",
+      "Group": "data",
+      "Passed": true,
+      "Expected": "Empty SEQ files are valid; explicit @ replacement writes the new contents",
+      "Output": "REPLACED\n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_rel_binary_position",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Real IEC OPEN/P/PRINT#/INPUT#: binary record low13/high13/NUL, position13, optional position, sparse3328 records and second side sector persist exactly",
+      "Output": "Pb\n\n\nABPb\n256\nPb\n\nHIGH\nWRITE 0 \nPb\nRECORD256\n\nREADY.\n\nREL bytes=53248\nmounted=True hwCustom=False hwBoot=False hwPc=C00F status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0000 lastCmd=\u0022Pb\u003C00\u003E\u003C01\u003E\u0022 cmdHist=\u0022Pb\u003C0D\u003E\u003C00\u003E\u003C0D\u003E|Pb\u003C00\u003E\u003C01\u003E|Pb\u003C00\u003E\u003C0D\u003E|Pb\u003C00\u003E\u003C01\u003E\u0022 mw=0@0000\u002B0 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=2 listenSA=6F talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=71 fin=19 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=00/00 motor=False led=False htrk=34 job=- recent=5F-28-F2-3F-28-6F-3F-48-62-5F-28-E2-3F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=30/30 attnBeg=30 attnEnd=30 attnCmds=45 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_rel_errors_and_offset",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Native P missing record50, byte-position read, NUL bytes, and truncated overrun51",
+      "Output": "Pb\nEMPTY 50 \nPb\n\n\nOFFSET 131 \nPb\n\nTOOLONG\nOVERFLOW 51 \n\nREADY.\n\nmounted=True hwCustom=False hwBoot=False hwPc=C00F status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0000 lastCmd=\u0022Pb\u003C0D\u003E\u003C00\u003E\u003C10\u003E\u0022 cmdHist=\u0022Pb\u003C0D\u003E\u003C00\u003E\u003C0D\u003E|Pb\u003C00\u003E\u003C01\u003E|Pb\u003C00\u003E\u003C0D\u003E|Pb\u003C00\u003E\u003C01\u003E|Pb\u003C01\u003E\u003C00\u003E|Pb\u003C0D\u003E\u003C00\u003E\u003C0D\u003E|Pb\u003C0D\u003E\u003C00\u003E\u003C10\u003E\u0022 mw=0@0000\u002B0 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=15 listenSA=62 talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=80 fin=22 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=00/00 motor=False led=False htrk=34 job=- recent=5F-28-6F-3F-28-62-3F-48-6F-5F-28-E2-3F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=58/58 attnBeg=58 attnEnd=58 attnCmds=87 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_copy_rename_scratch_validate",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "BASIC sends long C/R/S and V over command channel; concatenated data reads twice; scratch count1; consistent remounted disk",
+      "Output": "COPY:JOIN=DATA,DATA\nCOPY 0 \nRENAME:RENAMED=JOIN\nRENAME 0 \n 123 ABC 123 ABC\nSCRATCH:R*=S\nSCRATCH 1  1 \nV\nVALIDATE 0 \n\nREADY.\n\nmounted=True hwCustom=False hwBoot=False hwPc=C00F status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0000 lastCmd=\u0022V\u0022 cmdHist=\u0022C:JOIN=DATA,DATA|R:RENAMED=JOIN|S:R*=S|V\u0022 mw=0@0000\u002B0 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=15 listenSA=6F talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=91 fin=27 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=00/00 motor=False led=False htrk=32 job=- recent=3F-28-6F-3F-48-6F-5F-28-6F-3F-48-6F-5F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=28/28 attnBeg=28 attnEnd=28 attnCmds=42 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_quick_format_open15",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Command in OPEN15 executes quick format and retains disk ID",
+      "Output": "QUICK 0 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_full_format",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Real IEC full format updates label/ID and persists valid blank35-track image",
+      "Output": "NEW:FORMATTED,RC\nFORMAT 0 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_direct_blocks",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Native # buffer, B-P, counted B-W/B-R, raw U1/U2 and EOI; exact changed256-byte sector persists",
+      "Output": "B-P:2,1\nAB\nB-W:2 0 1 2\nBLOCKWRITE 0 \nB-R:2 0 1 2\nCOUNTED 144  64 \nU1:2 0 1 2\nRAW 4 \nB-P:2,0\nMU2:2 0 1 2\nRAWWRITE 0 \n\nREADY.\n\nmounted=True hwCustom=False hwBoot=False hwPc=C00F status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0000 lastCmd=\u0022U2:2 0 1 2\u0022 cmdHist=\u0022B-P:2,1|B-W:2 0 1 2|B-R:2 0 1 2|U1:2 0 1 2|B-P:2,0|U2:2 0 1 2\u0022 mw=0@0000\u002B0 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=15 listenSA=6F talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=105 fin=32 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=00/00 motor=False led=False htrk=34 job=- recent=3F-28-62-3F-28-6F-3F-48-6F-5F-28-E2-3F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=38/38 attnBeg=38 attnEnd=38 attnCmds=57 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_memory_binary",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Native M-W/M-R serial payload preserves embedded CR/NUL/255 and binary address13",
+      "Output": "B-P:2,13\nM-W\n\nM\nBUFFER 13  0  255  77 BEND\nM-R\n\nMEMORY 345 \n\nREADY.\n\nmounted=True hwCustom=False hwBoot=False hwPc=C00F status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0000 lastCmd=\u0022M-R\u003C0D\u003E\u003C03\u003E\u003C04\u003E\u0022 cmdHist=\u0022B-P:2,1|B-W:2 0 1 2|B-R:2 0 1 2|U1:2 0 1 2|B-P:2,0|U2:2 0 1 2|B-P:2,13|M-W\u003C0D\u003E\u003C03\u003E\u003C04\u003E\u003C0D\u003E\u003C00\u003E\u003CFF\u003EM|M-R\u003C0D\u003E\u003C03\u003E\u003C04\u003E\u0022 mw=1@030D\u002B4 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=15 listenSA=6F talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=114 fin=33 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=00/00 motor=False led=False htrk=34 job=- recent=3F-48-6F-5F-48-6F-5F-48-6F-5F-48-6F-5F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=68/68 attnBeg=68 attnEnd=68 attnCmds=102 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_buffer_memory_alias",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Real GET# sees exact M-W bytes13/0/255/77 in an already positioned direct buffer, without another B-P",
+      "Output": "B-P:2,13\nM-W\n\nM\nBUFFER 13  0  255  77 BEND\nM-R\n\nMEMORY 345 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_execute_drive_cpu",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "B-E executes raw block at allocated RAM buffer; U3 and M-E execute uploaded INC/RTS on actual1541 CPU; M-R observes90/1/2",
+      "Output": "B-E:2 0 1 2\nM-R\nEXEC 90 \nM-W \u0060\nU3\nM-R \nUSER 1 \nM-E\nM-R \nMEMEXEC 2 \n\nREADY.\n\nmounted=True hwCustom=False hwBoot=False hwPc=C194 status=00:\u002200, OK,00,00\u0022 pending=None lastExec=0500 lastCmd=\u0022M-R \u003C04\u003E\u0022 cmdHist=\u0022B-E:2 0 1 2|M-R\u003C1F\u003E\u003C04\u003E|M-W\u003C00\u003E\u003C05\u003E\u003C04\u003E\u003CEE\u003E \u003C04\u003E\u0060|U3|M-R \u003C04\u003E|M-E\u003C00\u003E\u003C05\u003E|M-R \u003C04\u003E\u0022 mw=1@0500\u002B4 listening=False talking=False deviceAttn=False payloadRx=False payloadTx=False armRx=False armTx=False attn=Idle probeHold=False:0 ch=15 listenSA=6F talkSA=00 talkIdx=0/0 sender=Idle idx=0/0 bit=0 t=0 eoi=120 fin=36 low=False rel=False receiver=WaitTalkerReady bits=0 wait=0 ack=0 eoi=False done=False:00 bus=orb=00 ddrb=0E pcr=00 acr=00 ifr=02 ier=00 viaAtna=False viaData=False viaClock=False piAtn=False piData=False piClock=False dataOut=False clockOut=False atnaDataOut=False serialOutEn=False diskA=00/00 diskB=64/6F motor=True led=False htrk=34 job=- recent=5F-28-6F-3F-28-6F-3F-48-6F-5F-28-E2-3F-28-EF-3F open0=- open15=- diskSet=1 autoDisk=\u0022\u0022 atnEdges=28/28 attnBeg=28 attnEnd=28 attnCmds=42 swClk=False swData=True pendArmed=False pendWaitAtn=False pendWait=0 pendIdle=0",
+      "Recent": null
+    },
+    {
+      "Name": "native_dos_block_allocation",
+      "Group": "dos",
+      "Passed": true,
+      "Expected": "Native B-A/B-F persist allocation; duplicate65 returns nextfree1/4; UI\u002B keeps C64 transport and command channel open",
+      "Output": "B-A:0 1 3\nALLOC 0 \nB-A:0 1 3\nNEXTBLOCK 65  1  4 \nB-F:0 1 3\nFREE 0 \nUI\u002B\nSPEED 0 \n\nREADY.\n",
+      "Recent": null
+    },
+    {
+      "Name": "tap_container_bounds_and_atomic_mount",
+      "Group": "tape-format",
+      "Passed": true,
+      "Expected": "v0 overflow and v1 24-bit boundaries roundtrip; malformed headers/escapes are rejected before mounted tape changes",
+      "Output": "rejected=9/9",
+      "Recent": null
+    },
+    {
+      "Name": "tap_halfwave_polarity_and_motor_pause",
+      "Group": "tape-format",
+      "Passed": true,
+      "Expected": "v2 triggers negative FLAG edges after paired halfwaves; motor-off pauses rather than consumes a pulse",
+      "Output": "v2 falling edges=100,280; resumedPosition=1",
+      "Recent": null
+    },
+    {
+      "Name": "tap_clock_conversion_fractional_carry",
+      "Group": "tape-format",
+      "Passed": true,
+      "Expected": "PAL TAP elapsed time is retained on the NTSC CPU clock without cumulative per-pulse rounding drift",
+      "Output": "actualCycles=398607; expectedCycles=398607.424730",
+      "Recent": null
+    },
+    {
+      "Name": "tap_save_physical_waveform",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Actual SAVE with EOT records physical WRITE intervals, stops motor, and restores DEN/sprite enables/caller IRQ state",
+      "Output": "\nREADY.\n\ncycles=11200000; result=A50032C001001BFF; tapePosition=0; pulses=25275\npulses=25275; minimum=331; maximum=737; totalCycles=11064132",
+      "Recent": null
+    },
+    {
+      "Name": "tap_saved_format_independent_decode",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Separate pulse decoder finds both headers, both data copies, both type-5 EOT headers, descending countdowns, odd parity and zero XOR",
+      "Output": "block byte counts=202,202,74,74,202,202",
+      "Recent": null
+    },
+    {
+      "Name": "tap_file_exact_pulses",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "TAP v1 reopened from disk preserves every measured pulse cycle exactly",
+      "Output": "bytes=80051; pulses=25275; standard=1",
+      "Recent": null
+    },
+    {
+      "Name": "tap_load_waveform_roundtrip",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Actual LOAD replays the new recording through CIA1 FLAG without remount and restores the exact payload",
+      "Output": "\nREADY.\n\ncycles=5600000; result=A500324030001BFF; tapePosition=12635; pulses=25275",
+      "Recent": null
+    },
+    {
+      "Name": "tap_independent_c2n_standard",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=5800000; result=A500324030001BFF; tapePosition=12636; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_all_byte_values_and_page_crossing",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=7600000; result=A500320131001BFF; tapePosition=16496; pulses=32996",
+      "Recent": null
+    },
+    {
+      "Name": "tap_verify_waveform_success",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=5800000; result=A500324030001BFF; tapePosition=12636; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_verify_waveform_mismatch",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=6300000; result=A51C310000001BFF; tapePosition=14082; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_header_duplicate_repairs_checksum",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=5800000; result=A500324030001BFF; tapePosition=12636; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_data_duplicate_repairs_checksum",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=6800000; result=A500324030001BFF; tapePosition=15142; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_data_duplicate_repairs_parity",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=6800000; result=A500324030001BFF; tapePosition=15142; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_both_data_copies_bad",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=6800000; result=A504310000001BFF; tapePosition=15142; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_both_header_copies_bad",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=4700000; result=A50431C00F001BFF; tapePosition=10130; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_independent_relocatable_header",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=5800000; result=A500324034001BFF; tapePosition=12636; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "tap_eot_named",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=2400000; result=A50431C00F801BFF; tapePosition=5064; pulses=10132",
+      "Recent": null
+    },
+    {
+      "Name": "tap_eot_unnamed",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=2400000; result=A50431C00F801BFF; tapePosition=5064; pulses=10132",
+      "Recent": null
+    },
+    {
+      "Name": "tap_truncated_waveform_timeout",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "Real CPU/CIA/FLAG waveform execution meets payload/status policy and restores video/motor/IRQ state",
+      "Output": "\nREADY.\n\ncycles=13800000; result=A504310E08801BFF; tapePosition=1500; pulses=1500",
+      "Recent": null
+    },
+    {
+      "Name": "tap_invalid_name_preserves_video",
+      "Group": "tape",
+      "Passed": true,
+      "Expected": "A rejected long filename returns before starting transport and does not restore uninitialized video state",
+      "Output": "\nREADY.\n\ncycles=100000; result=A504310030001BFF; tapePosition=0; pulses=25276",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_8n1_50",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
+      "Output": "done=True; bitCycles=20454.540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459021814,2:459022189,3:459022444,4:459227780\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459022597:0,459043051:1,459063508:0,459083991:1,459104447:0,459124902:1,459145359:0,459165824:1,459186281:0,459206731:1\nU\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\nsamples=0101010101; expected=0101010101; meanBit=20459.333; nominal=20454.540",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_8n1_50",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
+      "Output": "done=True; bitCycles=20454.540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459293133; stages=1:459292042,2:459292417,3:459292633,4:459488265\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_8n1_300",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459561654,2:459562029,3:459562845,4:459597839\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459562998:0,459566412:1,459569859:0,459573276:1,459576690:0,459580107:1,459583522:0,459586961:1,459590377:0,459593787:1\nU\nREADY.\n\nwatchdog cycles=80000; PC=F0C3\nsamples=0101010101; expected=0101010101; meanBit=3421.000; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_8n1_300",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459672898; stages=1:459671721,2:459672139,3:459672398,4:459706206\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=60000; PC=EFE2\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_8n1_1200",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
+      "Output": "done=True; bitCycles=852.273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459761449,2:459761867,3:459762122,4:459771418\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459762275:0,459763133:1,459763985:0,459764845:1,459765704:0,459766557:1,459767416:0,459768312:1,459769164:0,459770014:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E7\nsamples=0101010101; expected=0101010101; meanBit=859.889; nominal=852.273",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_8n1_1200",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
+      "Output": "done=True; bitCycles=852.273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459832757; stages=1:459831623,2:459832041,3:459832257,4:459841655\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=40000; PC=EFED\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_8n1_2400",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
+      "Output": "done=True; bitCycles=426.136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459901650,2:459902068,3:459902280,4:459907428\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459902474:0,459902947:1,459903378:0,459903853:1,459904282:0,459904712:1,459905141:0,459905589:1,459906020:0,459906447:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E5\nsamples=0101010101; expected=0101010101; meanBit=441.444; nominal=426.136",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_8n1_2400",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
+      "Output": "done=True; bitCycles=426.136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459973280; stages=1:459972146,2:459972564,3:459972780,4:459977585\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=40000; PC=E947\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_cts_delayed",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "X-line CHKOUT asserts RTS/DTR and transmits only after peer asserts CTS 50000 cycles later",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=460168076; DCDrelease=-1; RXstart=-1; stages=1:460117658,2:460118076,3:460168234,4:460203159\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=460168433:0,460171846:1,460175262:0,460178677:1,460182085:0,460185497:1,460188920:0,460192337:1,460195751:0,460199155:1\nDY.\nU\n\nwatchdog cycles=200000; PC=E945\nsamples=0101010101; expected=0101010101; meanBit=3413.556; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_cts_timeout_no_tx",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Missing CTS gives bounded 0.5\u20132.6-second wait, Carry/A5 and RSSTAT$10; no TX start; READST acknowledges error",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:460343308,2:460343683,4:462369878\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=10\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=10 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=2140000; PC=E958\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_dsr_loss_before_tx",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "DSR loss after successful CHKOUT is rechecked by CHROUT: immediate Carry/A5,$40,no emitted start bit",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462509858,2:462510276,3:462510534,4:462510781\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=05 P=31 X=37 Y=81 RS=40\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=40 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nU\n\nwatchdog cycles=100000; PC=E946\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_carrier_delayed",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Full-duplex input waits for DCD while RTS/CTS are asserted, then receives the independent frame",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=462701870; RXstart=462702467; stages=1:462651452,2:462651870,3:462701967,4:462735687\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=200000; PC=E945\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_carrier_timeout",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "DCD high gives bounded timeout and Carry/A5,$08; READST clears the reported status",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462875789,2:462876207,4:464902303\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=08\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=08 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=2140000; PC=E943\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_half_duplex_turnaround",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Half-duplex TX uses RTS low/CTS low; CHKIN releases RTS and waits for CTS high before RX; peer delays both transitions",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465108954; stages=1:465042451,2:465042868,3:465058134,5:465093183,6:465108454,4:465142157\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465058376:0,465061791:1,465065205:0,465068622:1,465072032:0,465075485:1,465078901:0,465082316:1,465085732:0,465089138:1\nU\n\nwatchdog cycles=200000; PC=E943\nsamples=0101010101; expected=0101010101; meanBit=3418.000; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_three_line_ignores_control",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Three-line mode transmits and receives with CTS/DSR/DCD all inactive, leaving RTS/DTR high",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465318675; stages=1:465282308,2:465282726,3:465282938,5:465317959,6:465318175,4:465351838\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465283091:0,465286504:1,465289963:0,465293372:1,465296783:0,465300200:1,465303659:0,465307092:1,465310500:0,465313907:1\nREADY.\nU\n\nwatchdog cycles=180000; PC=E947\nsamples=0101010101; expected=0101010101; meanBit=3424.000; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_5o1",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Physical TX word length, parity and stop bits match the configured frame",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465491988,2:465492363,3:465492617,4:465520726\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465492770:0,465496185:1,465499595:0,465503012:1,465506471:0,465509888:1,465513324:0,465516717:1\nREADY.\n\n\nwatchdog cycles=140000; PC=E945\nsamples=01010101; expected=01010101; meanBit=NaN; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_5o1",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent framed RX waveform decodes requested word length, parity and stops",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465662007; stages=1:465660873,2:465661248,3:465661507,4:465688438\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=140000; PC=E947\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_tx_7e2",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Physical TX word length, parity and stop bits match the configured frame",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465828544,2:465828962,3:465829217,4:465867650\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465829370:0,465832827:1,465836243:0,465839657:1,465843072:0,465846532:1,465849964:0,465853381:1,465856813:0,465860211:1\nADY.\nU\n\nwatchdog cycles=160000; PC=E967\nsamples=01010101011; expected=01010101011; meanBit=NaN; nominal=3409.090",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_7e2",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Independent framed RX waveform decodes requested word length, parity and stops",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466008886; stages=1:466007752,2:466008170,3:466008386,4:466045579\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=140000; PC=E943\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_parity_error",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Incorrect received parity sets Carry and RSSTAT$01, acknowledged once by READST",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466186731; stages=1:466185597,2:466185972,3:466186231,4:466216528\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=01\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=01 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=140000; PC=F168\n",
+      "Recent": null
+    },
+    {
+      "Name": "rs232_native_rx_framing_error",
+      "Group": "serial",
+      "Passed": true,
+      "Expected": "Low stop bit sets Carry and RSSTAT$02, acknowledged once by READST",
+      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466357678; stages=1:466356544,2:466356919,3:466357178,4:466390900\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=02\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=02 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n.\n\n\nwatchdog cycles=140000; PC=E946\n",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_malformed_headers",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Wrong signature/version/platform/standard/reserved field/length and invalid extended pulses reject cleanly",
+      "Output": "rejected=8/8",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_cross_standard_clock",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "TAP source PAL/NTSC clock converts to the selected machine clock without changing pulse time",
+      "Output": "source=0, target=NTSC, firstEdgeCycles=399",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_mount",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Mount a valid TAP through the normal media API, press PLAY and retain exact pulses",
+      "Output": "TAPE MOUNTED - PLAY",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_invalid_mount_atomic",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "A truncated TAP is rejected without changing the mounted tape or metadata",
+      "Output": "TAPE LOAD FAILED: TAP payload length does not match its header.",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_save_exact",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Saving atomically replaces the chosen file with exact TAP bytes and preserves transport",
+      "Output": "TAPE SAVED saved.tap",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_failed_save_preserves",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Failed file replacement leaves destination and in-memory tape intact and removes temporary output",
+      "Output": "TAPE SAVE FAILED: Is a directory : \u0027/tmp/free-c64-tape-host-2b05056ad14a4ac69028403bd0059f77/blocked\u0027",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_resets_preserve_cassette",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Cold, warm and reload resets retain mounted cassette bytes, head position and metadata",
+      "Output": "position=1, cold=True, reload=True, RESET TAPE RETAINED",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_transport_controls",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "STOP releases sense, REWIND returns to the first pulse and PLAY resumes",
+      "Output": "TAPE PLAY",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_recording_clock",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "A new recording captures the selected PAL/NTSC standard and replaces the old transport",
+      "Output": "video=1, recording=True",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_power_cycle_preserves_recording",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Frontend power-cycle transfer preserves unsaved pulses, RECORD state and metadata as an independent copy",
+      "Output": "copied=True, remaining=1",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_eject_and_empty_save",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Reset retains an unsaved recording; explicit eject clears the tape; saving an empty tape preserves old output",
+      "Output": "recordingRetained=True, kind=None",
+      "Recent": null
+    },
+    {
+      "Name": "tape_host_peripheral_savestate",
+      "Group": "tape-host",
+      "Passed": true,
+      "Expected": "Savestate restores tape and serial pins while preserving the attached UserPort object and live callbacks",
+      "Output": "samePort=True, callbacks=1, pins=2F",
+      "Recent": null
+    }
+  ],
+  "screen": "READY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152"
+}

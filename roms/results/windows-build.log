@@ -1,0 +1,10 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SharpPixels -> /workspace/scratch/f2ac55d78f20/rc3_ntsc_probe/windows-compile/SharpPixels/bin/Release/SharpPixels.dll
+  C64Emulator -> /workspace/scratch/f2ac55d78f20/rc3_ntsc_probe/windows-compile/C64Emulator/bin/Release/C64Emulator.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:04.89

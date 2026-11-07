@@ -38,6 +38,17 @@ namespace C64Emulator
             string openRomDirectory = args != null && args.Length >= 2 &&
                 string.Equals(args[0], "--open-roms", StringComparison.OrdinalIgnoreCase)
                 ? args[1] : null;
+            if (openRomDirectory == null)
+            {
+                // A persisted open ROM set choice skips the original ROM download
+                // check at startup and boots the bundled open ROMs instead.
+                EmulatorSettings startupSettings = EmulatorSettingsStore.Load();
+                if (string.Equals(startupSettings.RomSet, "Open", StringComparison.OrdinalIgnoreCase) &&
+                    RomStartupDownloader.BundledOpenRomsAvailable())
+                {
+                    openRomDirectory = RomStartupDownloader.GetBundledOpenRomDirectory();
+                }
+            }
             if (args != null && args.Length >= 3 &&
                 string.Equals(args[0], "--capture-open-rom-boot", StringComparison.OrdinalIgnoreCase))
             {

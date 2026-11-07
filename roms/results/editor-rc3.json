@@ -1,0 +1,50 @@
+{
+  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "checks": [
+    {
+      "test": "HIBASE relocates exact 1000-cell clear/output and fixed color RAM across eight page-aligned screens",
+      "result": "PASS"
+    },
+    {
+      "test": "relocated input capture and editing leave the old screen unchanged",
+      "result": "PASS"
+    },
+    {
+      "test": "relocated scrolling copies all 960 cells/colors and preserves sprite tails",
+      "result": "PASS"
+    },
+    {
+      "test": "relocated INSERT row expansion and DELETE preserve character/color layout",
+      "result": "PASS"
+    },
+    {
+      "test": "cursor blink preserves reverse underlay, color, scratch pointers and interrupted CPU state",
+      "result": "PASS"
+    },
+    {
+      "test": "BLNSW disable restores the overlay; reenable and timer-only 20-jiffy phases work",
+      "result": "PASS"
+    },
+    {
+      "test": "PLOT and CHROUT restore the old cursor before changing position or characters",
+      "result": "PASS"
+    },
+    {
+      "test": "HIBASE changes and screen clear restore the cached old cursor address",
+      "result": "PASS"
+    },
+    {
+      "test": "scroll and INSERT never move a cursor overlay into text",
+      "result": "PASS"
+    },
+    {
+      "test": "CHRIN enables idle blinking and removes cursor before captured input",
+      "result": "PASS"
+    },
+    {
+      "test": "long CHROUT clear services timer IRQs while preserving caller interrupt and decimal flags",
+      "result": "PASS"
+    }
+  ],
+  "scope": "Real 6502 ROM instructions and IRQ frames; keyboard/CIA scheduling fixture, not native VIC rendering."
+}
