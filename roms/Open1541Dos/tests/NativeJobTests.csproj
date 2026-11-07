@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseExistingEmulatorAssembly)' != 'true'">
+    <ProjectReference Include="../../../C64Emulator/C64Emulator.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseExistingEmulatorAssembly)' == 'true'">
+    <Reference Include="C64Emulator">
+      <HintPath>../../../C64Emulator/bin/x64/Release/C64Emulator.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

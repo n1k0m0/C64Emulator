@@ -70,3 +70,7 @@ C64Emulator/*.PRG
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Python bytecode
+__pycache__/
+*.pyc

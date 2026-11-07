@@ -343,9 +343,12 @@ namespace C64Emulator
         /// <summary>
         /// Handles the c64 window operation.
         /// </summary>
-        public C64Window(C64Model model, string title) : base(model.VisibleWidth, model.VisibleHeight, title)
+        private readonly string _openRomDirectory;
+
+        public C64Window(C64Model model, string title, string openRomDirectory = null) : base(model.VisibleWidth, model.VisibleHeight, title)
         {
             _model = model;
+            _openRomDirectory = openRomDirectory;
             _loadedSettings = EmulatorSettingsStore.Load();
             InitializeSystem();
             ApplyLoadedSettings(_loadedSettings);
@@ -376,7 +379,7 @@ namespace C64Emulator
         /// </summary>
         private void CreateSystemInstance()
         {
-            _system = new C64System(_model);
+            _system = new C64System(_model, null, _openRomDirectory);
             _system.AudioBytesGenerated += HandleSystemAudioBytesGenerated;
             // Standard disk loads now run over the drive-side IEC state
             // machine without the low-level CPU IEC hooks enabled.
@@ -422,7 +425,7 @@ namespace C64Emulator
             _system.SetSidChipModel(ParseEnum(settings.SidChipModel, SidChipModel.Mos6581));
             _system.SetJoystickPort(ParseEnum(settings.JoystickPort, JoystickPort.Port2));
             _system.SetHostKeyboardLayout(ParseEnum(settings.HostKeyboardLayout, HostKeyboardLayout.En));
-            _system.EnableLoadHack = settings.EnableLoadHack;
+            _system.EnableLoadHack = _openRomDirectory == null && settings.EnableLoadHack;
             _system.ForceSoftwareIecTransport = settings.ForceSoftwareIecTransport;
             _system.EnableInputInjection = settings.EnableInputInjection;
 
@@ -6824,6 +6827,11 @@ namespace C64Emulator
         /// </summary>
         private void ToggleLoadHack()
         {
+            if (_openRomDirectory != null)
+            {
+                _overlayStatusText = "LOAD HACK OFF (OPEN ROM)";
+                return;
+            }
             _system.EnableLoadHack = !_system.EnableLoadHack;
             _overlayStatusText = _system.EnableLoadHack ? "LOAD HACK ON" : "LOAD HACK OFF";
             SaveSettings();
@@ -8384,7 +8392,8 @@ namespace C64Emulator
                 string extension = Path.GetExtension(path);
                 if (!string.Equals(extension, ".prg", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(extension, ".d64", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(extension, ".crt", StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(extension, ".crt", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".tap", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -8403,7 +8412,7 @@ namespace C64Emulator
                 return;
             }
 
-            _overlayStatusText = "DROP PRG D64 OR CRT";
+            _overlayStatusText = "DROP PRG D64 CRT OR TAP";
             ShowTurboToast(_overlayStatusText);
         }
 
@@ -8755,6 +8764,7 @@ namespace C64Emulator
                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.prg", SearchOption.TopDirectoryOnly));
                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.d64", SearchOption.TopDirectoryOnly));
                     files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.crt", SearchOption.TopDirectoryOnly));
+                    files.AddRange(Directory.GetFiles(_mediaBrowserCurrentDirectory, "*.tap", SearchOption.TopDirectoryOnly));
                     files.Sort(StringComparer.OrdinalIgnoreCase);
                     foreach (string file in files)
                     {
@@ -8773,7 +8783,7 @@ namespace C64Emulator
             _mediaBrowserEntries = entries;
             if (_mediaBrowserEntries.Count == 0)
             {
-                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG D64 OR CRT FILES", false, false));
+                _mediaBrowserEntries.Add(new MediaBrowserEntry(string.Empty, "NO PRG D64 CRT OR TAP FILES", false, false));
             }
 
             _mediaBrowserSelection = Math.Max(0, Math.Min(_mediaBrowserSelection, _mediaBrowserEntries.Count - 1));

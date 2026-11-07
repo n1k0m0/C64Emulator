@@ -110,6 +110,7 @@ namespace C64Emulator.Core
         private byte _pendingExecuteBufferJobCode;
         private int _activeExecuteBufferJobSlot = NoDosJobSlot;
         private byte _activeExecuteBufferJobCode;
+        private bool _useNativeHeadJobs;
 
         /// <summary>
         /// Initializes a new Drive1541Bus instance.
@@ -185,6 +186,13 @@ namespace C64Emulator.Core
             {
                 int ramAddress = address & DriveRamMask;
                 _ram[ramAddress] = value;
+                if (ramAddress < DosJobSlotCount)
+                {
+                    // A ROM status write completes the active job immediately.
+                    // Waiting until the next bus tick can mistake a new job
+                    // with the same command byte for the old one.
+                    RefreshExecuteBufferJobState();
+                }
                 if (_alignDosCurrentSectorWritesToGcr &&
                     (ramAddress == DosCurrentTrackAddress || ramAddress == DosCurrentSectorAddress))
                 {
@@ -271,7 +279,8 @@ namespace C64Emulator.Core
         /// </summary>
         public void SaveState(BinaryWriter writer)
         {
-            StateSerializer.WriteObjectFields(writer, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism");
+            StateSerializer.WriteObjectFields(writer, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism",
+                "_useNativeHeadJobs");
             _serialVia.SaveState(writer);
             _diskVia.SaveState(writer);
             _mechanism.SaveState(writer);
@@ -282,7 +291,8 @@ namespace C64Emulator.Core
         /// </summary>
         public void LoadState(BinaryReader reader, D64Image mountedImage)
         {
-            StateSerializer.ReadObjectFields(reader, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism");
+            StateSerializer.ReadObjectFields(reader, this, "_iecPort", "_serialVia", "_diskVia", "_mechanism",
+                "_useNativeHeadJobs");
             _serialVia.LoadState(reader);
             _diskVia.LoadState(reader);
             _mechanism.LoadState(reader, mountedImage);
@@ -338,7 +348,7 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Returns whether an uploaded DOS buffer execution job is waiting for the drive CPU.
+        /// Returns whether a ROM-handled DOS job is waiting for the drive CPU.
         /// </summary>
         public bool HasPendingExecuteBufferJob
         {
@@ -346,7 +356,16 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Consumes a pending DOS buffer execution job.
+        /// Routes seek, bump, read, write and verify jobs through the independently built drive ROM.
+        /// </summary>
+        internal bool UseNativeHeadJobs
+        {
+            get { return _useNativeHeadJobs; }
+            set { _useNativeHeadJobs = value; }
+        }
+
+        /// <summary>
+        /// Consumes a pending ROM-handled DOS job.
         /// </summary>
         public bool TryConsumePendingExecuteBufferJob(out int slot, out byte job)
         {
@@ -503,9 +522,26 @@ namespace C64Emulator.Core
         /// </summary>
         public void Tick()
         {
+            TickCore(true);
+        }
+
+        /// <summary>
+        /// Advances VIA and disk mechanics without the host DOS job service.
+        /// Native ROM audits use this to observe the actual CPU/VIA sector path.
+        /// </summary>
+        public void TickWithoutHostDosJobs()
+        {
+            TickCore(false);
+        }
+
+        private void TickCore(bool serviceHostDosJobs)
+        {
             UpdateSerialInputs();
             _mechanism.Tick(_diskVia);
-            ServiceDosJobQueue();
+            if (serviceHostDosJobs)
+            {
+                ServiceDosJobQueue();
+            }
             _diskVia.Tick();
             _serialVia.Tick();
             UpdateSerialInputs();
@@ -1156,6 +1192,17 @@ namespace C64Emulator.Core
                         return;
 
                     case 0x80: // READ
+                        if (_useNativeHeadJobs)
+                        {
+                            if (IsExecuteBufferJobTracked(slot, job))
+                            {
+                                continue;
+                            }
+
+                            QueueExecuteBufferJob(slot, job, track, sector);
+                            return;
+                        }
+
                         ok = TryReadJobSector(track, sector, bufferOffset);
                         if (ok)
                         {
@@ -1165,6 +1212,17 @@ namespace C64Emulator.Core
                         break;
 
                     case 0x90: // WRITE
+                        if (_useNativeHeadJobs)
+                        {
+                            if (IsExecuteBufferJobTracked(slot, job))
+                            {
+                                continue;
+                            }
+
+                            QueueExecuteBufferJob(slot, job, track, sector);
+                            return;
+                        }
+
                         ok = TryWriteJobSector(track, sector, bufferOffset);
                         if (ok)
                         {
@@ -1174,7 +1232,17 @@ namespace C64Emulator.Core
                         break;
 
                     case 0xA0: // VERIFY
-                    case 0xB0: // SEEK
+                        if (_useNativeHeadJobs)
+                        {
+                            if (IsExecuteBufferJobTracked(slot, job))
+                            {
+                                continue;
+                            }
+
+                            QueueExecuteBufferJob(slot, job, track, sector);
+                            return;
+                        }
+
                         ok = _mechanism.TryReadSector(track, sector, out _);
                         if (ok)
                         {
@@ -1183,7 +1251,38 @@ namespace C64Emulator.Core
 
                         break;
 
-                    case 0xC0: // BUMP/RESTORE class jobs complete without a data buffer.
+                    case 0xB0: // SEEK through the open DOS ROM and disk VIA.
+                        if (_useNativeHeadJobs)
+                        {
+                            if (IsExecuteBufferJobTracked(slot, job))
+                            {
+                                continue;
+                            }
+
+                            QueueExecuteBufferJob(slot, job, track, sector);
+                            return;
+                        }
+
+                        ok = _mechanism.TryReadSector(track, sector, out _);
+                        if (ok)
+                        {
+                            PrimeDosDiskContextAfterShortcutSectorJob(track, sector);
+                        }
+
+                        break;
+
+                    case 0xC0: // BUMP/RESTORE drives the stepper through the open DOS ROM.
+                        if (_useNativeHeadJobs)
+                        {
+                            if (IsExecuteBufferJobTracked(slot, job))
+                            {
+                                continue;
+                            }
+
+                            QueueExecuteBufferJob(slot, job, track, sector);
+                            return;
+                        }
+
                         ok = true;
                         break;
 
@@ -1228,11 +1327,16 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Queues a DOS buffer execution job for the 1541 CPU/ROM path.
+        /// Queues a DOS job for the 1541 CPU/ROM path.
         /// </summary>
         private void QueueExecuteBufferJob(int slot, byte job, int track, int sector)
         {
-            if ((job & 0x01) != 0)
+            if ((job & 0x01) != 0 &&
+                !(_useNativeHeadJobs &&
+                  ((job & 0xF0) == 0x80 || (job & 0xF0) == 0x90 ||
+                   (job & 0xF0) == 0xA0 ||
+                   (job & 0xF0) == 0xB0 ||
+                   (job & 0xF0) == 0xC0)))
             {
                 _ram[slot & DriveRamMask] = 0x0F;
                 _lastJobQueueDebug = string.Format("#{0}:{1:X2}@{2}/{3}:DRV", slot, job, track, sector);
@@ -1244,13 +1348,21 @@ namespace C64Emulator.Core
                 return;
             }
 
+            // The synthesized DOS IRQ owns one job at a time. Keep another
+            // slot pending in RAM until the running ROM job writes its status.
+            if (_pendingExecuteBufferJobSlot != NoDosJobSlot ||
+                _activeExecuteBufferJobSlot != NoDosJobSlot)
+            {
+                return;
+            }
+
             _pendingExecuteBufferJobSlot = slot;
             _pendingExecuteBufferJobCode = job;
             _lastJobQueueDebug = string.Format("#{0}:{1:X2}@{2}/{3}:EXEC", slot, job, track, sector);
         }
 
         /// <summary>
-        /// Returns whether the DOS buffer execute job is already owned by the CPU/ROM path.
+        /// Returns whether this DOS job is already owned by the CPU/ROM path.
         /// </summary>
         private bool IsExecuteBufferJobTracked(int slot, byte job)
         {

@@ -78,21 +78,30 @@ namespace C64Emulator.Core
         /// <summary>
         /// Initializes a new Sid instance.
         /// </summary>
-        public Sid()
+        public Sid() : this(true)
+        {
+        }
+
+        public Sid(bool createAudioOutput)
         {
             for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
             {
                 _voices[voiceIndex] = new SidVoice((uint)(0x7FFFF8u ^ (uint)(voiceIndex * 0x1F1F1Fu)));
             }
 
-            try
+            if (createAudioOutput)
             {
-                _audioOutput = new SidAudioOutput(SampleRate);
+                try
+                {
+                    _audioOutput = new SidAudioOutput(SampleRate);
+                }
+                catch
+                {
+                    _audioOutput = null;
+                }
             }
-            catch
-            {
-                _audioOutput = null;
-            }
+
+            LocalAudioEnabled = createAudioOutput;
 
             Reset();
         }

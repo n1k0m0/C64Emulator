@@ -21,6 +21,10 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - **Easy installation** — a ready-to-use Windows installer handles the complete setup
 - **Easy ROM setup** — required C64 and 1541 ROMs are detected automatically; if they are missing, the emulator can download and verify the required ROM files for you
 
+## Experimental open C64 ROMs
+
+The repository includes the locally authored [Open Basic 64, Open Kernal 64, Open Character Rom 64, and an Open 1541 bootstrap](roms/README.md). `python roms/build.py` builds all four images without separately supplied BASIC or 1541 firmware. The set boots and passes headless BASIC and D64 loading/saving checks. Open Basic 64 supports five-byte floating-point arithmetic, nine-digit numeric output, `STR$`/`VAL`, the BASIC math functions, fractional `FOR/NEXT`, indexed `ON ... GOTO/GOSUB`, and `INPUT#`. TAP cassette pulse playback and recording are wired to the 6510 and CIA1 signal pins. The KERNAL has tested device 1 program LOAD/SAVE/VERIFY paths, including retry of a damaged first header or data copy and end-of-tape status, plus a synchronous PAL 300/600/1200/2400-baud RS-232 path with tested 8N1, 7E1, and 5O2 frames and status reporting. The character ROM has thin, independently drawn letters and nonblank graphics in every visible screen-code position. The 1541 ROM executes `$80` READ, `$90` WRITE, and `$A0` VERIFY as native CPU/VIA/GCR jobs, plus `$D0`/`$E0` buffer jobs, `$C0` head restore, and `$B0` geometric seek. Standard DOS commands and IEC file service still depend on the emulator. An optional local ROM ABI audit compares selected calls on the same 6510 core. Exact floating-point rounding and underflow bytes, general BASIC strings and arrays, full cassette behavior, the complete RS-232 driver, a complete 1541 DOS implementation, broad private ROM coverage, and hardware-exact timing remain incomplete; see the ROM overview for the tested scope.
+
 ## Screenshots
 
 | C64 boot screen | Main menu | Settings overlay | Controller mapping |
@@ -405,7 +409,7 @@ The drive activity footer can be toggled through the `DRIVE OVERLAY` entry in th
 
 ## Media Handling
 
-PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM. EasyFlash `.crt` images are inserted through the cartridge expansion-port path and can be enabled, disabled, saved, or ejected from the settings overlay. Other CRT cartridge types are not treated as generic cartridges yet; the current cartridge loader expects EasyFlash CRT images.
+PRG files are loaded directly into C64 memory. D64 files are mounted into an emulated 1541 drive and accessed through the IEC path instead of being injected into RAM. TAP v0/v1 files can be mounted for cycle-timed cassette pulse playback; Open KERNAL can LOAD/VERIFY standard program blocks and SAVE through an active TAP recording. EasyFlash `.crt` images are inserted through the cartridge expansion-port path and can be enabled, disabled, saved, or ejected from the settings overlay. Other CRT cartridge types are not treated as generic cartridges yet; the current cartridge loader expects EasyFlash CRT images.
 
 Drive 8 is the default drive. Drives 9, 10, and 11 can also be used from the emulator menu when media is mounted for them. Idle drives are kept quiet unless a disk image is mounted.
 

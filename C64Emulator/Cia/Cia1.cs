@@ -180,6 +180,12 @@ namespace C64Emulator.Core
             AdvanceInterruptReadHazardWindow();
         }
 
+        /// <summary>Signals a falling edge on the cassette-connected FLAG input.</summary>
+        public void PulseFlagInput()
+        {
+            RaiseTimerInterruptFlag(0x10);
+        }
+
         /// <summary>
         /// Handles the read operation.
         /// </summary>

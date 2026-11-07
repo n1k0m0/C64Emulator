@@ -45,6 +45,7 @@ namespace C64Emulator.Core
         private int _diskSwapCyclesRemaining;
         private bool _writeProtectLineHigh;
         private byte[] _trackBytes = Array.Empty<byte>();
+        private bool _trackDirty;
         private int _trackBitIndex;
         private int _trackBitCount;
         private int _trackByteCycles;
@@ -96,6 +97,7 @@ namespace C64Emulator.Core
                 return;
             }
 
+            FlushWrittenTrack();
             _currentHalfTrack = nextHalfTrack;
             ReloadTrackStream(true);
         }
@@ -153,6 +155,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void Reset()
         {
+            FlushWrittenTrack();
             _currentHalfTrack = DefaultHalfTrack;
             _stepperPhase = 0;
             _bitRateSelector = 3;
@@ -176,6 +179,7 @@ namespace C64Emulator.Core
             _readShiftRegister = 0;
             _writeShiftRegister = 0;
             _currentDiskBit = false;
+            _trackDirty = false;
             ReloadTrackStream();
         }
 
@@ -184,6 +188,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void MountDisk(D64Image diskImage)
         {
+            FlushWrittenTrack();
             _diskImage = diskImage;
             _diskSwapCyclesRemaining = DiskSwapCyclesDiskEjecting + DiskSwapCyclesNoDisk + DiskSwapCyclesDiskInserting;
             ReloadTrackStream();
@@ -194,6 +199,7 @@ namespace C64Emulator.Core
         /// </summary>
         public void EjectDisk()
         {
+            FlushWrittenTrack();
             _diskImage = null;
             _diskSwapCyclesRemaining = DiskSwapCyclesDiskEjecting + DiskSwapCyclesNoDisk;
             ReloadTrackStream();
@@ -254,8 +260,14 @@ namespace C64Emulator.Core
                 }
             }
 
+            bool nextMotorOn = (drivenValue & 0x04) != 0;
+            if (_motorOn && !nextMotorOn)
+            {
+                FlushWrittenTrack();
+            }
+
             _stepperPhase = nextPhase;
-            _motorOn = (drivenValue & 0x04) != 0;
+            _motorOn = nextMotorOn;
             _ledOn = (drivenValue & 0x08) != 0;
             _bitRateSelector = (drivenValue >> 5) & 0x03;
         }
@@ -327,7 +339,20 @@ namespace C64Emulator.Core
                 return;
             }
 
-            _writeMode = IsWriteModeActive(diskVia);
+            bool nextWriteMode = IsWriteModeActive(diskVia);
+            if (!nextWriteMode && _writeMode)
+            {
+                FlushWrittenTrack();
+            }
+            if (nextWriteMode && !_writeMode)
+            {
+                // The first byte clocked onto the track comes from the VIA's
+                // current output latch. Later byte-ready pulses let drive code
+                // supply the next byte before its disk position arrives.
+                _writeShiftRegister = diskVia.PortAOutput;
+            }
+
+            _writeMode = nextWriteMode;
 
             // D64 images are already stored as logical sector data. D64Image
             // expands that data into a GCR byte stream, not into raw magnetic
@@ -508,7 +533,21 @@ namespace C64Emulator.Core
             _syncActive = false;
             if (_writeMode)
             {
+                if (_diskImage != null && !_diskImage.IsReadOnly)
+                {
+                    // This is the rotating GCR stream shared with the mounted
+                    // image's track cache. A DOS job does not write sectors
+                    // here; only bytes clocked through the disk VIA change the
+                    // physical track representation.
+                    if (_trackBytes[byteIndex] != _writeShiftRegister)
+                    {
+                        _trackBytes[byteIndex] = _writeShiftRegister;
+                        _trackDirty = true;
+                    }
+                }
+
                 _writeShiftRegister = diskVia.PortAOutput;
+                PulseByteReady();
                 return;
             }
 
@@ -597,6 +636,7 @@ namespace C64Emulator.Core
                 return;
             }
 
+            FlushWrittenTrack();
             _currentHalfTrack = nextHalfTrack;
             ReloadTrackStream(true);
         }
@@ -613,6 +653,7 @@ namespace C64Emulator.Core
             int previousTrackByteCycleAccumulator = _trackByteCycleAccumulator;
 
             _trackBytes = Array.Empty<byte>();
+            _trackDirty = false;
             _trackBitIndex = 0;
             _trackBitCount = 0;
             _trackByteCycles = 32;
@@ -660,6 +701,22 @@ namespace C64Emulator.Core
                         previousTrackByteCycleAccumulator));
                 }
             }
+        }
+
+        /// <summary>
+        /// Commits only complete checksum-valid GCR sector records changed by
+        /// the VIA write stream. The image conversion does not inspect a DOS
+        /// job or a drive RAM buffer.
+        /// </summary>
+        private void FlushWrittenTrack()
+        {
+            if (!_trackDirty || _diskImage == null || _trackBytes.Length == 0)
+            {
+                return;
+            }
+
+            _diskImage.TryCommitWrittenGcrTrack(_currentHalfTrack, _trackBytes, out _);
+            _trackDirty = false;
         }
 
         /// <summary>

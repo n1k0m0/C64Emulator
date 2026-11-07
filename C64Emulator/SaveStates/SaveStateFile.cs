@@ -24,7 +24,7 @@ namespace C64Emulator.Core
     internal static class SaveStateFile
     {
         private const string Magic = "C64EMU-SAVE";
-        private const int Version = 2;
+        private const int Version = 4;
         private const string Extension = ".c64sav";
         private const string UnknownMediaDirectory = "Unknown";
 
@@ -159,7 +159,7 @@ namespace C64Emulator.Core
                 reader.ReadInt32();
                 reader.ReadInt32();
                 BinaryStateIO.ReadUIntArray(reader);
-                system.LoadState(reader);
+                system.LoadState(reader, version);
             }
         }
 

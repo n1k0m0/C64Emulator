@@ -67,14 +67,17 @@ namespace C64Emulator.Core
         private readonly IecDrive1541 _drive11;
         private readonly IecKernalBridge _iecKernalBridge;
         private readonly MediaManager _mediaManager;
+        private readonly Datassette _datassette;
         private const ushort KernalCursorBlinkSwitchAddress = 0x00CC;
         private readonly Dictionary<int, string> _mountedDrivePaths = new Dictionary<int, string>();
         private readonly HashSet<Key> _pressedHostKeys = new HashSet<Key>();
         private readonly HashSet<Key> _pressedKeyboardOnlyHostKeys = new HashSet<Key>();
         private readonly List<Key> _mappedHostKeyboardKeys = new List<Key>();
         private readonly Queue<byte> _queuedPetsciiInput = new Queue<byte>();
+        private int _queuedInputEmptyCycles;
         private readonly object _syncRoot = new object();
         private readonly C64AccuracyOptions _accuracyOptions;
+        private readonly string _openRomDirectory;
         private MountedMediaInfo _lastMountedMedia = MountedMediaInfo.None;
         private Key? _lastMirroredPollKey;
         private int _pollMirrorRepeatDelayCycles;
@@ -84,6 +87,7 @@ namespace C64Emulator.Core
         private bool _forceSoftwareIecTransport = true;
         private bool _enableInputInjection = true;
         private bool _catchingUpDrivesForIecAccess;
+        private bool _rs232RxDHigh = true;
         private CpuBusAccessPrediction _lastCpuBusPrediction = CpuBusAccessPrediction.None;
 
         /// <summary>
@@ -98,23 +102,37 @@ namespace C64Emulator.Core
         /// Handles the c64 system operation.
         /// </summary>
         public C64System(C64Model model, C64AccuracyOptions accuracyOptions)
+            : this(model, accuracyOptions, null)
+        {
+        }
+
+        public C64System(C64Model model, C64AccuracyOptions accuracyOptions, string openRomDirectory)
+            : this(model, accuracyOptions, openRomDirectory, true)
+        {
+        }
+
+        public C64System(C64Model model, C64AccuracyOptions accuracyOptions,
+            string openRomDirectory, bool createAudioOutput)
         {
             _model = model;
+            _openRomDirectory = openRomDirectory;
             _accuracyOptions = (accuracyOptions ?? C64AccuracyOptions.Compatibility).Clone();
             _frameBuffer = new FrameBuffer(model.VisibleWidth, model.VisibleHeight);
             _bus = new SystemBus();
             _cia1 = new Cia1(_accuracyOptions.CiaRevision);
             _cia2 = new Cia2(_accuracyOptions.CiaRevision);
-            _sid = new Sid();
+            _sid = new Sid(createAudioOutput);
             _iecBus = new IecBus();
             _iecKernalBridge = new IecKernalBridge();
             _mediaManager = new MediaManager();
+            _datassette = new Datassette(model.CpuHz);
             _vic = new Vic2(_bus, _frameBuffer, model);
             _cia2.AttachIecBus(_iecBus.CreatePort("C64"));
-            _drive8 = new IecDrive1541(8, _iecBus.CreatePort("Drive8"), _iecBus.CreatePort("Drive8-HW"));
-            _drive9 = new IecDrive1541(9, _iecBus.CreatePort("Drive9"), _iecBus.CreatePort("Drive9-HW"));
-            _drive10 = new IecDrive1541(10, _iecBus.CreatePort("Drive10"), _iecBus.CreatePort("Drive10-HW"));
-            _drive11 = new IecDrive1541(11, _iecBus.CreatePort("Drive11"), _iecBus.CreatePort("Drive11-HW"));
+            bool loadInstalledDriveRoms = string.IsNullOrWhiteSpace(_openRomDirectory);
+            _drive8 = new IecDrive1541(8, _iecBus.CreatePort("Drive8"), _iecBus.CreatePort("Drive8-HW"), loadInstalledDriveRoms, _openRomDirectory);
+            _drive9 = new IecDrive1541(9, _iecBus.CreatePort("Drive9"), _iecBus.CreatePort("Drive9-HW"), loadInstalledDriveRoms, _openRomDirectory);
+            _drive10 = new IecDrive1541(10, _iecBus.CreatePort("Drive10"), _iecBus.CreatePort("Drive10-HW"), loadInstalledDriveRoms, _openRomDirectory);
+            _drive11 = new IecDrive1541(11, _iecBus.CreatePort("Drive11"), _iecBus.CreatePort("Drive11-HW"), loadInstalledDriveRoms, _openRomDirectory);
             _cia2.BeforeIecPortAccess = CatchUpDrivesForIecPortAccess;
             _cia2.BeforeIecPortRead = CatchUpDrivesForIecPortRead;
             _cia2.ShouldCatchUpIecPortRead = ShouldCatchUpDrivesForIecPortRead;
@@ -136,7 +154,7 @@ namespace C64Emulator.Core
             ApplyIecTransportMode();
 
             _bus.InitializeMemory();
-            _bus.LoadRoms(null);
+            _bus.LoadRoms(null, _openRomDirectory);
             Reset();
         }
 
@@ -176,6 +194,8 @@ namespace C64Emulator.Core
                 MountedMediaInfo mountedMedia = _mediaManager.MountedMedia;
                 string mountedHostPath = mountedMedia.HostPath;
                 bool hadMountedMedia = mountedMedia.HasMedia && !string.IsNullOrWhiteSpace(mountedHostPath);
+                string tapePath = _datassette.Path;
+                bool hadTape = _datassette.HasTape;
                 EasyFlashCartridge easyFlash = _bus.EasyFlash;
                 string easyFlashPath = easyFlash != null ? easyFlash.SourcePath : string.Empty;
                 bool easyFlashEnabled = easyFlash != null && easyFlash.Enabled;
@@ -219,6 +239,11 @@ namespace C64Emulator.Core
                     resetMessage = "RESET MEDIA RELOADED";
                 }
 
+                if (hadTape)
+                {
+                    resetMessage = MountTape(tapePath);
+                }
+
                 return resetMessage;
             }
         }
@@ -232,6 +257,7 @@ namespace C64Emulator.Core
             {
                 _cia1.Reset();
                 _cia2.Reset();
+                _cia2.SetUserPortRxDHigh(_rs232RxDHigh, false);
                 _vic.Reset();
                 _sid.Reset();
                 _bus.EasyFlash?.Reset();
@@ -293,6 +319,8 @@ namespace C64Emulator.Core
                 writer.Write(_drive1541TargetCycles);
                 writer.Write(_drive1541ExecutedCycles);
                 writer.Write(_catchingUpDrivesForIecAccess);
+                _datassette.SaveState(writer);
+                writer.Write(_rs232RxDHigh);
             }
         }
 
@@ -300,6 +328,11 @@ namespace C64Emulator.Core
         /// Restores the complete emulated machine state from a savestate stream.
         /// </summary>
         public void LoadState(BinaryReader reader)
+        {
+            LoadState(reader, 4);
+        }
+
+        internal void LoadState(BinaryReader reader, int version)
         {
             lock (_syncRoot)
             {
@@ -324,6 +357,19 @@ namespace C64Emulator.Core
                 _drive1541TargetCycles = reader.ReadDouble();
                 _drive1541ExecutedCycles = reader.ReadDouble();
                 _catchingUpDrivesForIecAccess = reader.ReadBoolean();
+                if (version >= 3)
+                {
+                    _datassette.LoadState(reader, version);
+                    _rs232RxDHigh = reader.ReadBoolean();
+                }
+                else
+                {
+                    _datassette.Eject();
+                    _rs232RxDHigh = true;
+                }
+                _bus.CassettePlayPressed = _datassette.PlayPressed &&
+                    (_datassette.HasTape || _datassette.IsRecording);
+                _cia2.SetUserPortRxDHigh(_rs232RxDHigh, false);
                 RefreshMountedDriveDiskSets();
                 _iecKernalBridge.Reset();
             }
@@ -629,6 +675,17 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
+        /// Writes RAM behind the current CPU memory map for diagnostics and ROM tests.
+        /// </summary>
+        public void PokeRam(ushort address, byte value)
+        {
+            lock (_syncRoot)
+            {
+                _bus.WriteRam(address, value);
+            }
+        }
+
+        /// <summary>
         /// Gets the memory config debug info value.
         /// </summary>
         public string GetMemoryConfigDebugInfo()
@@ -750,6 +807,15 @@ namespace C64Emulator.Core
             {
                 IecDrive1541 drive = GetDrive(deviceNumber);
                 return drive != null ? drive.GetDebugInfo() : "NO DRIVE";
+            }
+        }
+
+        public bool HasDriveFirmware(int deviceNumber)
+        {
+            lock (_syncRoot)
+            {
+                IecDrive1541 drive = GetDrive(deviceNumber);
+                return drive != null && drive.Hardware.HasBootableRom;
             }
         }
 
@@ -909,7 +975,7 @@ namespace C64Emulator.Core
                 for (int index = 0; index < text.Length; index++)
                 {
                     byte count = _bus.CpuRead(KeyboardBufferCountAddress);
-                    if (count < KeyboardBufferCapacity)
+                    if (count < KeyboardBufferCapacity && _queuedPetsciiInput.Count == 0)
                     {
                         EnqueuePetsciiByte((byte)text[index]);
                     }
@@ -1223,6 +1289,11 @@ namespace C64Emulator.Core
                     return MountDiskToDrive(path, deviceNumber, true);
                 }
 
+                if (string.Equals(Path.GetExtension(path), ".tap", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MountTape(path);
+                }
+
                 MediaMountResult result = _mediaManager.Mount(path);
                 if (result.Success && result.AutoLoadProgramBytes != null)
                 {
@@ -1241,6 +1312,8 @@ namespace C64Emulator.Core
         {
             lock (_syncRoot)
             {
+                bool hadTape = _datassette.HasTape;
+                bool wasRecording = _datassette.IsRecording;
                 string message = _mediaManager.Eject();
                 _mountedDrivePaths.Clear();
                 _drive8.EjectDisk();
@@ -1248,9 +1321,75 @@ namespace C64Emulator.Core
                 _drive10.EjectDisk();
                 _drive11.EjectDisk();
                 _bus.EjectEasyFlash();
+                _datassette.Eject();
+                _bus.CassettePlayPressed = false;
                 _lastMountedMedia = MountedMediaInfo.None;
-                return message;
+                return wasRecording ? "TAP RECORDED" : hadTape ? "TAP EJECTED" : message;
             }
+        }
+
+        public string StartTapeRecording(string path)
+        {
+            lock (_syncRoot)
+            {
+                _datassette.StartRecording(path);
+                _bus.CassettePlayPressed = true;
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tap,
+                    "TAP REC", Path.GetFileNameWithoutExtension(path), path);
+                return "TAP RECORDING - RECORD PRESSED";
+            }
+        }
+
+        public string StopTapeRecording()
+        {
+            lock (_syncRoot)
+            {
+                string path = _datassette.StopRecording();
+                if (path.Length == 0) return "NO TAP RECORDING";
+                return MountTape(path);
+            }
+        }
+
+        public int RecordedTapePulseCount
+        {
+            get { lock (_syncRoot) { return _datassette.RecordedPulseCount; } }
+        }
+
+        public void SetTapePlayPressed(bool pressed)
+        {
+            lock (_syncRoot)
+            {
+                _datassette.PlayPressed = pressed &&
+                    (_datassette.HasTape || _datassette.IsRecording);
+                _bus.CassettePlayPressed = _datassette.PlayPressed;
+            }
+        }
+
+        public void RewindTape()
+        {
+            lock (_syncRoot)
+            {
+                _datassette.Rewind();
+            }
+        }
+
+        public int TapePulseIndex
+        {
+            get { lock (_syncRoot) { return _datassette.PulseIndex; } }
+        }
+
+        public void SetRs232RxDHigh(bool high)
+        {
+            lock (_syncRoot)
+            {
+                _rs232RxDHigh = high;
+                _cia2.SetUserPortRxDHigh(high);
+            }
+        }
+
+        public bool Rs232TxDHigh
+        {
+            get { lock (_syncRoot) { return _cia2.UserPortTxDHigh; } }
         }
 
         /// <summary>
@@ -1563,9 +1702,12 @@ namespace C64Emulator.Core
         private void ResetCore()
         {
             _bus.InitializeMemory();
-            _bus.LoadRoms(null);
+            _bus.CassettePlayPressed = _datassette.PlayPressed &&
+                (_datassette.HasTape || _datassette.IsRecording);
+            _bus.LoadRoms(null, _openRomDirectory);
             _cia1.Reset();
             _cia2.Reset();
+            _cia2.SetUserPortRxDHigh(_rs232RxDHigh, false);
             _vic.Reset();
             _sid.Reset();
             _drive8.Reset();
@@ -1574,11 +1716,18 @@ namespace C64Emulator.Core
             _drive11.Reset();
             _iecKernalBridge.Reset();
             _mountedDrivePaths.Clear();
-            _lastMountedMedia = MountedMediaInfo.None;
+            _lastMountedMedia = _datassette.HasTape
+                ? new MountedMediaInfo(MountedMediaKind.Tap, "TAP", Path.GetFileNameWithoutExtension(_datassette.Path), _datassette.Path)
+                : _datassette.IsRecording
+                    ? new MountedMediaInfo(MountedMediaKind.Tap, "TAP REC",
+                        Path.GetFileNameWithoutExtension(_datassette.RecordingPath),
+                        _datassette.RecordingPath)
+                    : MountedMediaInfo.None;
             _pressedHostKeys.Clear();
             _pressedKeyboardOnlyHostKeys.Clear();
             _mappedHostKeyboardKeys.Clear();
             _queuedPetsciiInput.Clear();
+            _queuedInputEmptyCycles = 0;
             _lastMirroredPollKey = null;
             _pollMirrorRepeatDelayCycles = 0;
             _drive1541TargetCycles = 0.0;
@@ -1887,6 +2036,10 @@ namespace C64Emulator.Core
             }
 
             _cia1.Tick();
+            if (_datassette.Tick(_bus.CassetteMotorOn, _bus.CassetteWriteHigh))
+            {
+                _cia1.PulseFlagInput();
+            }
             _cia2.Tick();
             _sid.Tick();
             DrainQueuedPetsciiInputIntoKeyboardBuffer();
@@ -1911,6 +2064,22 @@ namespace C64Emulator.Core
             }
 
             _bus.WriteRam(0x0090, 0x00);
+        }
+
+        private string MountTape(string path)
+        {
+            try
+            {
+                _datassette.Mount(path);
+                _bus.CassettePlayPressed = true;
+                _lastMountedMedia = new MountedMediaInfo(MountedMediaKind.Tap, "TAP",
+                    Path.GetFileNameWithoutExtension(path), path);
+                return "TAP MOUNTED - PLAY PRESSED";
+            }
+            catch (Exception)
+            {
+                return "INVALID TAP";
+            }
         }
 
         /// <summary>
@@ -2241,6 +2410,25 @@ namespace C64Emulator.Core
         /// </summary>
         private void DrainQueuedPetsciiInputIntoKeyboardBuffer()
         {
+            if (_queuedPetsciiInput.Count == 0)
+            {
+                _queuedInputEmptyCycles = 0;
+                return;
+            }
+
+            // The KERNAL shifts $0277 after decrementing $C6. Appending during
+            // those instructions loses a character. Wait until the queue has
+            // remained empty long enough for that shift to finish.
+            if (_bus.CpuRead(0x00C6) != 0)
+            {
+                _queuedInputEmptyCycles = 0;
+                return;
+            }
+            if (++_queuedInputEmptyCycles < 32)
+            {
+                return;
+            }
+            _queuedInputEmptyCycles = 0;
             while (_queuedPetsciiInput.Count > 0)
             {
                 if (!EnqueuePetsciiByte(_queuedPetsciiInput.Peek()))

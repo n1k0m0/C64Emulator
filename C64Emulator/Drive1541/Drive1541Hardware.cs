@@ -99,11 +99,31 @@ namespace C64Emulator.Core
         /// <summary>
         /// Handles the drive1541 hardware operation.
         /// </summary>
-        public Drive1541Hardware(IecBusPort iecPort, int deviceNumber)
+        public Drive1541Hardware(IecBusPort iecPort, int deviceNumber, bool loadInstalledRoms = true,
+            string openRomDirectory = null)
         {
             _bus = new Drive1541Bus(iecPort, deviceNumber);
             _cpu = new Cpu6510(_bus);
-            LoadAvailableRomHalves();
+            if (!string.IsNullOrWhiteSpace(openRomDirectory))
+            {
+                string path = Path.Combine(openRomDirectory, "open-1541-dos.bin");
+                byte[] rom = File.ReadAllBytes(path);
+                if (rom.Length != 0x4000)
+                {
+                    throw new InvalidDataException("Open 1541 DOS ROM must be exactly 16 KiB.");
+                }
+
+                _bus.LoadRom(rom);
+                _bus.UseNativeHeadJobs = true;
+            }
+            else if (loadInstalledRoms)
+            {
+                LoadAvailableRomHalves();
+            }
+            else
+            {
+                _bus.LoadRomHalves(null, null);
+            }
             Reset();
         }
 
@@ -292,7 +312,21 @@ namespace C64Emulator.Core
         {
             if (_runCpuContinuously || _customCodeActive || _bootCyclesRemaining > 0 || _bus.SerialOutputsEnabled)
             {
-                _bus.Tick();
+                // The installed DOS ROM owns its job queue while its CPU runs.
+                // Host-side job servicing can mistake the ROM's startup RAM
+                // test pattern at $00-$05 for disk commands and overwrite it
+                // before the ROM has initialized. Open DOS uses the explicit
+                // native-job dispatcher, and uploaded drive code retains the
+                // existing compatibility service.
+                if (_bus.HasLowerRomLoaded && _bus.HasUpperRomLoaded &&
+                    !_bus.UseNativeHeadJobs && !_customCodeActive)
+                {
+                    _bus.TickWithoutHostDosJobs();
+                }
+                else
+                {
+                    _bus.Tick();
+                }
                 if (_bus.ConsumeSoPulse())
                 {
                     _cpu.AssertSo();
@@ -528,7 +562,7 @@ namespace C64Emulator.Core
         }
 
         /// <summary>
-        /// Enters the ROM DOS job IRQ path for pending $D0/$E0 buffer execution jobs.
+        /// Enters the ROM DOS job IRQ path for pending ROM-handled jobs.
         /// </summary>
         private void TryEnterPendingExecuteBufferJob()
         {

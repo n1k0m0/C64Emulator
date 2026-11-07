@@ -134,7 +134,9 @@ namespace C64Emulator.Core
         private const byte CloseBase = 0xE0;
         private const byte OpenBase = 0xF0;
 
-        private const int EoiThresholdCycles = 140;
+        // The IEC listener waits about 200 microseconds before recognizing EOI.
+        // A shorter window treats a slow, otherwise valid inter-byte pause as EOI.
+        private const int EoiThresholdCycles = 240;
         private const int EoiAcknowledgeHoldCycles = 128;
         private const int ByteAcknowledgeHoldCycles = 32;
         private const int PayloadInitialByteGraceCycles = 0;
@@ -255,7 +257,8 @@ namespace C64Emulator.Core
         /// <summary>
         /// Handles the iec drive1541 operation.
         /// </summary>
-        public IecDrive1541(int deviceNumber, IecBusPort port, IecBusPort hardwarePort)
+        public IecDrive1541(int deviceNumber, IecBusPort port, IecBusPort hardwarePort,
+            bool loadInstalledRoms = true, string openRomDirectory = null)
         {
             _deviceNumber = deviceNumber;
             _port = port;
@@ -264,7 +267,8 @@ namespace C64Emulator.Core
             _receiver = new IecByteReceiver(_port);
             _sender = new IecByteSender(_port);
             _passiveReceiver = new IecByteReceiver(_port, false);
-            _hardware = new Drive1541Hardware(_hardwarePort, deviceNumber);
+            _hardware = new Drive1541Hardware(_hardwarePort, deviceNumber, loadInstalledRoms,
+                openRomDirectory);
             Reset();
         }
 
@@ -783,6 +787,31 @@ namespace C64Emulator.Core
             _channels.Remove(channel);
         }
 
+        private void CompleteWriteChannel(byte channel)
+        {
+            if (channel != 1 || !TryGetChannel(channel, out DriveChannel state) ||
+                state.WriteBuffer == null)
+            {
+                return;
+            }
+
+            if (_mountedImage == null)
+            {
+                SetStatus(new CommandResult(0x08, "74, DRIVE NOT READY,00,00"));
+                return;
+            }
+
+            string filename = DecodeFilename(state.FilenameBytes);
+            if (_mountedImage.TrySavePrgFile(filename, state.WriteBuffer.ToArray(), out string statusText))
+            {
+                SetStatus(new CommandResult(0x00, statusText));
+            }
+            else
+            {
+                SetStatus(new CommandResult(0x04, statusText));
+            }
+        }
+
         /// <summary>
         /// Handles the reset channels operation.
         /// </summary>
@@ -885,7 +914,11 @@ namespace C64Emulator.Core
             string normalizedFilename = filename ?? string.Empty;
             state.FilenameBytes = Encoding.ASCII.GetBytes(normalizedFilename);
             state.ResetReadSource();
-            state.WriteBuffer = null;
+            state.WriteBuffer = channel == 1 ? new List<byte>() : null;
+            if (channel == 1)
+            {
+                return SetStatus(new CommandResult(0x00, "00, OK,00,00"));
+            }
             PrimeDosOpenFileContext(channel);
 
             if (!TryPrepareStandardReadChannel(channel))
@@ -909,8 +942,9 @@ namespace C64Emulator.Core
                 ArmPendingCustomExecutionAfterCommandChannel();
             }
 
+            CompleteWriteChannel(channel);
             RemoveChannel(channel);
-            return SetStatus(new CommandResult(0x00, _statusText));
+            return SetStatus(new CommandResult(_statusCode, _statusText));
         }
 
         /// <summary>
@@ -1101,6 +1135,7 @@ namespace C64Emulator.Core
 
             if ((secondaryAddress & 0xF0) == CloseBase)
             {
+                CompleteWriteChannel(_channel);
                 RemoveChannel(_channel);
             }
         }
@@ -1124,8 +1159,17 @@ namespace C64Emulator.Core
             if (command == OpenBase || command == SecondaryBase)
             {
                 DriveChannel state = GetOrCreateChannel(_channel);
-                state.FilenameBytes = _listenBuffer.ToArray();
-                PrimeDosOpenFileContext(_channel);
+                if (command == SecondaryBase && _channel == 1 && state.WriteBuffer != null)
+                {
+                    state.WriteBuffer.AddRange(_listenBuffer);
+                }
+                else
+                {
+                    state.FilenameBytes = _listenBuffer.ToArray();
+                    state.WriteBuffer = command == OpenBase && _channel == 1
+                        ? new List<byte>() : null;
+                    PrimeDosOpenFileContext(_channel);
+                }
             }
 
             _listenBuffer.Clear();
@@ -2331,6 +2375,7 @@ namespace C64Emulator.Core
 
             if (_deviceListening && (command & 0xF0) == OpenBase)
             {
+                _listeningSecondaryAddress = command;
                 _channel = (byte)(command & 0x0F);
                 _payloadReceiveArmed = false;
                 _armPayloadReceiveAfterAttention = true;
@@ -2339,6 +2384,10 @@ namespace C64Emulator.Core
 
             if ((_deviceListening || _deviceTalking) && (command & 0xF0) == SecondaryBase)
             {
+                if (_deviceListening)
+                {
+                    _listeningSecondaryAddress = command;
+                }
                 _channel = (byte)(command & 0x0F);
                 if (_deviceListening)
                 {
@@ -2374,6 +2423,7 @@ namespace C64Emulator.Core
                     _attentionHandshakeState = AttentionHandshakeState.Idle;
                 }
 
+                CompleteWriteChannel(channel);
                 RemoveChannel(channel);
             }
         }
@@ -2384,8 +2434,19 @@ namespace C64Emulator.Core
         private void FinalizeReceivedPayload()
         {
             byte[] payload = _receiver.ConsumePayload();
-            GetOrCreateChannel(_channel).FilenameBytes = payload;
-            PrimeDosOpenFileContext(_channel);
+            DriveChannel channel = GetOrCreateChannel(_channel);
+            byte command = (byte)(_listeningSecondaryAddress & 0xF0);
+            if (command == SecondaryBase && _channel == 1 && channel.WriteBuffer != null)
+            {
+                channel.WriteBuffer.AddRange(payload);
+            }
+            else
+            {
+                channel.FilenameBytes = payload;
+                channel.WriteBuffer = command == OpenBase && _channel == 1
+                    ? new List<byte>() : null;
+                PrimeDosOpenFileContext(_channel);
+            }
             _payloadReceiveArmed = false;
             _presenceProbeHoldActive = false;
             _presenceProbeObservedClockLow = false;

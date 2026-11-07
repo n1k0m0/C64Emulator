@@ -35,6 +35,109 @@ namespace C64Emulator
         [STAThread]
         static void Main(string[] args)
         {
+            string openRomDirectory = args != null && args.Length >= 2 &&
+                string.Equals(args[0], "--open-roms", StringComparison.OrdinalIgnoreCase)
+                ? args[1] : null;
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--capture-open-rom-boot", StringComparison.OrdinalIgnoreCase))
+            {
+                int captureCycles = args.Length >= 4 && int.TryParse(args[3], out int parsedCaptureCycles)
+                    ? parsedCaptureCycles : 12000000;
+                OpenRomBootCapture.Run(args[1], args[2], captureCycles);
+                return;
+            }
+            if (args != null && args.Length >= 2 &&
+                string.Equals(args[0], "--verify-open-roms", StringComparison.OrdinalIgnoreCase))
+            {
+                string logPath = args.Length >= 3 ? args[2] :
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "open_rom_verification.log");
+                try
+                {
+                    File.WriteAllText(logPath, OpenRomVerifier.Run(args[1]));
+                }
+                catch (Exception ex)
+                {
+                    File.WriteAllText(logPath, "FAIL " + ex + Environment.NewLine);
+                    Environment.ExitCode = 1;
+                }
+
+                return;
+            }
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--audit-open-rom-abi", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    File.WriteAllText(args[2], OpenRomAbiAudit.Run(args[1]));
+                }
+                catch (Exception ex)
+                {
+                    File.WriteAllText(args[2], "FAIL " + ex + Environment.NewLine);
+                    Environment.ExitCode = 1;
+                }
+
+                return;
+            }
+            if (args != null && args.Length >= 4 &&
+                string.Equals(args[0], "--probe-open-rom-float", StringComparison.OrdinalIgnoreCase))
+            {
+                int cycles = args.Length >= 5 && int.TryParse(args[4], out int parsedProbeCycles)
+                    ? parsedProbeCycles : 600000;
+                File.WriteAllText(args[2], OpenRomAbiAudit.ProbeFloatingPoint(args[1], args[3], cycles));
+                return;
+            }
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--fuzz-open-rom-float", StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllText(args[2], OpenRomAbiAudit.FuzzFloatingPoint(args[1]));
+                return;
+            }
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--audit-open-rom-math-grid", StringComparison.OrdinalIgnoreCase))
+            {
+                int parallelism = args.Length >= 4 && int.TryParse(args[3], out int parsedGridParallelism)
+                    ? parsedGridParallelism : 2;
+                File.WriteAllText(args[2], OpenRomAbiAudit.AuditBasicMathGrid(args[1], parallelism));
+                return;
+            }
+            if (args != null && args.Length >= 4 &&
+                string.Equals(args[0], "--audit-open-rom-math-cases", StringComparison.OrdinalIgnoreCase))
+            {
+                int cycles = args.Length >= 5 && int.TryParse(args[4], out int parsedCaseCycles)
+                    ? parsedCaseCycles : 600000;
+                int parallelism = args.Length >= 6 && int.TryParse(args[5], out int parsedCaseParallelism)
+                    ? parsedCaseParallelism : 1;
+                File.WriteAllText(args[2], OpenRomAbiAudit.AuditBasicMathCases(args[1], args[3],
+                    cycles, parallelism));
+                return;
+            }
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--audit-open-rom-rnd", StringComparison.OrdinalIgnoreCase))
+            {
+                int steps = 64;
+                if (args.Length >= 4 && !int.TryParse(args[3], out steps))
+                    throw new ArgumentException("RND step count must be an integer");
+                File.WriteAllText(args[2], OpenRomAbiAudit.AuditRndSequences(args[1], steps));
+                return;
+            }
+            if (args != null && args.Length >= 3 &&
+                string.Equals(args[0], "--audit-open-rom-rs232", StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllText(args[2], OpenRomAbiAudit.AuditRs232BaudTimers(args[1]));
+                return;
+            }
+            if (args != null && args.Length >= 4 &&
+                string.Equals(args[0], "--probe-open-rom-command", StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllText(args[2], OpenRomAbiAudit.ProbeBasicCommand(args[1], args[3]));
+                return;
+            }
+            if (args != null && args.Length >= 4 &&
+                string.Equals(args[0], "--probe-open-rom-rnd-arg", StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllText(args[2], OpenRomAbiAudit.ProbeRndArgument(args[1], args[3]));
+                return;
+            }
             // Command-line modes are kept before any WinForms/OpenTK startup so
             // CI, release scripts, and VICE comparisons can run headlessly.
             if (args != null && args.Length >= 1 && string.Equals(args[0], "--self-test-cpu", StringComparison.OrdinalIgnoreCase))
@@ -260,14 +363,16 @@ namespace C64Emulator
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            if (!RomStartupDownloader.EnsureRequiredRoms())
+            if (!RomStartupDownloader.EnsureRequiredRoms(openRomDirectory != null, openRomDirectory))
             {
                 return;
             }
 
             try
             {
-                using (var window = new C64Window(C64Model.Pal, "C64 Emulator"))
+                using (var window = new C64Window(C64Model.Pal,
+                    openRomDirectory == null ? "C64 Emulator" : "C64 Emulator - Open ROMs",
+                    openRomDirectory))
                 {
                     StartupUpdateChecker.CheckForUpdatesOnStartup(window.RequestClose);
                     window.Run();

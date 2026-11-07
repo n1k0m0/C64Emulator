@@ -66,9 +66,28 @@ namespace C64Emulator
         /// <summary>
         /// Ensures all ROM files required by the emulator are present before the GUI starts.
         /// </summary>
-        public static bool EnsureRequiredRoms()
+        public static bool EnsureRequiredRoms(bool useOpenCharacterRom = false, string openRomDirectory = null)
         {
-            List<RequiredRom> missingRoms = GetMissingRoms();
+            if (!string.IsNullOrWhiteSpace(openRomDirectory))
+            {
+                string[] files = { "open-basic64.bin", "open-kernal64.bin",
+                    "open-character-rom64.bin" };
+                foreach (string file in files)
+                {
+                    if (!File.Exists(Path.Combine(openRomDirectory, file)))
+                    {
+                        MessageBox.Show(
+                            "The open ROM profile is missing " + file +
+                            ". Rebuild it with python roms/build.py.",
+                            "Open ROM profile incomplete",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+                        return false;
+                    }
+                }
+                return true;
+            }
+            List<RequiredRom> missingRoms = GetMissingRoms(useOpenCharacterRom, openRomDirectory);
             if (missingRoms.Count == 0)
             {
                 return true;
@@ -124,7 +143,7 @@ namespace C64Emulator
                 }
             }
 
-            if (RomPathResolver.HasCompleteRomSet())
+            if (GetMissingRoms(useOpenCharacterRom, openRomDirectory).Count == 0)
             {
                 return true;
             }
@@ -139,11 +158,19 @@ namespace C64Emulator
             return false;
         }
 
-        private static List<RequiredRom> GetMissingRoms()
+        private static List<RequiredRom> GetMissingRoms(bool useOpenCharacterRom, string openRomDirectory)
         {
             var missing = new List<RequiredRom>();
             foreach (RequiredRom rom in RequiredRoms)
             {
+                if (useOpenCharacterRom && rom.TargetFileName.StartsWith("1541-", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (useOpenCharacterRom && rom.TargetFileName == "c64-character.bin")
+                {
+                    continue;
+                }
                 if (RomPathResolver.FindFirstExisting(rom.CompatibleFileNames) == null)
                 {
                     missing.Add(rom);

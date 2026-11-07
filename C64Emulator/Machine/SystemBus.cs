@@ -51,6 +51,7 @@ namespace C64Emulator.Core
         private byte _lastCpuBusValue;
         private byte _lastVicBusValue;
         private byte _processorPortInputLatch;
+        private bool _cassettePlayPressed;
         private bool _baLow;
         private bool _aecLow;
         private bool _cpuPhi2CanAccess;
@@ -173,14 +174,34 @@ namespace C64Emulator.Core
         /// <summary>
         /// Loads roms.
         /// </summary>
-        public void LoadRoms(string basePath)
+        public void LoadRoms(string basePath, string openRomDirectory = null)
         {
+            if (!string.IsNullOrWhiteSpace(openRomDirectory))
+            {
+                LoadExactRom(Path.Combine(openRomDirectory, "open-basic64.bin"), _basicRom);
+                LoadExactRom(Path.Combine(openRomDirectory, "open-kernal64.bin"), _kernalRom);
+                LoadExactRom(Path.Combine(openRomDirectory, "open-character-rom64.bin"), _charRom);
+                return;
+            }
+
             var combinedRom = File.ReadAllBytes(RomPathResolver.ResolveRequired("c64-basic-kernal.bin", basePath));
             Array.Copy(combinedRom, 0x0000, _basicRom, 0x0000, 0x2000);
             Array.Copy(combinedRom, 0x2000, _kernalRom, 0x0000, 0x2000);
+            var standardCharRom = File.ReadAllBytes(RomPathResolver.ResolveRequired("c64-character.bin", basePath));
+            Array.Copy(standardCharRom, 0, _charRom, 0, Math.Min(_charRom.Length, standardCharRom.Length));
+        }
 
-            var charRom = File.ReadAllBytes(RomPathResolver.ResolveRequired("c64-character.bin", basePath));
-            Array.Copy(charRom, 0, _charRom, 0, Math.Min(_charRom.Length, charRom.Length));
+        private static void LoadExactRom(string path, byte[] destination)
+        {
+            byte[] data = File.ReadAllBytes(path);
+            if (data.Length != destination.Length)
+            {
+                throw new InvalidDataException(string.Format(
+                    "ROM {0} must contain exactly {1} bytes; found {2}.",
+                    path, destination.Length, data.Length));
+            }
+
+            Array.Copy(data, destination, data.Length);
         }
 
         /// <summary>
@@ -511,6 +532,22 @@ namespace C64Emulator.Core
         public byte ProcessorPortValue
         {
             get { return GetProcessorPortValue(); }
+        }
+
+        public bool CassettePlayPressed
+        {
+            get { return _cassettePlayPressed; }
+            set { _cassettePlayPressed = value; }
+        }
+
+        public bool CassetteMotorOn
+        {
+            get { return (_ram[0] & 0x20) != 0 && (_ram[1] & 0x20) == 0; }
+        }
+
+        public bool CassetteWriteHigh
+        {
+            get { return (GetProcessorPortValue() & 0x08) != 0; }
         }
 
         public bool IsIoAreaVisible
@@ -1040,6 +1077,10 @@ namespace C64Emulator.Core
             byte dataDirection = _ram[0];
             byte portData = _ram[1];
             byte floatingInputs = (byte)(0x17 | (_processorPortInputLatch & 0xC0));
+            if (_cassettePlayPressed)
+            {
+                floatingInputs &= 0xEF;
+            }
             return (byte)((portData & dataDirection) | (floatingInputs & ~dataDirection));
         }
 

@@ -79,6 +79,7 @@ namespace C64Emulator.Core
         private byte _ticksSinceInterruptRead;
         private bool _interruptSummaryPending;
         private byte _serialDataRegister;
+        private bool _userPortRxDHigh = true;
         private int _todCycleAccumulator;
         private byte _todTenths;
         private byte _todSeconds;
@@ -166,6 +167,7 @@ namespace C64Emulator.Core
             _ticksSinceInterruptRead = byte.MaxValue;
             _interruptSummaryPending = false;
             _serialDataRegister = 0;
+            _userPortRxDHigh = true;
             _todCycleAccumulator = 0;
             _todTenths = 0;
             _todSeconds = 0;
@@ -199,6 +201,23 @@ namespace C64Emulator.Core
             AdvanceInterruptReadHazardWindow();
         }
 
+        /// <summary>Drives user-port PB0 and the shared FLAG2 receive input.</summary>
+        public void SetUserPortRxDHigh(bool high, bool signalEdge = true)
+        {
+            if (_userPortRxDHigh && !high && signalEdge)
+            {
+                RaiseTimerInterruptFlag(0x10);
+            }
+
+            _userPortRxDHigh = high;
+        }
+
+        /// <summary>Returns the level on the user-port PA2 transmit pin.</summary>
+        public bool UserPortTxDHigh
+        {
+            get { return (ReadLocalPortA() & 0x04) != 0; }
+        }
+
         /// <summary>
         /// Handles the read operation.
         /// </summary>
@@ -209,7 +228,8 @@ namespace C64Emulator.Core
                 case 0x00:
                     return ReadPortA();
                 case 0x01:
-                    return ApplyTimerPortBOutputs(ReadPort(_registers[0x01], _registers[0x03], 0xFF));
+                    return ApplyTimerPortBOutputs(ReadPort(_registers[0x01], _registers[0x03],
+                        _userPortRxDHigh ? (byte)0xFF : (byte)0xFE));
                 case 0x04:
                     return ReadVisibleTimerLow(_timerACounter, _timerAReadSubtract);
                 case 0x05:

@@ -40,6 +40,7 @@ namespace C64Emulator.Core
             0x09, 0x19, 0x1A, 0x1B,
             0x0D, 0x1D, 0x1E, 0x15
         };
+        private static readonly sbyte[] GcrDecodeTable = BuildGcrDecodeTable();
         private static readonly int[] TrackStartSectorOffsets = BuildTrackStartSectorOffsets();
         private readonly byte[] _data;
         private readonly byte[] _errorInfo;
@@ -481,6 +482,360 @@ namespace C64Emulator.Core
             Array.Copy(sectorBytes, 0, _data, offset, SectorSize);
             _trackStreamCache.Remove(track);
             return true;
+        }
+
+        /// <summary>
+        /// Imports complete, checksum-valid sector records from a track whose
+        /// GCR bytes were actually clocked through the disk VIA. The D64
+        /// image stores logical sectors, so unrelated raw formatting cannot
+        /// be represented here. No DOS job or RAM buffer is inspected.
+        /// </summary>
+        public bool TryCommitWrittenGcrTrack(int halfTrack, byte[] trackBytes, out int committedSectors)
+        {
+            committedSectors = 0;
+            int track = HalfTrackToTrack(halfTrack);
+            if (IsReadOnly || trackBytes == null || trackBytes.Length == 0 ||
+                track < 1 || track > TrackCount || string.IsNullOrWhiteSpace(HostPath) ||
+                !File.Exists(HostPath))
+            {
+                return false;
+            }
+
+            var updates = new Dictionary<int, byte[]>();
+            byte[] header = new byte[8];
+            byte[] record = new byte[260];
+            for (int position = 0; position < trackBytes.Length; position++)
+            {
+                if (!IsGcrSyncEnd(trackBytes, position) ||
+                    !TryDecodeGcrGroup(trackBytes, position, header, 0) ||
+                    !TryDecodeGcrGroup(trackBytes, position + 5, header, 4) ||
+                    header[0] != 0x08 || header[3] != track ||
+                    header[6] != 0x0F || header[7] != 0x0F ||
+                    header[1] != (byte)(header[2] ^ header[3] ^ header[4] ^ header[5]) ||
+                    !TryGetSectorOffset(track, header[2], out int sectorOffset))
+                {
+                    continue;
+                }
+
+                for (int distance = 10; distance < 100; distance++)
+                {
+                    int candidate = (position + distance) % trackBytes.Length;
+                    if (!IsGcrSyncEnd(trackBytes, candidate))
+                    {
+                        continue;
+                    }
+                    // A write splice can leave the old data SYNC before a
+                    // newly written SYNC. Try each candidate until one
+                    // passes the GCR and XOR checks.
+                    bool valid = true;
+                    for (int group = 0; group < 65; group++)
+                    {
+                        if (!TryDecodeGcrGroup(trackBytes, candidate + group * 5,
+                            record, group * 4))
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (!valid || record[0] != 0x07 || record[258] != 0 || record[259] != 0)
+                    {
+                        continue;
+                    }
+
+                    byte checksum = 0;
+                    bool changed = false;
+                    for (int index = 0; index < SectorSize; index++)
+                    {
+                        checksum ^= record[index + 1];
+                        changed |= _data[sectorOffset + index] != record[index + 1];
+                    }
+                    if (checksum != record[257])
+                    {
+                        continue;
+                    }
+                    if (changed)
+                    {
+                        byte[] sectorBytes = new byte[SectorSize];
+                        Array.Copy(record, 1, sectorBytes, 0, SectorSize);
+                        updates[sectorOffset] = sectorBytes;
+                    }
+                    break;
+                }
+            }
+
+            if (updates.Count == 0)
+            {
+                return true;
+            }
+
+            byte[] newData = (byte[])_data.Clone();
+            byte[] newErrors = _errorInfo == null ? null : (byte[])_errorInfo.Clone();
+            foreach (KeyValuePair<int, byte[]> update in updates)
+            {
+                Array.Copy(update.Value, 0, newData, update.Key, SectorSize);
+                if (newErrors != null)
+                {
+                    newErrors[update.Key / SectorSize] = 0x01;
+                }
+            }
+
+            string temporaryPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(HostPath)),
+                "." + Path.GetFileName(HostPath) + ".gcr-write-" +
+                Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.None))
+                {
+                    stream.Write(newData, 0, newData.Length);
+                    if (newErrors != null)
+                    {
+                        stream.Write(newErrors, 0, newErrors.Length);
+                    }
+                    stream.Flush(true);
+                }
+
+                File.Replace(temporaryPath, HostPath, null);
+                Array.Copy(newData, _data, _data.Length);
+                if (newErrors != null)
+                {
+                    Array.Copy(newErrors, _errorInfo, _errorInfo.Length);
+                }
+                _trackStreamCache[track] = trackBytes;
+                _entries.Clear();
+                _entries.AddRange(ReadDirectoryEntries());
+                committedSectors = updates.Count;
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                try
+                {
+                    if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                return false;
+            }
+        }
+
+        private static bool IsGcrSyncEnd(byte[] trackBytes, int position)
+        {
+            int length = trackBytes.Length;
+            if (trackBytes[position] == 0xFF)
+            {
+                return false;
+            }
+            for (int preceding = 1; preceding <= 5; preceding++)
+            {
+                if (trackBytes[(position - preceding + length) % length] != 0xFF)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryDecodeGcrGroup(byte[] trackBytes, int position,
+            byte[] output, int outputOffset)
+        {
+            ulong packed = 0;
+            for (int index = 0; index < 5; index++)
+            {
+                packed = (packed << 8) |
+                    trackBytes[(position + index) % trackBytes.Length];
+            }
+            for (int symbol = 0; symbol < 8; symbol++)
+            {
+                int nibble = GcrDecodeTable[(int)((packed >> (35 - symbol * 5)) & 0x1F)];
+                if (nibble < 0)
+                {
+                    return false;
+                }
+                if ((symbol & 1) == 0)
+                {
+                    output[outputOffset + symbol / 2] = (byte)(nibble << 4);
+                }
+                else
+                {
+                    output[outputOffset + symbol / 2] |= (byte)nibble;
+                }
+            }
+            return true;
+        }
+
+        private static sbyte[] BuildGcrDecodeTable()
+        {
+            var table = new sbyte[32];
+            Array.Fill(table, (sbyte)-1);
+            for (int nibble = 0; nibble < GcrEncodeTable.Length; nibble++)
+            {
+                table[GcrEncodeTable[nibble]] = (sbyte)nibble;
+            }
+            return table;
+        }
+
+        /// <summary>
+        /// Saves a PRG byte stream into the mounted image and its host file.
+        /// The byte stream includes the two-byte C64 load address.
+        /// </summary>
+        public bool TrySavePrgFile(string filename, byte[] fileBytes, out string statusText)
+        {
+            statusText = "74, DRIVE NOT READY,00,00";
+            if (IsReadOnly)
+            {
+                statusText = "26, WRITE PROTECT ON,00,00";
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(HostPath) || !File.Exists(HostPath))
+            {
+                return false;
+            }
+            string name = NormalizeFilename(filename);
+            int comma = name.IndexOf(',');
+            if (comma >= 0)
+            {
+                name = name.Substring(0, comma);
+            }
+            if (name.Length == 0 || name.Length > 16 || fileBytes == null || fileBytes.Length < 2)
+            {
+                statusText = "30, SYNTAX ERROR,00,00";
+                return false;
+            }
+            foreach (D64DirectoryEntry entry in _entries)
+            {
+                if (string.Equals(entry.NormalizedName, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    statusText = "63, FILE EXISTS,00,00";
+                    return false;
+                }
+            }
+
+            int directoryTrack = 18;
+            int directorySector = 1;
+            int directoryEntry = -1;
+            byte[] directoryBytes = null;
+            var visited = new HashSet<int>();
+            while (directoryTrack != 0 && visited.Add((directoryTrack << 8) | directorySector))
+            {
+                if (!TryReadSector(directoryTrack, directorySector, out directoryBytes))
+                {
+                    break;
+                }
+                for (int index = 0; index < 8; index++)
+                {
+                    if (directoryBytes[index * 32 + 2] == 0)
+                    {
+                        directoryEntry = index;
+                        break;
+                    }
+                }
+                if (directoryEntry >= 0)
+                {
+                    break;
+                }
+                int nextTrack = directoryBytes[0];
+                directorySector = directoryBytes[1];
+                directoryTrack = nextTrack;
+            }
+            if (directoryEntry < 0)
+            {
+                statusText = "72, DISK FULL,00,00";
+                return false;
+            }
+
+            int needed = Math.Max(1, (fileBytes.Length + 253) / 254);
+            var sectors = new List<(int Track, int Sector)>(needed);
+            byte[] bam = ReadSector(18, 0);
+            for (int track = 1; track <= TrackCount && sectors.Count < needed; track++)
+            {
+                if (track == 18)
+                {
+                    continue;
+                }
+                int bamOffset = 4 + (track - 1) * 4;
+                for (int sector = 0; sector < GetSectorsPerTrack(track) && sectors.Count < needed; sector++)
+                {
+                    int bitmapOffset = bamOffset + 1 + sector / 8;
+                    if ((bam[bitmapOffset] & (1 << (sector % 8))) != 0)
+                    {
+                        sectors.Add((track, sector));
+                    }
+                }
+            }
+            if (sectors.Count != needed)
+            {
+                statusText = "72, DISK FULL,00,00";
+                return false;
+            }
+
+            byte[] backup = (byte[])_data.Clone();
+            string temporaryPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(HostPath)),
+                "." + Path.GetFileName(HostPath) + ".open-kernal64-" +
+                Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                int offset = 0;
+                for (int index = 0; index < sectors.Count; index++)
+                {
+                    var block = new byte[256];
+                    int count = Math.Min(254, fileBytes.Length - offset);
+                    bool final = index == sectors.Count - 1;
+                    block[0] = final ? (byte)0 : (byte)sectors[index + 1].Track;
+                    block[1] = final ? (byte)(count + 1) : (byte)sectors[index + 1].Sector;
+                    Array.Copy(fileBytes, offset, block, 2, count);
+                    if (!TryWriteSector(sectors[index].Track, sectors[index].Sector, block) ||
+                        !TryAllocateSector(sectors[index].Track, sectors[index].Sector))
+                    {
+                        throw new IOException("Could not allocate a D64 data sector.");
+                    }
+                    offset += count;
+                }
+
+                int entryOffset = directoryEntry * 32;
+                directoryBytes[entryOffset + 2] = 0x82;
+                directoryBytes[entryOffset + 3] = (byte)sectors[0].Track;
+                directoryBytes[entryOffset + 4] = (byte)sectors[0].Sector;
+                for (int index = 0; index < 16; index++)
+                {
+                    directoryBytes[entryOffset + 5 + index] =
+                        index < name.Length ? (byte)name[index] : (byte)0xA0;
+                }
+                directoryBytes[entryOffset + 30] = (byte)needed;
+                directoryBytes[entryOffset + 31] = (byte)(needed >> 8);
+                if (!TryWriteSector(directoryTrack, directorySector, directoryBytes))
+                {
+                    throw new IOException("Could not update the D64 directory.");
+                }
+                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None))
+                {
+                    stream.Write(_data, 0, _data.Length);
+                    if (_errorInfo != null)
+                    {
+                        stream.Write(_errorInfo, 0, _errorInfo.Length);
+                    }
+                    stream.Flush(true);
+                }
+                File.Replace(temporaryPath, HostPath, null);
+                _entries.Clear();
+                _entries.AddRange(ReadDirectoryEntries());
+                statusText = "00, OK,00,00";
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                Array.Copy(backup, _data, _data.Length);
+                _trackStreamCache.Clear();
+                try
+                {
+                    if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                statusText = "74, DRIVE NOT READY,00,00";
+                return false;
+            }
         }
 
         /// <summary>

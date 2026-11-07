@@ -23,6 +23,7 @@ namespace C64Emulator.Core
         None,
         Prg,
         D64,
-        EasyFlash
+        EasyFlash,
+        Tap
     }
 }
