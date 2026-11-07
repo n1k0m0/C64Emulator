@@ -38,17 +38,6 @@ namespace C64Emulator
             string openRomDirectory = args != null && args.Length >= 2 &&
                 string.Equals(args[0], "--open-roms", StringComparison.OrdinalIgnoreCase)
                 ? args[1] : null;
-            if (openRomDirectory == null)
-            {
-                // A persisted open ROM set choice skips the original ROM download
-                // check at startup and boots the bundled open ROMs instead.
-                EmulatorSettings startupSettings = EmulatorSettingsStore.Load();
-                if (string.Equals(startupSettings.RomSet, "Open", StringComparison.OrdinalIgnoreCase) &&
-                    RomStartupDownloader.BundledOpenRomsAvailable())
-                {
-                    openRomDirectory = RomStartupDownloader.GetBundledOpenRomDirectory();
-                }
-            }
             if (args != null && args.Length >= 3 &&
                 string.Equals(args[0], "--capture-open-rom-boot", StringComparison.OrdinalIgnoreCase))
             {
@@ -374,6 +363,11 @@ namespace C64Emulator
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            if (openRomDirectory == null)
+            {
+                openRomDirectory = ResolveStartupRomDirectory();
+            }
+
             if (!RomStartupDownloader.EnsureRequiredRoms(openRomDirectory != null, openRomDirectory))
             {
                 return;
@@ -414,6 +408,93 @@ namespace C64Emulator
 
                 Environment.ExitCode = 1;
             }
+        }
+
+        /// <summary>
+        /// Resolves the ROM directory for GUI startup. On the very first run it
+        /// asks once whether the original ROMs should be downloaded; a "no"
+        /// answer is persisted and makes the bundled open ROM set the default.
+        /// Returns the bundled open ROM directory or null for the original set.
+        /// </summary>
+        private static string ResolveStartupRomDirectory()
+        {
+            EmulatorSettings settings = EmulatorSettingsStore.Load();
+            bool originalsPresent = RomPathResolver.HasCompleteRomSet();
+            bool openReady = RomStartupDownloader.BundledOpenRomsAvailable();
+
+            if (string.IsNullOrEmpty(settings.RomDownloadChoice))
+            {
+                if (originalsPresent)
+                {
+                    // Existing installation with the original ROMs in place:
+                    // keep the previous behavior without asking.
+                    settings.RomDownloadChoice = "Yes";
+                }
+                else
+                {
+                    DialogResult answer = MessageBox.Show(
+                        "The open C64 ROM set is bundled with the emulator and is used by default.\r\n\r\n" +
+                        "Do you want to download the original C64 and 1541 ROMs from zimmers.net as well?\r\n\r\n" +
+                        "Please only download and use these ROM files if you are allowed to do so.",
+                        "C64 ROM files",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question);
+                    settings.RomDownloadChoice = answer == DialogResult.Yes ? "Yes" : "No";
+                    if (answer == DialogResult.Yes)
+                    {
+                        if (RomStartupDownloader.TryDownloadMissingOriginalRoms() &&
+                            RomPathResolver.HasCompleteRomSet())
+                        {
+                            originalsPresent = true;
+                            settings.RomSet = "Original";
+                        }
+                        else
+                        {
+                            // The download was cancelled: fall back to the
+                            // bundled open set instead of asking again.
+                            settings.RomSet = "Open";
+                        }
+                    }
+                    else
+                    {
+                        settings.RomSet = "Open";
+                    }
+                }
+
+                EmulatorSettingsStore.Save(settings);
+            }
+
+            bool wantsOpen = string.Equals(settings.RomSet, "Open", StringComparison.OrdinalIgnoreCase);
+            if (settings.RomDownloadChoice == "No")
+            {
+                // The original ROM download was declined: the bundled open set
+                // is the default. The originals only boot when they are fully
+                // present (for example after a later F10 switch download).
+                if (wantsOpen)
+                {
+                    if (openReady)
+                    {
+                        return RomStartupDownloader.GetBundledOpenRomDirectory();
+                    }
+                    if (originalsPresent)
+                    {
+                        settings.RomSet = "Original";
+                        EmulatorSettingsStore.Save(settings);
+                    }
+                }
+                else if (!originalsPresent && openReady)
+                {
+                    settings.RomSet = "Open";
+                    EmulatorSettingsStore.Save(settings);
+                    return RomStartupDownloader.GetBundledOpenRomDirectory();
+                }
+            }
+            else if (wantsOpen && openReady)
+            {
+                return RomStartupDownloader.GetBundledOpenRomDirectory();
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -51,6 +51,13 @@ namespace C64Emulator.Core
 
         public string RomSet { get; set; } = "Original";
 
+        /// <summary>
+        /// Remembers the one-time first-run answer to "download the original ROMs?".
+        /// Empty means the question has not been asked yet; "No" makes the
+        /// bundled open ROM set the default machine ROMs.
+        /// </summary>
+        public string RomDownloadChoice { get; set; } = string.Empty;
+
         public bool TurboMode { get; set; }
 
         public bool Fullscreen { get; set; }

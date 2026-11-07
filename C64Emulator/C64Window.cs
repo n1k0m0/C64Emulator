@@ -542,6 +542,7 @@ namespace C64Emulator
                 VideoZoomEnabled = _videoZoomEnabled,
                 ResetMode = _resetMode.ToString(),
                 RomSet = _romSet.ToString(),
+                RomDownloadChoice = _loadedSettings.RomDownloadChoice,
                 TurboMode = _turboMode,
                 Fullscreen = _windowFullscreen,
                 GamepadEnabled = _gamepadEnabled,
@@ -909,12 +910,14 @@ namespace C64Emulator
             UpdateNetworkSendFps();
             UpdateNetworkTrafficRates();
 
+            string romSetTitleSuffix = _romSet == RomSet.Open ? " - Open ROMs" : string.Empty;
             if (_networkMode == NetworkSessionMode.Host)
             {
                 // Host title intentionally shows network send FPS and render FPS, but not
                 // program counter/debug data, so users can see stream health at a glance.
                 Title = string.Format(
-                    "C64 Emulator SERVER - NET:{0} FPS PING:{1} RENDER:{2}",
+                    "C64 Emulator SERVER{0} - NET:{1} FPS PING:{2} RENDER:{3}",
+                    romSetTitleSuffix,
                     _networkSendFps,
                     FormatNetworkLatency(GetNetworkDisplayLatencyMilliseconds()),
                     FPS);
@@ -931,7 +934,8 @@ namespace C64Emulator
                 }
 
                 Title = string.Format(
-                    "C64 Emulator {0}{1:F2} MHz - PC:{2:X4} OPC:{3:X2} - FPS:{4}",
+                    "C64 Emulator{0} {1}{2:F2} MHz - PC:{3:X4} OPC:{4:X2} - FPS:{5}",
+                    romSetTitleSuffix,
                     _turboMode ? "TURBO " : string.Empty,
                     _smoothedMhz,
                     currentPc,
@@ -8492,8 +8496,15 @@ namespace C64Emulator
 
             if (targetRomSet == RomSet.Original && !RomPathResolver.HasCompleteRomSet())
             {
-                _overlayStatusText = "ORIGINAL ROMS MISSING";
-                return;
+                // The original ROMs are not on disk yet: offer the download
+                // dialog now and only continue with the switch after it
+                // delivered the complete set.
+                if (!RomStartupDownloader.TryDownloadMissingOriginalRoms() ||
+                    !RomPathResolver.HasCompleteRomSet())
+                {
+                    _overlayStatusText = "ROM DOWNLOAD CANCELLED";
+                    return;
+                }
             }
 
             _confirmationRomSetTarget = targetRomSet;

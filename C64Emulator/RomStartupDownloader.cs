@@ -153,6 +153,39 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Shows the download dialog for missing original ROM files and reports
+        /// whether the complete set is available afterwards.
+        /// </summary>
+        public static bool TryDownloadMissingOriginalRoms()
+        {
+            List<RequiredRom> missingRoms = GetMissingRoms(false, null);
+            if (missingRoms.Count == 0)
+            {
+                return true;
+            }
+
+            string targetDirectory = RomPathResolver.GetUserRomDirectory();
+            try
+            {
+                Directory.CreateDirectory(targetDirectory);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            using (var downloadForm = new RomDownloadForm(missingRoms, targetDirectory))
+            {
+                if (downloadForm.ShowDialog() != DialogResult.OK)
+                {
+                    return false;
+                }
+            }
+
+            return GetMissingRoms(false, null).Count == 0;
+        }
+
+        /// <summary>
         /// Returns the directory of the open ROM set shipped next to the executable.
         /// </summary>
         public static string GetBundledOpenRomDirectory()
