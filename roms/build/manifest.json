@@ -15,11 +15,11 @@
   "files": {
     "roms/open-basic64.bin": {
       "bytes": 8192,
-      "sha256": "95d3d296cdb9b73ae8b9ae3eb5b7bff449db3c03fe5b807e400e5490c08d434c"
+      "sha256": "34d607f52c2226a993b2b4a22ef3988dfdc1b9f4950ecfb1b2eabb191f1acdf4"
     },
     "roms/open-kernal64.bin": {
       "bytes": 8192,
-      "sha256": "9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc"
+      "sha256": "b70e8478a0dcb2c416a198285f132d898e6f11032d1a20d2c2bfdbd3fd4458ee"
     },
     "roms/open-character-rom64.bin": {
       "bytes": 4096,
@@ -31,7 +31,7 @@
     },
     "emulator-roms/c64-basic-kernal.bin": {
       "bytes": 16384,
-      "sha256": "4cf68aae240d554df618056b4b607b69a7e6b9c45a33b915ce3502e0c019d46e"
+      "sha256": "8e0a70ab061ada4f4ea1285040c8c4c6ca5a793fc0348a9fb0401f3d995e2a26"
     },
     "emulator-roms/c64-character.bin": {
       "bytes": 4096,
@@ -55,8 +55,8 @@
     "src\\kernal_mit.asm": "bcc56de55e2ebd5d973df1e19a3a2f5c986afc32d08669e49c9a21371f5b882a",
     "src\\keyboard_mit.asm": "0afbb0452c4cdaaf5188999804fdde26588713bf625f6a201fe995003b30973c",
     "src\\mit_basic\\basic64.cfg": "d3d26a8dfccd6c154f5ffd971aad9f23af26ebb45600bdf458d33ed13be8d320",
-    "src\\mit_basic\\basic64.s": "733288a7b91f3c97e1e43e7ca32676cf96f8fd66a5e57324a9979342cfff8e21",
-    "src\\mit_basic\\io_adapters.s": "ac7466df215a409caef7cd8cdfae241637230e90575f2732779a4cb74db8cd65",
+    "src\\mit_basic\\basic64.s": "11b84029ae6323524c03dff54dd8ea94ccae73d969d752988fe6aaaa91c70ed8",
+    "src\\mit_basic\\io_adapters.s": "f9a8037769eb468984bdaf1a2422ee50693a7c7fe992b34265ca194a561674a3",
     "src\\mit_basic\\platform_adapters.s": "cc4e08cdc26c68812f44f11706f0b4c3efdb7b1b7da859e8e8a4cfe4283feae3",
     "src\\system_mit.asm": "62deacc3c10c7d5229051ff55387e97ff0116a806f51adc6188be16976c3af76"
   }

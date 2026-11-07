@@ -451,7 +451,7 @@
       "pass_": true,
       "detail": {
         "code": 6,
-        "output": "?NOT INPUT FILE ERROR",
+        "output": "?NO INPUT FILE ERROR",
         "sp": 244
       }
     },
@@ -460,7 +460,7 @@
       "pass_": true,
       "detail": {
         "code": 7,
-        "output": "?NOT OUTPUT FILE ERROR",
+        "output": "?NO OUTPUT FILE ERROR",
         "sp": 244
       }
     },
@@ -469,7 +469,7 @@
       "pass_": true,
       "detail": {
         "code": 8,
-        "output": "?MISSING FILE NAME ERROR",
+        "output": "?MISSING FILE ERROR",
         "sp": 244
       }
     },
@@ -478,7 +478,7 @@
       "pass_": true,
       "detail": {
         "code": 9,
-        "output": "?ILLEGAL DEVICE NUMBER ERROR",
+        "output": "?BAD DEVICE ERROR",
         "sp": 244
       }
     },

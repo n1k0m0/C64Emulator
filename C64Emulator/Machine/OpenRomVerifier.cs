@@ -1446,14 +1446,14 @@ namespace C64Emulator.Core
                 }
                 Expect(system.Cpu.State != CpuState.Jammed, "CPU runs after BASIC start");
                 Expect(ScreenHasLine(system, "**** OPEN BASIC ****"), "own BASIC title");
-                Expect(ScreenHasLine(system, "38911 BYTES FREE"),
+                Expect(ScreenHasLine(system, "64K RAM SYSTEM  38911 BASIC BYTES FREE"),
                     "BASIC free-memory banner");
                 string titleRow = ReadScreenLine(system, 0);
                 int titleColumn = titleRow.IndexOf("**** OPEN BASIC ****", StringComparison.Ordinal);
                 Expect(titleColumn == 10 &&
-                    ReadScreenLine(system, 2).TrimStart().StartsWith("38911 BYTES FREE") &&
-                    ReadScreenLine(system, 4).StartsWith("READY."),
-                    "RC4 centered startup banner row layout");
+                    ReadScreenLine(system, 1).StartsWith("64K RAM SYSTEM  38911 BASIC BYTES FREE") &&
+                    ReadScreenLine(system, 2).StartsWith("READY."),
+                    "RC4 startup screen matches the original C64 layout");
                 Expect((system.Peek(0xD020) & 0x0F) == 0x0E &&
                     (system.Peek(0xD021) & 0x0F) == 0x06 &&
                     system.PeekRam(0x0286) == 0x0E,

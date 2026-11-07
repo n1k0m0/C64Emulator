@@ -9,17 +9,27 @@ und vollständige geänderte Quelldateien geliefert.
 
 ## Neu in RC4
 
-- **Start-Banner:** Open Basic zeigt das Boot-Banner im Original-Bannerformat
-  als `**** OPEN BASIC ****` (vorher `**** FREE BASIC 64 ****`) und zentriert
-  es wie das Original auf dem 40-Spalten-Screen: Die 20 Zeichen des Titels
-  starten exakt mittig, also mit zehn führenden Leerzeichen. Wie im Original
-  liegt die Zentrierung auf der BASIC-Seite: Der Cold-Start-Vektor `$A000`
-  springt in eine 13-Byte-Routine am Ende des BASIC-Haupt-ROMs
-  (`$BFF0–$BFFC`), die die zehn Leerzeichen über denselben Ausgabe-Kanal wie
-  den Bannertext ausgibt und dann `INIT` betritt. Der KERNAL bleibt gegenüber
-  RC3 bytegleich; auch Zeichensatz und 1541-Helfer sind unverändert. Der
-  Gesamtnachweis (14 isolierte CPU-/ROM-Suites, PAL- und NTSC-Nativlauf,
-  bytegleicher Doppel-Build) wurde mit dem neuen ROM-Satz wiederholt.
+- **Startbildschirm wie im Original:** Open Basic zeigt das Boot-Banner im
+  Original-Bannerformat als `**** OPEN BASIC ****` (vorher
+  `**** FREE BASIC 64 ****`) und zentriert es wie das Original auf dem
+  40-Spalten-Screen: Die 20 Zeichen des Titels starten exakt mittig, also mit
+  zehn führenden Leerzeichen. Wie im Original liegt die Zentrierung auf der
+  BASIC-Seite: Der Cold-Start-Vektor `$A000` springt in eine 13-Byte-Routine
+  am Ende des BASIC-Haupt-ROMs (`$BFF0–$BFFC`), die die zehn Leerzeichen über
+  denselben Ausgabe-Kanal wie den Bannertext ausgibt und dann `INIT` betritt.
+  Außerdem entspricht jetzt der übrige Startbildschirm dem Original: Zeile
+  zwei zeigt `64K RAM SYSTEM  38911 BASIC BYTES FREE`, Zeile drei `READY.` —
+  im RC3-Entwurf stand die Speichermeldung `38911 BYTES FREE` erst auf Zeile
+  drei und `READY.` auf Zeile fünf.
+- **I/O-Fehlermeldungen (bewusste Abweichung):** Um im 1216-Byte-Bereich
+  `$E000–$E4BF` Platz für die längere Startzeile zu schaffen, wurden vier
+  kurze eigene I/O-Fehlertexte gekürzt: `NOT INPUT FILE` → `NO INPUT FILE`,
+  `NOT OUTPUT FILE` → `NO OUTPUT FILE`, `MISSING FILE NAME` → `MISSING FILE`
+  und `ILLEGAL DEVICE NUMBER` → `BAD DEVICE`. Die Fehlernummern und alle
+  anderen Meldungen bleiben unverändert.
+- Zeichensatz und 1541-Helfer sind unverändert. Der Gesamtnachweis (14
+  isolierte CPU-/ROM-Suites, PAL- und NTSC-Nativlauf, bytegleicher
+  Doppel-Build) wurde mit dem neuen ROM-Satz wiederholt.
 
 ## Neu in RC3
 

@@ -6050,13 +6050,12 @@ QROOM:  LDWD    TXTTAB          ;PREPARE TO USE "REASON".
         JSR     STROUT
         JSR     SCRTCH          ;SET UP EVERYTHING ELSE.
         JMP     READY
-WORDS:  DT" BYTES FREE"
-        .BYTE $0D
+WORDS:  DT" BASIC BYTES FREE"
         .BYTE 0
-FREMES: 
+FREMES:
         DT"**** OPEN BASIC ****"
         .BYTE $0D
-        .BYTE $0D
+        DT"64K RAM SYSTEM "
         .BYTE 0
 
 

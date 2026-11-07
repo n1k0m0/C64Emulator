@@ -220,7 +220,7 @@ def main():
             assert s.cpu.sp==s.ready_sp,hex(s.cpu.sp)
         assert normalize(s.command('PRINT 2+2'))=='4'
         return {'code':code,'output':out,'sp':s.cpu.sp}
-    for code,message in [(1,'TOO MANY FILES'),(2,'FILE OPEN'),(3,'FILE NOT OPEN'),(4,'FILE NOT FOUND'),(5,'DEVICE NOT PRESENT'),(6,'NOT INPUT FILE'),(7,'NOT OUTPUT FILE'),(8,'MISSING FILE NAME'),(9,'ILLEGAL DEVICE NUMBER'),(0x1c,'VERIFY'),(0x1d,'LOAD'),(0x7f,'I/O')]:
+    for code,message in [(1,'TOO MANY FILES'),(2,'FILE OPEN'),(3,'FILE NOT OPEN'),(4,'FILE NOT FOUND'),(5,'DEVICE NOT PRESENT'),(6,'NO INPUT FILE'),(7,'NO OUTPUT FILE'),(8,'MISSING FILE'),(9,'BAD DEVICE'),(0x1c,'VERIFY'),(0x1d,'LOAD'),(0x7f,'I/O')]:
         check(f'I/O error {code}',lambda c=code,m=message:error_recover(c,m))
 
     def syntax(command,message):
