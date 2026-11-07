@@ -14,19 +14,22 @@ und vollständige geänderte Quelldateien geliefert.
   `**** FREE BASIC 64 ****`) und zentriert es wie das Original auf dem
   40-Spalten-Screen: Die 20 Zeichen des Titels starten exakt mittig, also mit
   zehn führenden Leerzeichen. Wie im Original liegt die Zentrierung auf der
-  BASIC-Seite: Der Cold-Start-Vektor `$A000` springt in eine 13-Byte-Routine
-  am Ende des BASIC-Haupt-ROMs (`$BFF0–$BFFC`), die die zehn Leerzeichen über
-  denselben Ausgabe-Kanal wie den Bannertext ausgibt und dann `INIT` betritt.
-  Außerdem entspricht jetzt der übrige Startbildschirm dem Original: Zeile
-  zwei zeigt `64K RAM SYSTEM  38911 BASIC BYTES FREE`, Zeile drei `READY.` —
-  im RC3-Entwurf stand die Speichermeldung `38911 BYTES FREE` erst auf Zeile
-  drei und `READY.` auf Zeile fünf.
-- **I/O-Fehlermeldungen (bewusste Abweichung):** Um im 1216-Byte-Bereich
-  `$E000–$E4BF` Platz für die längere Startzeile zu schaffen, wurden vier
-  kurze eigene I/O-Fehlertexte gekürzt: `NOT INPUT FILE` → `NO INPUT FILE`,
-  `NOT OUTPUT FILE` → `NO OUTPUT FILE`, `MISSING FILE NAME` → `MISSING FILE`
-  und `ILLEGAL DEVICE NUMBER` → `BAD DEVICE`. Die Fehlernummern und alle
-  anderen Meldungen bleiben unverändert.
+  BASIC-Seite: Der Cold-Start-Vektor `$A000` springt in eine 18-Byte-Routine
+  am Ende des BASIC-Haupt-ROMs (`$BFEB–$BFF8`), die zuerst einen
+  Wagenwechsel und dann die zehn Leerzeichen über denselben Ausgabe-Kanal wie
+  den Bannertext ausgibt und anschließend `INIT` betritt. Der gesamte
+  Startbildschirm entspricht damit Zeile für Zeile dem Original (gegen echte
+  COMMODORE-ROMs bytegenau abgeglichen): Zeile eins leer, Zeile zwei das
+  Banner, Zeile drei leer, Zeile vier ` 64K RAM SYSTEM  38911 BASIC BYTES
+  FREE` mit führendem Leerzeichen wie im Original, Zeile fünf leer,
+  Zeile sechs `READY.` und der Cursor auf Zeile sieben.
+- **I/O-Fehlermeldungen (bewusste Abweichung):** Um im BASIC-Haupt-ROM und im
+  1216-Byte-Bereich `$E000–$E4BF` Platz für die dem Original folgenden
+  Startzeilen zu schaffen, wurden fünf kurze eigene I/O-Fehlertexte gekürzt:
+  `NOT INPUT FILE` → `NO INPUT`, `NOT OUTPUT FILE` → `NO OUTPUT FILE`,
+  `MISSING FILE NAME` → `MISSING FILE`, `ILLEGAL DEVICE NUMBER` → `BAD DEVICE`
+  und `FILE NOT OPEN` → `NOT OPEN`. Die Fehlernummern und alle anderen
+  Meldungen bleiben unverändert.
 - Zeichensatz und 1541-Helfer sind unverändert. Der Gesamtnachweis (14
   isolierte CPU-/ROM-Suites, PAL- und NTSC-Nativlauf, bytegleicher
   Doppel-Build) wurde mit dem neuen ROM-Satz wiederholt.

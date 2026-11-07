@@ -424,7 +424,7 @@
       "pass_": true,
       "detail": {
         "code": 3,
-        "output": "?FILE NOT OPEN ERROR",
+        "output": "?NOT OPEN ERROR",
         "sp": 244
       }
     },
@@ -451,7 +451,7 @@
       "pass_": true,
       "detail": {
         "code": 6,
-        "output": "?NO INPUT FILE ERROR",
+        "output": "?NO INPUT ERROR",
         "sp": 244
       }
     },
@@ -570,7 +570,7 @@
       "pass_": true,
       "detail": {
         "command": "PRINT#1,\"HELLO\"",
-        "output": "?FILE NOT OPEN ERROR"
+        "output": "?NOT OPEN ERROR"
       }
     },
     {
@@ -578,7 +578,7 @@
       "pass_": true,
       "detail": {
         "statement": "GET#1,A$",
-        "output": "?FILE NOT OPEN ERROR IN 10",
+        "output": "?NOT OPEN ERROR IN 10",
         "sp": 244
       }
     },
@@ -587,7 +587,7 @@
       "pass_": true,
       "detail": {
         "statement": "INPUT#1,A$",
-        "output": "?FILE NOT OPEN ERROR IN 10",
+        "output": "?NOT OPEN ERROR IN 10",
         "sp": 244
       }
     },

@@ -14,7 +14,7 @@
       "actual": "150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       "expected": "150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       "passed": true,
-      "instructions": 709288
+      "instructions": 709103
     },
     {
       "name": "string array survives collection",
@@ -28,7 +28,7 @@
       "actual": "KEEP 150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       "expected": "KEEP 150ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       "passed": true,
-      "instructions": 746460
+      "instructions": 746273
     },
     {
       "name": "nested FOR loops",
@@ -40,7 +40,7 @@
       "actual": "150",
       "expected": "150",
       "passed": true,
-      "instructions": 157973
+      "instructions": 157788
     },
     {
       "name": "array survives new scalar variable",
@@ -53,7 +53,7 @@
       "actual": "42 99",
       "expected": "42 99",
       "passed": true,
-      "instructions": 117714
+      "instructions": 118308
     },
     {
       "name": "DEF FN restores parameter",
@@ -64,7 +64,7 @@
       "actual": "9 2",
       "expected": "9 2",
       "passed": true,
-      "instructions": 104109
+      "instructions": 104703
     },
     {
       "name": "TI$ sets actual jiffy counter",
@@ -75,7 +75,7 @@
       "actual": "223380",
       "expected": "223380",
       "passed": true,
-      "instructions": 81507,
+      "instructions": 82101,
       "jiffy_counter": 223380
     },
     {
@@ -88,7 +88,7 @@
       "actual": "B",
       "expected": "B",
       "passed": true,
-      "instructions": 82344
+      "instructions": 82938
     },
     {
       "name": "80 consecutive errors recover the stack",

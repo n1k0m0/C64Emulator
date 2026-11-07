@@ -218,25 +218,34 @@ einen erneuten Anwendbarkeitstest.
 
 | Emulator-Datei | SHA-256 |
 | --- | --- |
-| `c64-basic-kernal.bin` | `8e0a70ab061ada4f4ea1285040c8c4c6ca5a793fc0348a9fb0401f3d995e2a26` |
+| `c64-basic-kernal.bin` | `ab1a15a53df476f572ce8fae8a87d47308f747d7186ca026204d1284d88dd490` |
 | `c64-character.bin` | `ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb` |
 | `1541-c000-rom.bin` | `312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686` |
 | `1541-e000-rom.bin` | `a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc` |
 
 Der getrennte BASIC hat SHA-256
-`34d607f52c2226a993b2b4a22ef3988dfdc1b9f4950ecfb1b2eabb191f1acdf4`,
+`befc69e9a59f7e2f54df747a2984338a664e82e6c29854be2cf7f984ab199c79`,
 der getrennte KERNAL
-`b70e8478a0dcb2c416a198285f132d898e6f11032d1a20d2c2bfdbd3fd4458ee`.
+`d60108679472ef06bb7bfe196d282d41e814a404df15b91c18a329813114fb1e`.
 BASIC und KERNAL unterscheiden sich gegenüber RC3 durch das geänderte und
 wie im Original zentrierte Start-Banner `**** OPEN BASIC ****` (zehn
-führende Leerzeichen, ausgegeben von einer 13-Byte-Routine am Ende des
-BASIC-Haupt-ROMs, `$BFF0–$BFFC`, auf die der Cold-Start-Vektor `$A000` zeigt)
-und durch den dem Original folgenden Startbildschirm: Zeile zwei zeigt
-`64K RAM SYSTEM  38911 BASIC BYTES FREE`, Zeile drei `READY.`. Dafür wurden
-vier kurze eigene I/O-Fehlertexte im Bereich `$E000–$E4BF` gekürzt
-(`NOT INPUT FILE` → `NO INPUT FILE`, `NOT OUTPUT FILE` → `NO OUTPUT FILE`,
-`MISSING FILE NAME` → `MISSING FILE`, `ILLEGAL DEVICE NUMBER` → `BAD
-DEVICE`); Fehlernummern und alle anderen Meldungen bleiben unverändert.
+führende Leerzeichen, ausgegeben von einer 18-Byte-Routine am Ende des
+BASIC-Haupt-ROMs, `$BFEB–$BFF8`, auf die der Cold-Start-Vektor `$A000` zeigt)
+und durch den dem Original Zeile für Zeile folgenden Startbildschirm, der
+gegen echte COMMODORE-ROMs bytegenau abgeglichen wurde: Die Routine gibt
+zuerst einen Wagenwechsel aus, damit Zeile eins leer bleibt, dann die zehn
+Leerzeichen und das Banner auf Zeile zwei. Der KERNAL-String besteht aus
+zwei weiteren Wagenwechseln und ` 64K RAM SYSTEM ` mit führendem Leerzeichen
+wie im Original, die Fortsetzungs-String endet mit ` BASIC BYTES FREE` plus
+Wagenwechsel: Zeile drei bleibt leer, Zeile vier zeigt
+` 64K RAM SYSTEM  38911 BASIC BYTES FREE`, Zeile fünf bleibt leer und
+`READY.` steht auf Zeile sechs wie im Original. Dafür wurden fünf kurze
+eigene I/O-Fehlertexte gekürzt (`NO INPUT FILE` → `NO INPUT` im Bereich
+`$E000–$E4BF`, `FILE NOT OPEN` → `NOT OPEN` am Ende des BASIC-Haupt-ROMs,
+sowie gegenüber RC3 bereits `NOT INPUT FILE` → `NO INPUT FILE`,
+`NOT OUTPUT FILE` → `NO OUTPUT FILE`, `MISSING FILE NAME` → `MISSING FILE`
+und `ILLEGAL DEVICE NUMBER` → `BAD DEVICE`); Fehlernummern und alle anderen
+Meldungen bleiben unverändert.
 Der KERNAL-Helfer ab `$E4C0` bleibt bytegleich gegenüber RC3; auch
 Zeichensatz und 1541-Helfer sind unverändert.
 BASIC und KERNAL müssen als zusammengehöriges Paar eingesetzt werden:

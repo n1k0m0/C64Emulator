@@ -83,7 +83,7 @@ def main():
             ('GOTO 123',17,"UNDEF'D STATEMENT"),('PRINT 1/0',20,'DIVISION BY ZERO'),
             ('INPUT A',21,'ILLEGAL DIRECT'),('A=CHR$(65)',22,'TYPE MISMATCH'),
             ('CONT',26,"CAN'T CONTINUE"),('PRINT FNA(1)',27,"UNDEF'D FUNCTION"),
-            ('PRINT#1,"BAD"',3,'FILE NOT OPEN')]:
+            ('PRINT#1,"BAD"',3,'NOT OPEN')]:
         check(f'IERROR {code}: {message}',lambda c=command,n=code,m=message:error_vector(c,n,'?'+m+' ERROR'))
 
     def usr(doubles=False):

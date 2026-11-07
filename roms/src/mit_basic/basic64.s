@@ -6051,11 +6051,13 @@ QROOM:  LDWD    TXTTAB          ;PREPARE TO USE "REASON".
         JSR     SCRTCH          ;SET UP EVERYTHING ELSE.
         JMP     READY
 WORDS:  DT" BASIC BYTES FREE"
+        .BYTE $0D
         .BYTE 0
 FREMES:
         DT"**** OPEN BASIC ****"
         .BYTE $0D
-        DT"64K RAM SYSTEM "
+        .BYTE $0D
+        DT" 64K RAM SYSTEM "
         .BYTE 0
 
 
@@ -6068,13 +6070,19 @@ C64_BASIC_VECTOR_IMAGE:
 .include "platform_adapters.s"
 .include "io_adapters.s"
 
-; The original ROM centers its startup banner by embedding five leading
-; spaces in the 31-character title string. This port's 20-character title
-; needs 10 leading spaces for the same centered start on the 40-column
-; screen. The cold vector therefore enters here before INIT and prints the
-; spaces through the same channel STROUT uses for the banner text.
+; The original ROM's cold boot prints a leading CR (keeping screen row 0
+; empty), the centered title on row 1, a blank row 2, the memory line with a
+; leading space on row 3, a blank row 4, READY. on row 5 and leaves the
+; cursor on row 6 (verified byte-for-byte against the genuine ROMs, whose
+; kernal string is CR + 4 spaces + title + CR + CR + " 64K RAM SYSTEM  ").
+; This port's 20-character title needs 10 leading spaces for the same
+; centered start on the 40-column screen. The cold vector therefore enters
+; here before INIT and prints the CR and the spaces through the same
+; channel STROUT uses for the banner text.
 .SEGMENT "CODE"
 BANNER_SPACES:
+        LDA #$0D
+        JSR BASIC_CHROUT
         LDX #10
         LDA #$20
 BANNER_SPACE_NEXT:

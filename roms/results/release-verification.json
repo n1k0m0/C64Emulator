@@ -5,11 +5,11 @@
   "rom_files": {
     "roms/open-basic64.bin": {
       "bytes": 8192,
-      "sha256": "34d607f52c2226a993b2b4a22ef3988dfdc1b9f4950ecfb1b2eabb191f1acdf4"
+      "sha256": "befc69e9a59f7e2f54df747a2984338a664e82e6c29854be2cf7f984ab199c79"
     },
     "roms/open-kernal64.bin": {
       "bytes": 8192,
-      "sha256": "b70e8478a0dcb2c416a198285f132d898e6f11032d1a20d2c2bfdbd3fd4458ee"
+      "sha256": "d60108679472ef06bb7bfe196d282d41e814a404df15b91c18a329813114fb1e"
     },
     "roms/open-character-rom64.bin": {
       "bytes": 4096,
@@ -21,7 +21,7 @@
     },
     "emulator-roms/c64-basic-kernal.bin": {
       "bytes": 16384,
-      "sha256": "8e0a70ab061ada4f4ea1285040c8c4c6ca5a793fc0348a9fb0401f3d995e2a26"
+      "sha256": "ab1a15a53df476f572ce8fae8a87d47308f747d7186ca026204d1284d88dd490"
     },
     "emulator-roms/c64-character.bin": {
       "bytes": 4096,
@@ -233,7 +233,7 @@
     "windows_errors": 0,
     "windows_override_files_match": 16,
     "windows_desktop_run": false,
-    "native_assembly_sha256": "3859dcde21fabc3feb4d89557976af03d9411fe249df8b4b4f93fee713d9f02e"
+    "native_assembly_sha256": "8a5789f3dd610b12f82c7b52a96f0d155e04969b3ab8a0595d91c83be20fbf01"
   },
   "integrity": {
     "reference_checkout_clean": true,
@@ -272,8 +272,8 @@
       "sha256": "dbcd8dddd2bd96829ddf9b23d4ee287e2568e9cbd52943805babee1e4a29d0f2"
     },
     "results/tapes-ntsc/rom-save-with-eot.tap": {
-      "bytes": 270018,
-      "sha256": "c86bfef5c5d7c79d3b8abb056e6271e69eb294d233aae39771307c85a137fb97"
+      "bytes": 80051,
+      "sha256": "555283796ce85bf7355b0f2efc73130a94ff4cfc4a7460c894e4a6b37464d557"
     },
     "results/tapes-pal/independent-c2n-pal.tap": {
       "bytes": 101124,
@@ -293,18 +293,18 @@
     }
   },
   "report_sha256": {
-    "build/manifest.json": "0491dcf0d817a104ef0072d25bd2b4cb101b41beaccac812585eb96f95b00569",
-    "results/summary.json": "5441903207fccf8493aba29a5c8932183ffe56a3adc89b96ef02f725e37ee6a2",
-    "results/native-pal.json": "377ad904e98ed9fd79b89bf99efc23098e29ca289abeeff4e617969354f12b87",
-    "results/native-ntsc.json": "4e11c8c6bebbc2cd12db8052a9b20081a55135110b6687efb4d969efac27016c",
-    "results/native-emulator.json": "377ad904e98ed9fd79b89bf99efc23098e29ca289abeeff4e617969354f12b87",
-    "results/reproducible-build.json": "4764df7dacc58fc93d2883f44fd43e88de38bbd9e1e3418d01bee9bf7e036565",
+    "build/manifest.json": "664c0babe7c547a89578cd734e7b7efadd24ea8aaa9e59a2dea3e6d67c579028",
+    "results/summary.json": "2cb874c429a49e4075c78f927d3f989e38535c590dbc2aabc84689f3ff854987",
+    "results/native-pal.json": "0637a3712410fa165f11a77df3e54925ec30db37818700264f4f046df84ae67e",
+    "results/native-ntsc.json": "45f4415265d94875fc8747957c0f0b7410b3d40857fcdff97061836faab0a6be",
+    "results/native-emulator.json": "0637a3712410fa165f11a77df3e54925ec30db37818700264f4f046df84ae67e",
+    "results/reproducible-build.json": "09a2184b0330927c58c4b8f6b9f88409a09e4bfaec443d342a0d4f0c239eb330",
     "results/emulator-patch-verification.json": "b9b4a1c5c8f8df1a09230db023dd4b99cbfab0f5a287e7dd658e33b5a724e965",
-    "results/build-verification.json": "078654d9227f3a83cb3fce1bd8a42e57fe5624b33743331e8f6645612bdd65a9",
-    "results/native-build.log": "95b1ef01c0b3f7dd17becb5965944bb916ab1b10ff300c7ab992da491f23b305",
-    "results/windows-build.log": "5279bf2db2e074a4761de2dce21ab03ad934c84eaa2dd5d0e335edd5f8411650",
-    "results/logs/native-pal.log": "b878c82d904bcb426857d6508bdc933d774f24a36015b8c681d5c5d45976c436",
-    "results/logs/native-ntsc.log": "b5e4ab826b03a3d8a1c9e6a640d52597ad3b17771f9988c0a938c45f265b610d"
+    "results/build-verification.json": "08f8e1d16fcfedc96f87d600ed7c7f1f0b7b76dc37a8f9e33407fca64269c827",
+    "results/native-build.log": "add2e9ddab5f6f5763adb81e9a893556dd97ae26e963d732f1f76c9ea1eb4c11",
+    "results/windows-build.log": "aa3dcf771f9fc488fc5135903953f2881cdeedba9fd280929fd83801a3c944ff",
+    "results/logs/native-pal.log": "4fac3a484de55624ca4a66719f08be830f5fdbde7f4e176977d61a306c71bdde",
+    "results/logs/native-ntsc.log": "d9121450b5b2b0f418952ef5d645759c78a28e242bd19d71afe3c7135292748c"
   },
   "limits": {
     "physical_datasette_tested": false,

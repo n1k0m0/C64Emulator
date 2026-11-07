@@ -3,7 +3,7 @@
   "rom_sha256": {
     "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
     "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
-    "c64-basic-kernal.bin": "8e0a70ab061ada4f4ea1285040c8c4c6ca5a793fc0348a9fb0401f3d995e2a26",
+    "c64-basic-kernal.bin": "ab1a15a53df476f572ce8fae8a87d47308f747d7186ca026204d1284d88dd490",
     "c64-character.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
   },
   "emulator_source_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
@@ -23,7 +23,7 @@
   "pc": "EE3C",
   "sp": "E9",
   "public_entries": {
-    "FFD2": 2459,
+    "FFD2": 2463,
     "FFE7": 447,
     "FFCF": 6952,
     "FFE1": 1180,
@@ -247,7 +247,7 @@
       "Group": "boot",
       "Passed": true,
       "Expected": "OPEN BASIC banner and READY prompt",
-      "Output": "          **** OPEN BASIC ****\n64K RAM SYSTEM  38911 BASIC BYTES FREE\nREADY.\n",
+      "Output": "\n          **** OPEN BASIC ****\n\n 64K RAM SYSTEM  38911 BASIC BYTES FREE\n\nREADY.\n",
       "Recent": null
     },
     {

@@ -170,12 +170,12 @@
       }
     },
     {
-      "name": "IERROR 3: FILE NOT OPEN",
+      "name": "IERROR 3: NOT OPEN",
       "passed": true,
       "detail": {
         "command": "PRINT#1,\"BAD\"",
         "error_number": 3,
-        "output": "?FILE NOT OPEN ERROR"
+        "output": "?NOT OPEN ERROR"
       }
     },
     {

@@ -220,7 +220,7 @@ def main():
             assert s.cpu.sp==s.ready_sp,hex(s.cpu.sp)
         assert normalize(s.command('PRINT 2+2'))=='4'
         return {'code':code,'output':out,'sp':s.cpu.sp}
-    for code,message in [(1,'TOO MANY FILES'),(2,'FILE OPEN'),(3,'FILE NOT OPEN'),(4,'FILE NOT FOUND'),(5,'DEVICE NOT PRESENT'),(6,'NO INPUT FILE'),(7,'NO OUTPUT FILE'),(8,'MISSING FILE'),(9,'BAD DEVICE'),(0x1c,'VERIFY'),(0x1d,'LOAD'),(0x7f,'I/O')]:
+    for code,message in [(1,'TOO MANY FILES'),(2,'FILE OPEN'),(3,'NOT OPEN'),(4,'FILE NOT FOUND'),(5,'DEVICE NOT PRESENT'),(6,'NO INPUT'),(7,'NO OUTPUT FILE'),(8,'MISSING FILE'),(9,'BAD DEVICE'),(0x1c,'VERIFY'),(0x1d,'LOAD'),(0x7f,'I/O')]:
         check(f'I/O error {code}',lambda c=code,m=message:error_recover(c,m))
 
     def syntax(command,message):
@@ -232,13 +232,13 @@ def main():
     for command,message in [('SAVE 123','TYPE MISMATCH'),('LOAD "X",256','ILLEGAL QUANTITY'),('OPEN 256,8','ILLEGAL QUANTITY'),('CLOSE 1,2','SYNTAX'),('SAVE "X",8,1,2','SYNTAX'),('SYS -1','ILLEGAL QUANTITY'),('SYS 65536','ILLEGAL QUANTITY')]:
         check(command,lambda c=command,m=message:syntax(c,m))
 
-    check('PRINT# unopened channel',lambda:syntax('PRINT#1,"HELLO"','FILE NOT OPEN'))
+    check('PRINT# unopened channel',lambda:syntax('PRINT#1,"HELLO"','NOT OPEN'))
 
     def unopened_input(statement):
         s=SpySession(args.rom_dir)
         s.command('10 '+statement)
         out=normalize(s.command('RUN'))
-        assert out=='?FILE NOT OPEN ERROR IN 10',out
+        assert out=='?NOT OPEN ERROR IN 10',out
         assert s.cpu.sp==s.ready_sp,hex(s.cpu.sp)
         assert normalize(s.command('PRINT 4'))=='4'
         return {'statement':statement,'output':out,'sp':s.cpu.sp}
