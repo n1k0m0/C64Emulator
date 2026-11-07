@@ -10,12 +10,16 @@ und vollständige geänderte Quelldateien geliefert.
 ## Neu in RC4
 
 - **Start-Banner:** Open Basic zeigt das Boot-Banner im Original-Bannerformat
-  als `**** OPEN BASIC ****` (vorher `**** FREE BASIC 64 ****`). Die
-  Textänderung verschiebt nur die Code-Region hinter der Banner-Zeichenkette in
-  der BASIC-Erweiterung um drei Byte; Zeichensatz und 1541-Helfer bleiben
-  bytegleich gegenüber RC3. Der Gesamtnachweis (14 isolierte CPU-/ROM-Suites,
-  PAL- und NTSC-Nativlauf, bytegleicher Doppel-Build) wurde mit dem neuen
-  ROM-Satz wiederholt.
+  als `**** OPEN BASIC ****` (vorher `**** FREE BASIC 64 ****`) und zentriert
+  es wie das Original auf dem 40-Spalten-Screen: Die 20 Zeichen des Titels
+  starten exakt mittig, also mit zehn führenden Leerzeichen. Wie im Original
+  liegt die Zentrierung auf der BASIC-Seite: Der Cold-Start-Vektor `$A000`
+  springt in eine 13-Byte-Routine am Ende des BASIC-Haupt-ROMs
+  (`$BFF0–$BFFC`), die die zehn Leerzeichen über denselben Ausgabe-Kanal wie
+  den Bannertext ausgibt und dann `INIT` betritt. Der KERNAL bleibt gegenüber
+  RC3 bytegleich; auch Zeichensatz und 1541-Helfer sind unverändert. Der
+  Gesamtnachweis (14 isolierte CPU-/ROM-Suites, PAL- und NTSC-Nativlauf,
+  bytegleicher Doppel-Build) wurde mit dem neuen ROM-Satz wiederholt.
 
 ## Neu in RC3
 

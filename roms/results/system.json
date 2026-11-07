@@ -3,7 +3,7 @@
   "scope": "Independent 6502 CPU with explicit matrix/CIA status partner; no hardware timing claim",
   "rom_sha256": {
     "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
-    "open-basic64.bin": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5",
+    "open-basic64.bin": "95d3d296cdb9b73ae8b9ae3eb5b7bff449db3c03fe5b807e400e5490c08d434c",
     "open-character-rom64.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb",
     "open-kernal64.bin": "9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc"
   },

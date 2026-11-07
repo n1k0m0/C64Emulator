@@ -1450,10 +1450,10 @@ namespace C64Emulator.Core
                     "BASIC free-memory banner");
                 string titleRow = ReadScreenLine(system, 0);
                 int titleColumn = titleRow.IndexOf("**** OPEN BASIC ****", StringComparison.Ordinal);
-                Expect(titleColumn == 0 &&
+                Expect(titleColumn == 10 &&
                     ReadScreenLine(system, 2).TrimStart().StartsWith("38911 BYTES FREE") &&
                     ReadScreenLine(system, 4).StartsWith("READY."),
-                    "RC3 startup banner row layout");
+                    "RC4 centered startup banner row layout");
                 Expect((system.Peek(0xD020) & 0x0F) == 0x0E &&
                     (system.Peek(0xD021) & 0x0F) == 0x06 &&
                     system.PeekRam(0x0286) == 0x0E,

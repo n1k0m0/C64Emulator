@@ -5,7 +5,7 @@
   "rom_files": {
     "roms/open-basic64.bin": {
       "bytes": 8192,
-      "sha256": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5"
+      "sha256": "95d3d296cdb9b73ae8b9ae3eb5b7bff449db3c03fe5b807e400e5490c08d434c"
     },
     "roms/open-kernal64.bin": {
       "bytes": 8192,
@@ -21,7 +21,7 @@
     },
     "emulator-roms/c64-basic-kernal.bin": {
       "bytes": 16384,
-      "sha256": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9"
+      "sha256": "4cf68aae240d554df618056b4b607b69a7e6b9c45a33b915ce3502e0c019d46e"
     },
     "emulator-roms/c64-character.bin": {
       "bytes": 4096,
@@ -233,7 +233,7 @@
     "windows_errors": 0,
     "windows_override_files_match": 16,
     "windows_desktop_run": false,
-    "native_assembly_sha256": "38616ef0de02ac7eb1a1031f6f5c7679973816557ab27a6f440b316d4793ae91"
+    "native_assembly_sha256": "884bd93ce7a0b9daf59f2823725e1cb2c69af9aee9677a3112e3a3443b4d5d4b"
   },
   "integrity": {
     "reference_checkout_clean": true,
@@ -293,18 +293,18 @@
     }
   },
   "report_sha256": {
-    "build/manifest.json": "67040d1179b58f258a1f09981ce7696806e9c3b0b8bc17d8b2117976d3897a2a",
-    "results/summary.json": "f6da598eeb9902bd1a3c7dbc40dfeaacbfac084826aac429306d621fc84fd842",
-    "results/native-pal.json": "58a1191824ad47f45c550a770444c5319de2d4d538d434bb77f19ec00a64877f",
-    "results/native-ntsc.json": "aba206cb9ad6e84c877530fedfa3b2447f7730a17b708b94701493d84500c540",
-    "results/native-emulator.json": "58a1191824ad47f45c550a770444c5319de2d4d538d434bb77f19ec00a64877f",
-    "results/reproducible-build.json": "27cc59d8aab933e5fd36837371b785668b351234706e54cdae9c750afcd86c54",
+    "build/manifest.json": "f966a715480430c3aa604fc5455e8e60a7a9714ee5d8cee3d9b279dddcdfaa89",
+    "results/summary.json": "3f39ac808b78d8ec0afb2f5bf07faf333d5b10a8ada25fe20831c1813f7d76f6",
+    "results/native-pal.json": "d5c5a43179a321d634c67a0248103905d9ad804269e335c144977a5ab62458f6",
+    "results/native-ntsc.json": "2336689088a9347d7e19d35c2dd809449095c58c5ff62b1295971f91dc123c98",
+    "results/native-emulator.json": "d5c5a43179a321d634c67a0248103905d9ad804269e335c144977a5ab62458f6",
+    "results/reproducible-build.json": "024427d3fc1500fef87c367b08f5510b2cd680ad7b84f2a1110bcc7ddf7782df",
     "results/emulator-patch-verification.json": "b9b4a1c5c8f8df1a09230db023dd4b99cbfab0f5a287e7dd658e33b5a724e965",
-    "results/build-verification.json": "a1e21330cd32aba7ea97e52a7d435394dd95571068a96a598175e16468fa61f8",
-    "results/native-build.log": "1549cb866e7c54d3dca8c744be92fb06cab59edc69d9074ae8a9f901bf56e989",
-    "results/windows-build.log": "28c690c18c4514ec506f4df248be0ababd3f3e99b766ed92e142313bbb17c553",
-    "results/logs/native-pal.log": "513dfb1aa9baadfe843a16a9b2d9e2d5433ab02c038e1dc9a466b2260d875b28",
-    "results/logs/native-ntsc.log": "f3d7aab4642a7d0811cfd7370f790989e1cd4ebf3f94e7bf687c08aae60a2cda"
+    "results/build-verification.json": "22a0f07e4db9ec8b419df15085ee21cd2afd2ebda71f69c0b436f4fe74e0eb9e",
+    "results/native-build.log": "95b1ef01c0b3f7dd17becb5965944bb916ab1b10ff300c7ab992da491f23b305",
+    "results/windows-build.log": "8e5ebe76bfb647dd2dceec909e485fd118b61cd5fed0d795dffdfb5851466fb4",
+    "results/logs/native-pal.log": "94b2ecc9f1b97f8ea1b4328fa06d7fda3df112dc913818a89f001f7fae9161e7",
+    "results/logs/native-ntsc.log": "03eab9284489a4ab140f65d7fb7eb29a1d68a9f04d5f644e68e292df6117ac2e"
   },
   "limits": {
     "physical_datasette_tested": false,

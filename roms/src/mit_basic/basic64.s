@@ -945,7 +945,7 @@ FBUFFR=$0100
 ; SUBTTL        DISPATCH TABLES, RESERVED WORDS, AND ERROR TEXTS.
 
 .SEGMENT "CODE": absolute
-C64_COLD_VECTOR: .WORD INIT
+C64_COLD_VECTOR: .WORD BANNER_SPACES
 C64_WARM_VECTOR: .WORD WARM_C64
 .BYTE "CBMBASIC"
 
@@ -6068,3 +6068,18 @@ C64_BASIC_VECTOR_IMAGE:
 
 .include "platform_adapters.s"
 .include "io_adapters.s"
+
+; The original ROM centers its startup banner by embedding five leading
+; spaces in the 31-character title string. This port's 20-character title
+; needs 10 leading spaces for the same centered start on the 40-column
+; screen. The cold vector therefore enters here before INIT and prints the
+; spaces through the same channel STROUT uses for the banner text.
+.SEGMENT "CODE"
+BANNER_SPACES:
+        LDX #10
+        LDA #$20
+BANNER_SPACE_NEXT:
+        JSR BASIC_CHROUT
+        DEX
+        BNE BANNER_SPACE_NEXT
+        JMP INIT

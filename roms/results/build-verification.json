@@ -5,7 +5,7 @@
   "windows_application_compiled": true,
   "windows_override_files_match": 16,
   "windows_desktop_run": false,
-  "native_assembly_sha256": "38616ef0de02ac7eb1a1031f6f5c7679973816557ab27a6f440b316d4793ae91",
+  "native_assembly_sha256": "884bd93ce7a0b9daf59f2823725e1cb2c69af9aee9677a3112e3a3443b4d5d4b",
   "test_source_sha256": {
     "tests/basic/boot_contract.py": "ea5f0db754b1800b6db191f60c908bad89d3c631afc95f7da6a360543c18cd90",
     "tests/basic/compatibility_contract.py": "3f63dc18f52e3a37ceb3600ca656814f1a075bf2b3abc28beb8eb77c9159c5df",

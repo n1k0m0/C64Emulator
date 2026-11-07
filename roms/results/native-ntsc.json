@@ -3,7 +3,7 @@
   "rom_sha256": {
     "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
     "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
-    "c64-basic-kernal.bin": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9",
+    "c64-basic-kernal.bin": "4cf68aae240d554df618056b4b607b69a7e6b9c45a33b915ce3502e0c019d46e",
     "c64-character.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
   },
   "emulator_source_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
@@ -23,7 +23,7 @@
   "pc": "E95D",
   "sp": "E9",
   "public_entries": {
-    "FFD2": 2428,
+    "FFD2": 2438,
     "FFE7": 447,
     "FFCF": 6952,
     "FFE1": 1174,
@@ -232,7 +232,7 @@
       "Group": "boot",
       "Passed": true,
       "Expected": "OPEN BASIC banner and READY prompt",
-      "Output": "**** OPEN BASIC ****\n\n 38911 BYTES FREE\n\nREADY.\n",
+      "Output": "          **** OPEN BASIC ****\n\n 38911 BYTES FREE\n\nREADY.\n",
       "Recent": null
     },
     {

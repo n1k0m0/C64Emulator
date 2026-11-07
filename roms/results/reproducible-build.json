@@ -6,7 +6,7 @@
     {
       "file": "roms/open-basic64.bin",
       "identical": true,
-      "sha256": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5"
+      "sha256": "95d3d296cdb9b73ae8b9ae3eb5b7bff449db3c03fe5b807e400e5490c08d434c"
     },
     {
       "file": "roms/open-kernal64.bin",
@@ -26,7 +26,7 @@
     {
       "file": "emulator-roms/c64-basic-kernal.bin",
       "identical": true,
-      "sha256": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9"
+      "sha256": "4cf68aae240d554df618056b4b607b69a7e6b9c45a33b915ce3502e0c019d46e"
     },
     {
       "file": "emulator-roms/c64-character.bin",
