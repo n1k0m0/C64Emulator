@@ -12,7 +12,7 @@
       "actual": "14",
       "pass_": true,
       "prior_errors": [],
-      "steps": 61270,
+      "steps": 60613,
       "sp": 244
     },
     {
@@ -24,7 +24,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 65785,
+      "steps": 65128,
       "sp": 244
     },
     {
@@ -36,7 +36,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 63371,
+      "steps": 62714,
       "sp": 244
     },
     {
@@ -48,7 +48,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 63255,
+      "steps": 62598,
       "sp": 244
     },
     {
@@ -60,7 +60,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 68892,
+      "steps": 68235,
       "sp": 244
     },
     {
@@ -72,7 +72,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 67756,
+      "steps": 67099,
       "sp": 244
     },
     {
@@ -84,7 +84,7 @@
       "actual": "3 3 -1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 84173,
+      "steps": 83516,
       "sp": 244
     },
     {
@@ -96,7 +96,7 @@
       "actual": "?ILLEGAL QUANTITY ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 64888,
+      "steps": 64231,
       "sp": 244
     },
     {
@@ -108,7 +108,7 @@
       "actual": "?ILLEGAL QUANTITY ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 65342,
+      "steps": 64685,
       "sp": 244
     },
     {
@@ -120,7 +120,7 @@
       "actual": "?DIVISION BY ZERO ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 61032,
+      "steps": 60375,
       "sp": 244
     },
     {
@@ -132,7 +132,7 @@
       "actual": "?ILLEGAL QUANTITY ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 66816,
+      "steps": 66159,
       "sp": 244
     },
     {
@@ -144,7 +144,7 @@
       "actual": "1024",
       "pass_": true,
       "prior_errors": [],
-      "steps": 68281,
+      "steps": 67624,
       "sp": 244
     },
     {
@@ -156,7 +156,7 @@
       "actual": "-8",
       "pass_": true,
       "prior_errors": [],
-      "steps": 73026,
+      "steps": 72369,
       "sp": 244
     },
     {
@@ -168,7 +168,7 @@
       "actual": ".125",
       "pass_": true,
       "prior_errors": [],
-      "steps": 68759,
+      "steps": 68102,
       "sp": 244
     },
     {
@@ -180,7 +180,7 @@
       "actual": "1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 60035,
+      "steps": 59378,
       "sp": 244
     },
     {
@@ -192,7 +192,7 @@
       "actual": "3",
       "pass_": true,
       "prior_errors": [],
-      "steps": 75709,
+      "steps": 75052,
       "sp": 244
     },
     {
@@ -204,7 +204,7 @@
       "actual": "?ILLEGAL QUANTITY ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 69060,
+      "steps": 68403,
       "sp": 244
     },
     {
@@ -216,7 +216,7 @@
       "actual": "",
       "pass_": true,
       "prior_errors": [],
-      "steps": 52386,
+      "steps": 51729,
       "sp": 244
     },
     {
@@ -229,7 +229,7 @@
       "actual": "3.25",
       "pass_": true,
       "prior_errors": [],
-      "steps": 73326,
+      "steps": 72669,
       "sp": 244
     },
     {
@@ -242,7 +242,7 @@
       "actual": "12",
       "pass_": true,
       "prior_errors": [],
-      "steps": 73965,
+      "steps": 73308,
       "sp": 244
     },
     {
@@ -254,7 +254,7 @@
       "actual": "AB",
       "pass_": true,
       "prior_errors": [],
-      "steps": 65538,
+      "steps": 64881,
       "sp": 244
     },
     {
@@ -266,7 +266,7 @@
       "actual": "DE",
       "pass_": true,
       "prior_errors": [],
-      "steps": 65892,
+      "steps": 65235,
       "sp": 244
     },
     {
@@ -278,7 +278,7 @@
       "actual": "CDE",
       "pass_": true,
       "prior_errors": [],
-      "steps": 65483,
+      "steps": 64826,
       "sp": 244
     },
     {
@@ -290,7 +290,7 @@
       "actual": "BCD",
       "pass_": true,
       "prior_errors": [],
-      "steps": 68179,
+      "steps": 67522,
       "sp": 244
     },
     {
@@ -304,7 +304,7 @@
       "actual": "HELLO",
       "pass_": true,
       "prior_errors": [],
-      "steps": 82310,
+      "steps": 81653,
       "sp": 244
     },
     {
@@ -317,7 +317,7 @@
       "actual": "ABCD",
       "pass_": true,
       "prior_errors": [],
-      "steps": 70872,
+      "steps": 70215,
       "sp": 244
     },
     {
@@ -329,7 +329,7 @@
       "actual": "BC",
       "pass_": true,
       "prior_errors": [],
-      "steps": 75779,
+      "steps": 75122,
       "sp": 244
     },
     {
@@ -341,7 +341,7 @@
       "actual": "12 34",
       "pass_": true,
       "prior_errors": [],
-      "steps": 76589,
+      "steps": 75932,
       "sp": 244
     },
     {
@@ -354,7 +354,7 @@
       "actual": "A",
       "pass_": true,
       "prior_errors": [],
-      "steps": 74595,
+      "steps": 73938,
       "sp": 244
     },
     {
@@ -366,7 +366,7 @@
       "actual": "3",
       "pass_": true,
       "prior_errors": [],
-      "steps": 66283,
+      "steps": 65626,
       "sp": 244
     },
     {
@@ -378,7 +378,7 @@
       "actual": "67",
       "pass_": true,
       "prior_errors": [],
-      "steps": 74484,
+      "steps": 73827,
       "sp": 244
     },
     {
@@ -390,7 +390,7 @@
       "actual": "123",
       "pass_": true,
       "prior_errors": [],
-      "steps": 75046,
+      "steps": 74389,
       "sp": 244
     },
     {
@@ -402,7 +402,7 @@
       "actual": "?ILLEGAL QUANTITY ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 67146,
+      "steps": 66489,
       "sp": 244
     },
     {
@@ -414,7 +414,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 60858,
+      "steps": 60201,
       "sp": 244
     },
     {
@@ -426,7 +426,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 60867,
+      "steps": 60210,
       "sp": 244
     },
     {
@@ -439,7 +439,7 @@
       "actual": "1 2 3",
       "pass_": true,
       "prior_errors": [],
-      "steps": 81662,
+      "steps": 81005,
       "sp": 244
     },
     {
@@ -452,7 +452,7 @@
       "actual": ".1 .2 .3",
       "pass_": true,
       "prior_errors": [],
-      "steps": 93062,
+      "steps": 92405,
       "sp": 244
     },
     {
@@ -465,7 +465,7 @@
       "actual": "2 4 6",
       "pass_": true,
       "prior_errors": [],
-      "steps": 92098,
+      "steps": 91441,
       "sp": 244
     },
     {
@@ -479,7 +479,7 @@
       "actual": "SUB\nDONE",
       "pass_": true,
       "prior_errors": [],
-      "steps": 77494,
+      "steps": 76837,
       "sp": 244
     },
     {
@@ -492,7 +492,7 @@
       "actual": "YES",
       "pass_": true,
       "prior_errors": [],
-      "steps": 64928,
+      "steps": 64271,
       "sp": 244
     },
     {
@@ -505,7 +505,7 @@
       "actual": "",
       "pass_": true,
       "prior_errors": [],
-      "steps": 63747,
+      "steps": 63090,
       "sp": 244
     },
     {
@@ -518,7 +518,7 @@
       "actual": "YES",
       "pass_": true,
       "prior_errors": [],
-      "steps": 78678,
+      "steps": 78021,
       "sp": 244
     },
     {
@@ -533,7 +533,7 @@
       "actual": "OK",
       "pass_": true,
       "prior_errors": [],
-      "steps": 82628,
+      "steps": 81971,
       "sp": 244
     },
     {
@@ -548,7 +548,7 @@
       "actual": "OK",
       "pass_": true,
       "prior_errors": [],
-      "steps": 76839,
+      "steps": 76182,
       "sp": 244
     },
     {
@@ -562,7 +562,7 @@
       "actual": "12 34",
       "pass_": true,
       "prior_errors": [],
-      "steps": 83713,
+      "steps": 83056,
       "sp": 244
     },
     {
@@ -576,7 +576,7 @@
       "actual": "A:BPRINT",
       "pass_": true,
       "prior_errors": [],
-      "steps": 87676,
+      "steps": 87019,
       "sp": 244
     },
     {
@@ -590,7 +590,7 @@
       "actual": "7 7",
       "pass_": true,
       "prior_errors": [],
-      "steps": 85232,
+      "steps": 84575,
       "sp": 244
     },
     {
@@ -604,7 +604,7 @@
       "actual": "42",
       "pass_": true,
       "prior_errors": [],
-      "steps": 88658,
+      "steps": 88001,
       "sp": 244
     },
     {
@@ -618,7 +618,7 @@
       "actual": "42",
       "pass_": true,
       "prior_errors": [],
-      "steps": 97659,
+      "steps": 97002,
       "sp": 244
     },
     {
@@ -631,7 +631,7 @@
       "actual": "23",
       "pass_": true,
       "prior_errors": [],
-      "steps": 76946,
+      "steps": 76289,
       "sp": 244
     },
     {
@@ -645,7 +645,7 @@
       "actual": "ABC",
       "pass_": true,
       "prior_errors": [],
-      "steps": 92005,
+      "steps": 91348,
       "sp": 244
     },
     {
@@ -658,7 +658,7 @@
       "actual": "?BAD SUBSCRIPT ERROR",
       "pass_": true,
       "prior_errors": [],
-      "steps": 76454,
+      "steps": 75797,
       "sp": 244
     },
     {
@@ -672,7 +672,7 @@
       "actual": "10",
       "pass_": true,
       "prior_errors": [],
-      "steps": 93366,
+      "steps": 92709,
       "sp": 244
     },
     {
@@ -685,7 +685,7 @@
       "actual": "42",
       "pass_": true,
       "prior_errors": [],
-      "steps": 79007,
+      "steps": 78350,
       "sp": 244
     },
     {
@@ -697,7 +697,7 @@
       "actual": "-1 3",
       "pass_": true,
       "prior_errors": [],
-      "steps": 76004,
+      "steps": 75347,
       "sp": 244
     },
     {
@@ -709,7 +709,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 63038,
+      "steps": 62381,
       "sp": 244
     },
     {
@@ -721,7 +721,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 66825,
+      "steps": 66168,
       "sp": 244
     },
     {
@@ -733,7 +733,7 @@
       "actual": "-1",
       "pass_": true,
       "prior_errors": [],
-      "steps": 64045,
+      "steps": 63388,
       "sp": 244
     },
     {
@@ -746,7 +746,7 @@
       "actual": "000100",
       "pass_": true,
       "prior_errors": [],
-      "steps": 75905,
+      "steps": 75248,
       "sp": 244
     },
     {
@@ -758,7 +758,7 @@
       "actual": "A B",
       "pass_": true,
       "prior_errors": [],
-      "steps": 61726,
+      "steps": 61069,
       "sp": 244
     },
     {
@@ -770,7 +770,7 @@
       "actual": "A B",
       "pass_": true,
       "prior_errors": [],
-      "steps": 61647,
+      "steps": 60990,
       "sp": 244
     },
     {
@@ -783,7 +783,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 75774,
+      "steps": 75117,
       "sp": 244
     },
     {
@@ -797,7 +797,7 @@
       "actual": "0",
       "pass_": true,
       "prior_errors": [],
-      "steps": 69889,
+      "steps": 69232,
       "sp": 244
     }
   ]

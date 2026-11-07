@@ -6054,7 +6054,7 @@ WORDS:  DT" BYTES FREE"
         .BYTE $0D
         .BYTE 0
 FREMES: 
-        DT"**** FREE BASIC 64 ****"
+        DT"**** OPEN BASIC ****"
         .BYTE $0D
         .BYTE $0D
         .BYTE 0

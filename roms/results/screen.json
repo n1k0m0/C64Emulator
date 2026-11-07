@@ -1,5 +1,5 @@
 {
-  "rom": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/roms/open-kernal64.bin",
+  "rom": "K:\\KI-Projekte\\Anwendungsentwicklung mit KI\\C64Emulator\\roms\\build\\roms\\open-kernal64.bin",
   "quoted_control_cases": 62,
   "quote_toggle": "PASS",
   "return_resets_modes": "PASS",

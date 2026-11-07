@@ -1,17 +1,17 @@
 {
-  "version": "2026.11.06-rc3",
+  "version": "2026.11.07-rc4",
   "total_files": 8,
   "identical_files": 8,
   "files": [
     {
       "file": "roms/open-basic64.bin",
       "identical": true,
-      "sha256": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9"
+      "sha256": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5"
     },
     {
       "file": "roms/open-kernal64.bin",
       "identical": true,
-      "sha256": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+      "sha256": "9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc"
     },
     {
       "file": "roms/open-character-rom64.bin",
@@ -26,7 +26,7 @@
     {
       "file": "emulator-roms/c64-basic-kernal.bin",
       "identical": true,
-      "sha256": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5"
+      "sha256": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9"
     },
     {
       "file": "emulator-roms/c64-character.bin",

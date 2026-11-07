@@ -22,6 +22,85 @@ for (int i = 1; i < args.Length; i++)
 if (!new[] { "video", "machine", "basic", "control", "editor", "iec", "channel", "media", "data", "media-data", "dos", "dos-media", "tape", "tape-format", "tape-host", "serial", "all" }.Contains(suite)) throw new ArgumentException("Unknown suite: " + suite);
 Directory.SetCurrentDirectory(romDirectory);
 var loadedRomHashes = Directory.GetFiles(romDirectory, "*.bin").Order().ToDictionary(Path.GetFileName, p => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(p))).ToLowerInvariant());
+
+// The pinned verification core resolves ROM files through RomPathResolver, whose
+// search order gives the per-user ROM directory (the downloader target) priority
+// over the directory passed on the command line. When both locations contain a
+// complete set, the emulator would silently execute the user's files while this
+// report still records the hashes of the directory under test. Fail explicitly
+// before any test when the files that would actually be loaded differ.
+string HashOfBytes(byte[] data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+byte[] ReadRomFile(string name) => File.Exists(Path.Combine(romDirectory, name)) ? File.ReadAllBytes(Path.Combine(romDirectory, name)) : null;
+byte[] basicKernalExpected = ReadRomFile("c64-basic-kernal.bin");
+if (basicKernalExpected == null)
+{
+    byte[] openBasic = ReadRomFile("open-basic64.bin");
+    byte[] openKernal = ReadRomFile("open-kernal64.bin");
+    if (openBasic != null && openKernal != null)
+    {
+        basicKernalExpected = new byte[openBasic.Length + openKernal.Length];
+        Buffer.BlockCopy(openBasic, 0, basicKernalExpected, 0, openBasic.Length);
+        Buffer.BlockCopy(openKernal, 0, basicKernalExpected, openBasic.Length, openKernal.Length);
+    }
+}
+byte[] characterExpected = ReadRomFile("c64-character.bin") ?? ReadRomFile("open-character-rom64.bin");
+byte[] driveLowerExpected = ReadRomFile("1541-c000-rom.bin");
+byte[] driveUpperExpected = ReadRomFile("1541-e000-rom.bin");
+byte[] driveCombinedExpected = ReadRomFile("open-1541-dos.bin");
+if (driveCombinedExpected != null && driveCombinedExpected.Length >= 0x4000)
+{
+    if (driveLowerExpected == null)
+    {
+        driveLowerExpected = new byte[0x2000];
+        Buffer.BlockCopy(driveCombinedExpected, 0, driveLowerExpected, 0, 0x2000);
+    }
+    if (driveUpperExpected == null)
+    {
+        driveUpperExpected = new byte[0x2000];
+        Buffer.BlockCopy(driveCombinedExpected, 0x2000, driveUpperExpected, 0, 0x2000);
+    }
+}
+var resolutionIssues = new List<string>();
+void CheckRomResolution(string label, string[] compatibleNames, byte[] expected)
+{
+    if (expected == null)
+    {
+        return;
+    }
+    string resolved = RomPathResolver.FindFirstExisting(compatibleNames);
+    if (resolved == null)
+    {
+        resolutionIssues.Add(label + ": not found in any search directory; the emulator cannot start.");
+        return;
+    }
+    string resolvedHash = HashOfBytes(File.ReadAllBytes(resolved));
+    if (resolvedHash != HashOfBytes(expected))
+    {
+        resolutionIssues.Add(string.Format(
+            "{0}: the emulator would load {1} (sha256 {2}) instead of the ROM under test (sha256 {3}).",
+            label, resolved, resolvedHash, HashOfBytes(expected)));
+    }
+}
+CheckRomResolution("c64-basic-kernal.bin", new[] { "c64-basic-kernal.bin" }, basicKernalExpected);
+CheckRomResolution("c64-character.bin", new[] { "c64-character.bin" }, characterExpected);
+CheckRomResolution("1541-c000-rom.bin", new[] { "1541-c000-rom.bin", "1541-c000.325302-01.bin" }, driveLowerExpected);
+CheckRomResolution("1541-e000-rom.bin", new[] { "1541-e000-rom.bin", "1541-e000.901229-01.bin", "1541-e000.901229-05.bin", "1541-e000.901229-03.bin", "1540-e000.325303-01.bin" }, driveUpperExpected);
+if (resolutionIssues.Count > 0)
+{
+    Console.Error.WriteLine("ROM RESOLUTION MISMATCH: the emulator would not load the ROMs under test.");
+    foreach (string issue in resolutionIssues)
+    {
+        Console.Error.WriteLine("  - " + issue);
+    }
+    Console.Error.WriteLine("  Search directories (first match wins):");
+    foreach (string directory in RomPathResolver.GetSearchDirectories())
+    {
+        Console.Error.WriteLine("    " + directory);
+    }
+    Console.Error.WriteLine("  Rename or remove the conflicting ROM files, or rerun where no other ROM set is installed.");
+    return 3;
+}
+
 var options = C64AccuracyOptions.Compatibility;
 options.EnableLoadHack = false;
 options.EnableKernalIecHooks = false;
@@ -39,7 +118,7 @@ var tests = new List<TestResult>();
 string testGroup = "boot";
 session.Run(2_000_000);
 string boot = session.Output.ToString();
-Check(modelName + "_boot", boot.Contains("BASIC 64") && boot.Contains("READY."), "BASIC 64 banner and READY prompt", boot);
+Check(modelName + "_boot", boot.Contains("**** OPEN BASIC ****") && boot.Contains("READY."), "OPEN BASIC banner and READY prompt", boot);
 
 if (singleCommand != null)
 {

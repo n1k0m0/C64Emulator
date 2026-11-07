@@ -2,9 +2,9 @@
   "scope": "isolated CPU/ROM checks; see native-emulator.json for full emulator integration",
   "rom_sha256": {
     "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
-    "open-basic64.bin": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9",
+    "open-basic64.bin": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5",
     "open-character-rom64.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb",
-    "open-kernal64.bin": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+    "open-kernal64.bin": "9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc"
   },
   "passed_suites": 14,
   "total_suites": 14,
@@ -13,98 +13,98 @@
       "suite": "basic",
       "exit_code": 0,
       "passed": true,
-      "seconds": 10.949,
+      "seconds": 6.156,
       "log": "logs/basic.log"
     },
     {
       "suite": "basic-io",
       "exit_code": 0,
       "passed": true,
-      "seconds": 10.67,
+      "seconds": 6.61,
       "log": "logs/basic-io.log"
     },
     {
       "suite": "basic-stress",
       "exit_code": 0,
       "passed": true,
-      "seconds": 12.755,
+      "seconds": 7.906,
       "log": "logs/basic-stress.log"
     },
     {
       "suite": "basic-compatibility",
       "exit_code": 0,
       "passed": true,
-      "seconds": 5.255,
+      "seconds": 3.172,
       "log": "logs/basic-compatibility.log"
     },
     {
       "suite": "system",
       "exit_code": 0,
       "passed": true,
-      "seconds": 2.451,
+      "seconds": 1.75,
       "log": "logs/system.log"
     },
     {
       "suite": "kernal",
       "exit_code": 0,
       "passed": true,
-      "seconds": 3.265,
+      "seconds": 2.562,
       "log": "logs/kernal.log"
     },
     {
       "suite": "keyboard",
       "exit_code": 0,
       "passed": true,
-      "seconds": 4.072,
+      "seconds": 3.0,
       "log": "logs/keyboard.log"
     },
     {
       "suite": "screen",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.556,
+      "seconds": 0.438,
       "log": "logs/screen.log"
     },
     {
       "suite": "editor",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.728,
+      "seconds": 0.594,
       "log": "logs/editor.log"
     },
     {
       "suite": "editor-rc3",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.778,
+      "seconds": 0.578,
       "log": "logs/editor-rc3.log"
     },
     {
       "suite": "tape-header",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.176,
+      "seconds": 0.14,
       "log": "logs/tape-header.log"
     },
     {
       "suite": "rs232",
       "exit_code": 0,
       "passed": true,
-      "seconds": 8.126,
+      "seconds": 5.469,
       "log": "logs/rs232.log"
     },
     {
       "suite": "characters",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.083,
+      "seconds": 0.078,
       "log": "logs/characters.log"
     },
     {
       "suite": "drive",
       "exit_code": 0,
       "passed": true,
-      "seconds": 0.614,
+      "seconds": 0.422,
       "log": "logs/drive.log"
     }
   ]

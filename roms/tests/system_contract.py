@@ -211,7 +211,7 @@ def main():
             s.cpu.nmi()
         output = s._run(None, 1_000_000)
         s.m.keys.clear()
-        assert "READY." in output and "FREE BASIC" not in output
+        assert "READY." in output and "OPEN BASIC" not in output
         assert bytes(s.m[start:end]) == program
         assert (s.m[0xD018], s.m[0xD020], s.m[0xD021]) == (0x15, 14, 6)
         assert s.m[0xC6] == 0 and s.m[0xD4] == 0

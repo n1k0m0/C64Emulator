@@ -1,4 +1,4 @@
-# Validierung — C64 freie ROMs 2026.11.06-rc3
+# Validierung — C64 freie ROMs 2026.11.07-rc4
 
 ## Ergebnis und geprüfter Umfang
 
@@ -218,14 +218,16 @@ einen erneuten Anwendbarkeitstest.
 
 | Emulator-Datei | SHA-256 |
 | --- | --- |
-| `c64-basic-kernal.bin` | `c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5` |
+| `c64-basic-kernal.bin` | `9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9` |
 | `c64-character.bin` | `ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb` |
 | `1541-c000-rom.bin` | `312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686` |
 | `1541-e000-rom.bin` | `a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc` |
 
 Der getrennte KERNAL hat SHA-256
-`4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb`.
-BASIC, Zeichensatz und 1541-Helfer bleiben gegenüber RC2 bytegleich.
+`9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc`.
+BASIC und KERNAL unterscheiden sich gegenüber RC3 nur durch das geänderte
+Start-Banner `**** OPEN BASIC ****`; Zeichensatz und 1541-Helfer bleiben
+bytegleich.
 BASIC und KERNAL müssen als zusammengehöriges Paar eingesetzt werden:
 Die BASIC-Erweiterung belegt `$E000–$E4BF`, der neue Timing-Helfer `$E4C0–$E4FF`.
 Der Build prüft die Bereichsgrenzen. Keine proprietäre ROM-Datei wird als
@@ -272,5 +274,5 @@ Wiederholungsbefehle stehen in der
   Das nachgeladene Programm muss ausreichend freien Platz haben; überlappende
   Variablenbereiche werden nicht automatisch verschoben oder gerettet.
 
-Diese Grenzen beschreiben den tatsächlichen Nachweisumfang dieses RC3-Pakets;
+Diese Grenzen beschreiben den tatsächlichen Nachweisumfang dieses RC4-Pakets;
 sie ändern die oben aufgeführten bestandenen Ergebnisse nicht.

@@ -122,7 +122,7 @@ def build(output: Path, ca65: str = "ca65", ld65: str = "ld65") -> dict:
             files[name] = {"bytes": size, "sha256": hashlib.sha256(data).hexdigest()}
         manifest = {
             "format_version": 1,
-            "version": "2026.11.06-rc3",
+            "version": "2026.11.07-rc4",
             "name": "C64 freie ROMs",
             "basic_origin": "Microsoft BASIC-M6502 1.1, MIT license, adapted to C64 interfaces",
             "upstream_basic_commit": "7460af2c03ae19c0e60ff327489229d2005b9357",

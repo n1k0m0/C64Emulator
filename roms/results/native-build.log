@@ -1,9 +1,9 @@
-  Determining projects to restore...
-  All projects are up-to-date for restore.
-  RomIntegration -> /workspace/scratch/f2ac55d78f20/rc3_ntsc_probe/native-final/RomIntegration.dll
+  Wiederherzustellende Projekte werden ermittelt...
+  Alle Projekte sind für die Wiederherstellung auf dem neuesten Stand.
+  RomIntegration -> K:\KI-Projekte\Anwendungsentwicklung mit KI\C64Emulator\roms\build\native-tests\RomIntegration.dll
 
-Build succeeded.
-    0 Warning(s)
-    0 Error(s)
+Der Buildvorgang wurde erfolgreich ausgeführt.
+    0 Warnung(en)
+    0 Fehler
 
-Time Elapsed 00:00:03.97
+Verstrichene Zeit 00:00:00.69

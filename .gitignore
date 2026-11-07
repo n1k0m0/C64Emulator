@@ -30,6 +30,10 @@ artifacts/
 GTK3VICE-*/
 vice_VICII_tests/
 
+# ROM integration harness build output (runner hash is recorded in
+# roms/results/build-verification.json and reproducible from committed sources)
+roms/build/native-tests/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 

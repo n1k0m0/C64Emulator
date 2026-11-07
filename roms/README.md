@@ -1,4 +1,4 @@
-# C64 freie ROMs — 2026.11.06-rc3
+# C64 freie ROMs — 2026.11.07-rc4
 
 Dieser Stand enthält die freien ROMs und die dazugehörigen Emulator-Erweiterungen
 für [n1k0m0/C64Emulator](https://github.com/n1k0m0/C64Emulator), geprüft auf dem
@@ -6,6 +6,16 @@ Quellstand `f01750e17a2c3f4cabfd57dc0c470dac93a91a23`.
 BASIC/KERNAL, Zeichensatz und 1541-Helfer sind vollständig aus den mitgelieferten
 Quellen baubar. Die neuen Emulatorfunktionen werden als überprüfbare Patches
 und vollständige geänderte Quelldateien geliefert.
+
+## Neu in RC4
+
+- **Start-Banner:** Open Basic zeigt das Boot-Banner im Original-Bannerformat
+  als `**** OPEN BASIC ****` (vorher `**** FREE BASIC 64 ****`). Die
+  Textänderung verschiebt nur die Code-Region hinter der Banner-Zeichenkette in
+  der BASIC-Erweiterung um drei Byte; Zeichensatz und 1541-Helfer bleiben
+  bytegleich gegenüber RC3. Der Gesamtnachweis (14 isolierte CPU-/ROM-Suites,
+  PAL- und NTSC-Nativlauf, bytegleicher Doppel-Build) wurde mit dem neuen
+  ROM-Satz wiederholt.
 
 ## Neu in RC3
 

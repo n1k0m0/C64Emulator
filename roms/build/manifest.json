@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "version": "2026.11.06-rc3",
+  "version": "2026.11.07-rc4",
   "name": "C64 freie ROMs",
   "basic_origin": "Microsoft BASIC-M6502 1.1, MIT license, adapted to C64 interfaces",
   "upstream_basic_commit": "7460af2c03ae19c0e60ff327489229d2005b9357",
@@ -15,11 +15,11 @@
   "files": {
     "roms/open-basic64.bin": {
       "bytes": 8192,
-      "sha256": "1084920135877ce8e05e9b2adefd188f45c47eb7c4c7fbfb95e2d4450010b5e9"
+      "sha256": "95eab8adae98e88a4f041c104e1bde93ae5e343cfa4d23b2239cc4c7ead0b8e5"
     },
     "roms/open-kernal64.bin": {
       "bytes": 8192,
-      "sha256": "4780577b4efbd08ebdd38738e774349bfcdcd956884f63c1bc2031e208eab0fb"
+      "sha256": "9e805616d5362799dc3666524c8b9834519a773e66353c20457374183fa72cfc"
     },
     "roms/open-character-rom64.bin": {
       "bytes": 4096,
@@ -31,7 +31,7 @@
     },
     "emulator-roms/c64-basic-kernal.bin": {
       "bytes": 16384,
-      "sha256": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5"
+      "sha256": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9"
     },
     "emulator-roms/c64-character.bin": {
       "bytes": 4096,
@@ -47,17 +47,17 @@
     }
   },
   "source_sha256": {
-    "src/assemble.py": "9b39a75e86518939ebb1707a62a6f21cb6f1ccc112cfe9ab57f636f28decfac7",
-    "src/character_glyphs.py": "2090d34d91ea1a0d0b36bd3aedd3569d8c240419a5f66b0def10171732113b8b",
-    "src/character_rom.py": "674e899f925a3429e718b7c18c7af5d7d924a9262d971f849f2998d51465e7b0",
-    "src/drive1541.asm": "ad7b184a6a39d78767b92e3fb4ed3764a9e30c4374edbdd8daed01b5dc32c0f7",
-    "src/drive_build.py": "9ac7b85cab64d33d227f8e9dac674bceefae3d9abd1270a10383e55924a255c5",
-    "src/kernal_mit.asm": "bcc56de55e2ebd5d973df1e19a3a2f5c986afc32d08669e49c9a21371f5b882a",
-    "src/keyboard_mit.asm": "0afbb0452c4cdaaf5188999804fdde26588713bf625f6a201fe995003b30973c",
-    "src/mit_basic/basic64.cfg": "d3d26a8dfccd6c154f5ffd971aad9f23af26ebb45600bdf458d33ed13be8d320",
-    "src/mit_basic/basic64.s": "47255939de695fc4ceafbf3381ff59bb8ba08b944c3ea103a628d79c767af8c8",
-    "src/mit_basic/io_adapters.s": "ac7466df215a409caef7cd8cdfae241637230e90575f2732779a4cb74db8cd65",
-    "src/mit_basic/platform_adapters.s": "cc4e08cdc26c68812f44f11706f0b4c3efdb7b1b7da859e8e8a4cfe4283feae3",
-    "src/system_mit.asm": "62deacc3c10c7d5229051ff55387e97ff0116a806f51adc6188be16976c3af76"
+    "src\\assemble.py": "9b39a75e86518939ebb1707a62a6f21cb6f1ccc112cfe9ab57f636f28decfac7",
+    "src\\character_glyphs.py": "2090d34d91ea1a0d0b36bd3aedd3569d8c240419a5f66b0def10171732113b8b",
+    "src\\character_rom.py": "674e899f925a3429e718b7c18c7af5d7d924a9262d971f849f2998d51465e7b0",
+    "src\\drive1541.asm": "ad7b184a6a39d78767b92e3fb4ed3764a9e30c4374edbdd8daed01b5dc32c0f7",
+    "src\\drive_build.py": "9ac7b85cab64d33d227f8e9dac674bceefae3d9abd1270a10383e55924a255c5",
+    "src\\kernal_mit.asm": "bcc56de55e2ebd5d973df1e19a3a2f5c986afc32d08669e49c9a21371f5b882a",
+    "src\\keyboard_mit.asm": "0afbb0452c4cdaaf5188999804fdde26588713bf625f6a201fe995003b30973c",
+    "src\\mit_basic\\basic64.cfg": "d3d26a8dfccd6c154f5ffd971aad9f23af26ebb45600bdf458d33ed13be8d320",
+    "src\\mit_basic\\basic64.s": "60d74c06e36f065f7da4047ca3af8fd14b9bb657f65ca55f9378d25b72c2d7a4",
+    "src\\mit_basic\\io_adapters.s": "ac7466df215a409caef7cd8cdfae241637230e90575f2732779a4cb74db8cd65",
+    "src\\mit_basic\\platform_adapters.s": "cc4e08cdc26c68812f44f11706f0b4c3efdb7b1b7da859e8e8a4cfe4283feae3",
+    "src\\system_mit.asm": "62deacc3c10c7d5229051ff55387e97ff0116a806f51adc6188be16976c3af76"
   }
 }

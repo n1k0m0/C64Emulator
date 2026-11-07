@@ -21,6 +21,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using C64Emulator.Core;
 using C64Emulator.Network;
 using OpenTK.Input;
@@ -8496,10 +8497,17 @@ namespace C64Emulator
 
             if (targetRomSet == RomSet.Original && !RomPathResolver.HasCompleteRomSet())
             {
-                // The original ROMs are not on disk yet: offer the download
-                // dialog now and only continue with the switch after it
-                // delivered the complete set.
-                if (!RomStartupDownloader.TryDownloadMissingOriginalRoms() ||
+                // The original ROMs are not on disk yet: ask first, and only
+                // open the download dialog after a positive answer.
+                DialogResult answer = MessageBox.Show(
+                    "The original C64 and 1541 ROM files are not on disk yet.\r\n\r\n" +
+                    "Do you want to download them from zimmers.net?\r\n\r\n" +
+                    "Please only download and use these ROM files if you are allowed to do so.",
+                    "C64 ROM files",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                if (answer != DialogResult.Yes ||
+                    !RomStartupDownloader.TryDownloadMissingOriginalRoms() ||
                     !RomPathResolver.HasCompleteRomSet())
                 {
                     _overlayStatusText = "ROM DOWNLOAD CANCELLED";

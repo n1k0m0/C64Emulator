@@ -1445,11 +1445,11 @@ namespace C64Emulator.Core
                     system.RunCycles(100000);
                 }
                 Expect(system.Cpu.State != CpuState.Jammed, "CPU runs after BASIC start");
-                Expect(ScreenHasLine(system, "**** FREE BASIC 64 ****"), "own BASIC title");
+                Expect(ScreenHasLine(system, "**** OPEN BASIC ****"), "own BASIC title");
                 Expect(ScreenHasLine(system, "38911 BYTES FREE"),
                     "BASIC free-memory banner");
                 string titleRow = ReadScreenLine(system, 0);
-                int titleColumn = titleRow.IndexOf("**** FREE BASIC 64 ****", StringComparison.Ordinal);
+                int titleColumn = titleRow.IndexOf("**** OPEN BASIC ****", StringComparison.Ordinal);
                 Expect(titleColumn == 0 &&
                     ReadScreenLine(system, 2).TrimStart().StartsWith("38911 BYTES FREE") &&
                     ReadScreenLine(system, 4).StartsWith("READY."),

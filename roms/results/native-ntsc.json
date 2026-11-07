@@ -1,9 +1,9 @@
 {
-  "rom_directory": "/workspace/scratch/f2ac55d78f20/rom_rc3/build/emulator-roms",
+  "rom_directory": "K:\\KI-Projekte\\Anwendungsentwicklung mit KI\\C64Emulator\\roms\\build\\emulator-roms",
   "rom_sha256": {
     "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
     "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
-    "c64-basic-kernal.bin": "c31b5821a274740a98889ce2ffe3295970d74f013a9cdcc10a31d9525a4725e5",
+    "c64-basic-kernal.bin": "9690fc91c9b835e91f9c31002d6bf615e16b285821b5808eb77027c9c68ed0f9",
     "c64-character.bin": "ce3dd32cf840a76300756cefddaa52b3544147945e7305356d811ea0325a74fb"
   },
   "emulator_source_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
@@ -23,7 +23,7 @@
   "pc": "E95D",
   "sp": "E9",
   "public_entries": {
-    "FFD2": 2431,
+    "FFD2": 2428,
     "FFE7": 447,
     "FFCF": 6952,
     "FFE1": 1174,
@@ -231,8 +231,8 @@
       "Name": "ntsc_boot",
       "Group": "boot",
       "Passed": true,
-      "Expected": "BASIC 64 banner and READY prompt",
-      "Output": "**** FREE BASIC 64 ****\n\n 38911 BYTES FREE\n\nREADY.\n",
+      "Expected": "OPEN BASIC banner and READY prompt",
+      "Output": "**** OPEN BASIC ****\n\n 38911 BYTES FREE\n\nREADY.\n",
       "Recent": null
     },
     {
@@ -240,7 +240,7 @@
       "Group": "video",
       "Passed": true,
       "Expected": "PAL6569 and NTSC6567R8 use independent documented timing constants",
-      "Output": "NTSC: 1022727Hz, 65cycles/line, 263lines/frame, 59.826089Hz frame",
+      "Output": "NTSC: 1022727Hz, 65cycles/line, 263lines/frame, 59,826089Hz frame",
       "Recent": null
     },
     {
@@ -536,7 +536,7 @@
       "Group": "editor",
       "Passed": true,
       "Expected": "HOME/DOWN/RIGHT edits the visible LIST row; RETURN retokenizes the corrected line and RUN prints 2",
-      "Output": "Before edit:\n\n\nREADY.\nLIST\n\n 10 PRINT 1\nREADY.\nProgram before=010809080A00992031000000\nProgram after=010809080A00992032000000\nRUN:\n 2 \n\nREADY.\n",
+      "Output": "Before edit:\n\r\n\r\nREADY.\r\nLIST\r\n\r\n 10 PRINT 1\r\nREADY.\nProgram before=010809080A00992031000000\nProgram after=010809080A00992032000000\nRUN:\n 2 \n\nREADY.\n",
       "Recent": null
     },
     {
@@ -864,7 +864,7 @@
       "Group": "tape-format",
       "Passed": true,
       "Expected": "PAL TAP elapsed time is retained on the NTSC CPU clock without cumulative per-pulse rounding drift",
-      "Output": "actualCycles=398607; expectedCycles=398607.424730",
+      "Output": "actualCycles=398607; expectedCycles=398607,424730",
       "Recent": null
     },
     {
@@ -1016,7 +1016,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
-      "Output": "done=True; bitCycles=20454.540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459021814,2:459022189,3:459022444,4:459227780\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459022597:0,459043051:1,459063508:0,459083991:1,459104447:0,459124902:1,459145359:0,459165824:1,459186281:0,459206731:1\nU\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\nsamples=0101010101; expected=0101010101; meanBit=20459.333; nominal=20454.540",
+      "Output": "done=True; bitCycles=20454,540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459021814,2:459022189,3:459022444,4:459227780\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459022597:0,459043051:1,459063508:0,459083991:1,459104447:0,459124902:1,459145359:0,459165824:1,459186281:0,459206731:1\nU\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\nsamples=0101010101; expected=0101010101; meanBit=20459,333; nominal=20454,540",
       "Recent": null
     },
     {
@@ -1024,7 +1024,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
-      "Output": "done=True; bitCycles=20454.540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459293133; stages=1:459292042,2:459292417,3:459292633,4:459488265\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\n",
+      "Output": "done=True; bitCycles=20454,540; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459293133; stages=1:459292042,2:459292417,3:459292633,4:459488265\ncall0: A=00 P=30 X=00 Y=4F RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=240000; PC=E9C3\n",
       "Recent": null
     },
     {
@@ -1032,7 +1032,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459561654,2:459562029,3:459562845,4:459597839\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459562998:0,459566412:1,459569859:0,459573276:1,459576690:0,459580107:1,459583522:0,459586961:1,459590377:0,459593787:1\nU\nREADY.\n\nwatchdog cycles=80000; PC=F0C3\nsamples=0101010101; expected=0101010101; meanBit=3421.000; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459561654,2:459562029,3:459562845,4:459597839\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459562998:0,459566412:1,459569859:0,459573276:1,459576690:0,459580107:1,459583522:0,459586961:1,459590377:0,459593787:1\nU\nREADY.\n\nwatchdog cycles=80000; PC=F0C3\nsamples=0101010101; expected=0101010101; meanBit=3421,000; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1040,7 +1040,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459672898; stages=1:459671721,2:459672139,3:459672398,4:459706206\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=60000; PC=EFE2\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459672898; stages=1:459671721,2:459672139,3:459672398,4:459706206\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=60000; PC=EFE2\n",
       "Recent": null
     },
     {
@@ -1048,7 +1048,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
-      "Output": "done=True; bitCycles=852.273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459761449,2:459761867,3:459762122,4:459771418\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459762275:0,459763133:1,459763985:0,459764845:1,459765704:0,459766557:1,459767416:0,459768312:1,459769164:0,459770014:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E7\nsamples=0101010101; expected=0101010101; meanBit=859.889; nominal=852.273",
+      "Output": "done=True; bitCycles=852,273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459761449,2:459761867,3:459762122,4:459771418\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459762275:0,459763133:1,459763985:0,459764845:1,459765704:0,459766557:1,459767416:0,459768312:1,459769164:0,459770014:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E7\nsamples=0101010101; expected=0101010101; meanBit=859,889; nominal=852,273",
       "Recent": null
     },
     {
@@ -1056,7 +1056,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
-      "Output": "done=True; bitCycles=852.273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459832757; stages=1:459831623,2:459832041,3:459832257,4:459841655\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=40000; PC=EFED\n",
+      "Output": "done=True; bitCycles=852,273; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459832757; stages=1:459831623,2:459832041,3:459832257,4:459841655\ncall0: A=00 P=30 X=00 Y=03 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\nREADY.\n\nwatchdog cycles=40000; PC=EFED\n",
       "Recent": null
     },
     {
@@ -1064,7 +1064,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "8N1 physical PA2 frame decodes at model clock/baud; OPEN DDRB=$06; IRQ/X/Y preserved; CLOSE releases all outputs",
-      "Output": "done=True; bitCycles=426.136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459901650,2:459902068,3:459902280,4:459907428\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459902474:0,459902947:1,459903378:0,459903853:1,459904282:0,459904712:1,459905141:0,459905589:1,459906020:0,459906447:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E5\nsamples=0101010101; expected=0101010101; meanBit=441.444; nominal=426.136",
+      "Output": "done=True; bitCycles=426,136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:459901650,2:459902068,3:459902280,4:459907428\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=459902474:0,459902947:1,459903378:0,459903853:1,459904282:0,459904712:1,459905141:0,459905589:1,459906020:0,459906447:1\nU\nREADY.\n\nwatchdog cycles=40000; PC=F0E5\nsamples=0101010101; expected=0101010101; meanBit=441,444; nominal=426,136",
       "Recent": null
     },
     {
@@ -1072,7 +1072,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent nominal-baud RX waveform delivers $A6 through CHRIN with IRQs initially enabled and X/Y unchanged",
-      "Output": "done=True; bitCycles=426.136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459973280; stages=1:459972146,2:459972564,3:459972780,4:459977585\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=40000; PC=E947\n",
+      "Output": "done=True; bitCycles=426,136; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=459973280; stages=1:459972146,2:459972564,3:459972780,4:459977585\ncall0: A=00 P=30 X=00 Y=01 RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=40000; PC=E947\n",
       "Recent": null
     },
     {
@@ -1080,7 +1080,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "X-line CHKOUT asserts RTS/DTR and transmits only after peer asserts CTS 50000 cycles later",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=460168076; DCDrelease=-1; RXstart=-1; stages=1:460117658,2:460118076,3:460168234,4:460203159\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=460168433:0,460171846:1,460175262:0,460178677:1,460182085:0,460185497:1,460188920:0,460192337:1,460195751:0,460199155:1\nDY.\nU\n\nwatchdog cycles=200000; PC=E945\nsamples=0101010101; expected=0101010101; meanBit=3413.556; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=460168076; DCDrelease=-1; RXstart=-1; stages=1:460117658,2:460118076,3:460168234,4:460203159\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=460168433:0,460171846:1,460175262:0,460178677:1,460182085:0,460185497:1,460188920:0,460192337:1,460195751:0,460199155:1\nDY.\nU\n\nwatchdog cycles=200000; PC=E945\nsamples=0101010101; expected=0101010101; meanBit=3413,556; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1088,7 +1088,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Missing CTS gives bounded 0.5\u20132.6-second wait, Carry/A5 and RSSTAT$10; no TX start; READST acknowledges error",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:460343308,2:460343683,4:462369878\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=10\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=10 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=2140000; PC=E958\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:460343308,2:460343683,4:462369878\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=10\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=10 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=2140000; PC=E958\n",
       "Recent": null
     },
     {
@@ -1096,7 +1096,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "DSR loss after successful CHKOUT is rechecked by CHROUT: immediate Carry/A5,$40,no emitted start bit",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462509858,2:462510276,3:462510534,4:462510781\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=05 P=31 X=37 Y=81 RS=40\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=40 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nU\n\nwatchdog cycles=100000; PC=E946\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462509858,2:462510276,3:462510534,4:462510781\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=05 P=31 X=37 Y=81 RS=40\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=40 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nU\n\nwatchdog cycles=100000; PC=E946\n",
       "Recent": null
     },
     {
@@ -1104,7 +1104,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Full-duplex input waits for DCD while RTS/CTS are asserted, then receives the independent frame",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=462701870; RXstart=462702467; stages=1:462651452,2:462651870,3:462701967,4:462735687\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=200000; PC=E945\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=462701870; RXstart=462702467; stages=1:462651452,2:462651870,3:462701967,4:462735687\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=A6 P=B0 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=200000; PC=E945\n",
       "Recent": null
     },
     {
@@ -1112,7 +1112,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "DCD high gives bounded timeout and Carry/A5,$08; READST clears the reported status",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462875789,2:462876207,4:464902303\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=08\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=08 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=2140000; PC=E943\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:462875789,2:462876207,4:464902303\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=05 P=31 X=02 Y=81 RS=08\ncall2: A=00 P=00 X=00 Y=00 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=08 P=31 X=02 Y=81 RS=00\ncall5: A=00 P=33 X=02 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=2140000; PC=E943\n",
       "Recent": null
     },
     {
@@ -1120,7 +1120,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Half-duplex TX uses RTS low/CTS low; CHKIN releases RTS and waits for CTS high before RX; peer delays both transitions",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465108954; stages=1:465042451,2:465042868,3:465058134,5:465093183,6:465108454,4:465142157\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465058376:0,465061791:1,465065205:0,465068622:1,465072032:0,465075485:1,465078901:0,465082316:1,465085732:0,465089138:1\nU\n\nwatchdog cycles=200000; PC=E943\nsamples=0101010101; expected=0101010101; meanBit=3418.000; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=True; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465108954; stages=1:465042451,2:465042868,3:465058134,5:465093183,6:465108454,4:465142157\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465058376:0,465061791:1,465065205:0,465068622:1,465072032:0,465075485:1,465078901:0,465082316:1,465085732:0,465089138:1\nU\n\nwatchdog cycles=200000; PC=E943\nsamples=0101010101; expected=0101010101; meanBit=3418,000; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1128,7 +1128,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Three-line mode transmits and receives with CTS/DSR/DCD all inactive, leaving RTS/DTR high",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465318675; stages=1:465282308,2:465282726,3:465282938,5:465317959,6:465318175,4:465351838\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465283091:0,465286504:1,465289963:0,465293372:1,465296783:0,465300200:1,465303659:0,465307092:1,465310500:0,465313907:1\nREADY.\nU\n\nwatchdog cycles=180000; PC=E947\nsamples=0101010101; expected=0101010101; meanBit=3424.000; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465318675; stages=1:465282308,2:465282726,3:465282938,5:465317959,6:465318175,4:465351838\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=32 X=02 Y=81 RS=00\ncall7: A=A6 P=B0 X=37 Y=81 RS=00\nTX=465283091:0,465286504:1,465289963:0,465293372:1,465296783:0,465300200:1,465303659:0,465307092:1,465310500:0,465313907:1\nREADY.\nU\n\nwatchdog cycles=180000; PC=E947\nsamples=0101010101; expected=0101010101; meanBit=3424,000; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1136,7 +1136,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Physical TX word length, parity and stop bits match the configured frame",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465491988,2:465492363,3:465492617,4:465520726\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465492770:0,465496185:1,465499595:0,465503012:1,465506471:0,465509888:1,465513324:0,465516717:1\nREADY.\n\n\nwatchdog cycles=140000; PC=E945\nsamples=01010101; expected=01010101; meanBit=NaN; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465491988,2:465492363,3:465492617,4:465520726\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465492770:0,465496185:1,465499595:0,465503012:1,465506471:0,465509888:1,465513324:0,465516717:1\nREADY.\n\n\nwatchdog cycles=140000; PC=E945\nsamples=01010101; expected=01010101; meanBit=NaN; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1144,7 +1144,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent framed RX waveform decodes requested word length, parity and stops",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465662007; stages=1:465660873,2:465661248,3:465661507,4:465688438\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=140000; PC=E947\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=465662007; stages=1:465660873,2:465661248,3:465661507,4:465688438\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=10 P=30 X=02 Y=81 RS=00\ncall2: A=15 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\nREADY.\n\n\nwatchdog cycles=140000; PC=E947\n",
       "Recent": null
     },
     {
@@ -1152,7 +1152,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Physical TX word length, parity and stop bits match the configured frame",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465828544,2:465828962,3:465829217,4:465867650\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465829370:0,465832827:1,465836243:0,465839657:1,465843072:0,465846532:1,465849964:0,465853381:1,465856813:0,465860211:1\nADY.\nU\n\nwatchdog cycles=160000; PC=E967\nsamples=01010101011; expected=01010101011; meanBit=NaN; nominal=3409.090",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=-1; stages=1:465828544,2:465828962,3:465829217,4:465867650\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=465829370:0,465832827:1,465836243:0,465839657:1,465843072:0,465846532:1,465849964:0,465853381:1,465856813:0,465860211:1\nADY.\nU\n\nwatchdog cycles=160000; PC=E967\nsamples=01010101011; expected=01010101011; meanBit=NaN; nominal=3409,090",
       "Recent": null
     },
     {
@@ -1160,7 +1160,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Independent framed RX waveform decodes requested word length, parity and stops",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466008886; stages=1:466007752,2:466008170,3:466008386,4:466045579\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=140000; PC=E943\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466008886; stages=1:466007752,2:466008170,3:466008386,4:466045579\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=55 P=30 X=37 Y=81 RS=00\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=00 P=33 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\nwatchdog cycles=140000; PC=E943\n",
       "Recent": null
     },
     {
@@ -1168,7 +1168,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Incorrect received parity sets Carry and RSSTAT$01, acknowledged once by READST",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466186731; stages=1:466185597,2:466185972,3:466186231,4:466216528\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=01\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=01 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=140000; PC=F168\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466186731; stages=1:466185597,2:466185972,3:466186231,4:466216528\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=30 P=30 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=01\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=01 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n\n\n\nwatchdog cycles=140000; PC=F168\n",
       "Recent": null
     },
     {
@@ -1176,7 +1176,7 @@
       "Group": "serial",
       "Passed": true,
       "Expected": "Low stop bit sets Carry and RSSTAT$02, acknowledged once by READST",
-      "Output": "done=True; bitCycles=3409.090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466357678; stages=1:466356544,2:466356919,3:466357178,4:466390900\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=02\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=02 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n.\n\n\nwatchdog cycles=140000; PC=E946\n",
+      "Output": "done=True; bitCycles=3409,090; openDDRB=06; openDTR=False; closeReleased=True; CTSrelease=-1; DCDrelease=-1; RXstart=466357678; stages=1:466356544,2:466356919,3:466357178,4:466390900\ncall0: A=00 P=30 X=00 Y=0D RS=00\ncall1: A=00 P=32 X=02 Y=81 RS=00\ncall2: A=00 P=33 X=37 Y=81 RS=02\ncall3: A=C7 P=B0 X=00 Y=00 RS=00\ncall4: A=02 P=31 X=37 Y=81 RS=00\ncall5: A=00 P=33 X=37 Y=81 RS=00\ncall6: A=00 P=00 X=00 Y=00 RS=00\ncall7: A=00 P=00 X=00 Y=00 RS=00\nTX=\n.\n\n\nwatchdog cycles=140000; PC=E946\n",
       "Recent": null
     },
     {
@@ -1224,7 +1224,7 @@
       "Group": "tape-host",
       "Passed": true,
       "Expected": "Failed file replacement leaves destination and in-memory tape intact and removes temporary output",
-      "Output": "TAPE SAVE FAILED: Is a directory : \u0027/tmp/free-c64-tape-host-2b05056ad14a4ac69028403bd0059f77/blocked\u0027",
+      "Output": "TAPE SAVE FAILED: Access to the path is denied.",
       "Recent": null
     },
     {
@@ -1276,5 +1276,5 @@
       "Recent": null
     }
   ],
-  "screen": "READY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152\n\nREADY.\nSYS49152"
+  "screen": "READY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152\r\n\r\nREADY.\r\nSYS49152"
 }
