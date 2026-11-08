@@ -319,7 +319,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.19`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.20`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
