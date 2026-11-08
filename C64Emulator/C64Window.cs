@@ -8654,6 +8654,7 @@ namespace C64Emulator
             bool enableLoadHack = _system.EnableLoadHack;
             bool forceSoftwareIecTransport = _system.ForceSoftwareIecTransport;
             bool enableInputInjection = _system.EnableInputInjection;
+            HostKeyboardLayout hostKeyboardLayout = _system.CurrentHostKeyboardLayout;
             ReuExpansion reuSnapshot = _system.CreateReuSnapshot();
 
             C64System oldSystem = _system;
@@ -8663,6 +8664,7 @@ namespace C64Emulator
             _system.SetSidNoiseLevel(sidNoiseLevel);
             _system.SetSidChipModel(sidChipModel);
             _system.SetJoystickPort(joystickPort);
+            _system.SetHostKeyboardLayout(hostKeyboardLayout);
             _system.EnableKernalIecHooks = enableKernalIecHooks;
             _system.EnableLoadHack = enableLoadHack;
             _system.ForceSoftwareIecTransport = forceSoftwareIecTransport;
