@@ -1167,6 +1167,7 @@ namespace C64Emulator.Core
                 _hostKeyboardLayout = layout;
                 _pressedHostKeys.Clear();
                 _pressedKeyboardOnlyHostKeys.Clear();
+                _bus.SetExternalNmi(false);
                 _mappedHostKeyboardKeys.Clear();
                 _lastMirroredPollKey = null;
                 _pollMirrorRepeatDelayCycles = 0;
@@ -1725,6 +1726,7 @@ namespace C64Emulator.Core
                     : MountedMediaInfo.None;
             _pressedHostKeys.Clear();
             _pressedKeyboardOnlyHostKeys.Clear();
+            _bus.SetExternalNmi(false);
             _mappedHostKeyboardKeys.Clear();
             _queuedPetsciiInput.Clear();
             _queuedInputEmptyCycles = 0;
@@ -1850,6 +1852,7 @@ namespace C64Emulator.Core
             {
                 _pressedHostKeys.Add((Key)reader.ReadInt32());
             }
+            _bus.SetExternalNmi(_pressedHostKeys.Contains(Key.PageUp));
         }
 
         /// <summary>
@@ -2523,6 +2526,9 @@ namespace C64Emulator.Core
         /// </summary>
         private void RefreshHostKeyboardMatrix()
         {
+            // RESTORE is wired to NMI, not the CIA1 keyboard matrix. Keeping the
+            // line asserted while PageUp is held gives one CPU edge per press.
+            _bus.SetExternalNmi(_pressedHostKeys.Contains(Key.PageUp));
             _mappedHostKeyboardKeys.Clear();
 
             bool hostShiftHeld = ContainsShift(_pressedHostKeys) || ContainsShift(_pressedKeyboardOnlyHostKeys);
