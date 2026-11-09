@@ -1,0 +1,50 @@
+{
+  "input_archive": "01-kernal-private-eddd-current-v2.zip",
+  "input_archive_sha256": "391e466719f04e377ed6458ada202f9ccf6adce2057d5ba0397a7c47c86c578b",
+  "upstream_emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "inherited_source": [
+    "src/assemble.py",
+    "src/kernal.asm (modified)"
+  ],
+  "unchanged_binary_assets": [
+    {
+      "filename": "open-character-rom64.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "origin": "Unchanged from supplied archive",
+      "source_available_in_input": false
+    },
+    {
+      "filename": "open-1541-dos.bin",
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+      "origin": "Unchanged from supplied archive",
+      "source_available_in_input": false
+    }
+  ],
+  "version": "0.2.0",
+  "classic_profile": {
+    "path": "profiles/classic/roms",
+    "origin": "Unmodified BASIC, KERNAL, charset and drive binaries from the user-provided input archive",
+    "manifest": "profiles/classic/roms/manifest.json",
+    "rebuilt_from_source": false,
+    "reason": "The input archive did not include the complete source for its BASIC binary."
+  },
+  "new_game": {
+    "name": "ROM RUNNER",
+    "source": "examples/rom_runner.asm",
+    "disk": "examples/play-games.d64",
+    "license": "Apache-2.0",
+    "origin": "Original game written for this project; no third-party game assets."
+  },
+  "third_party_games": [
+    {
+      "name": "SERPENT 64",
+      "version": "1.0.4",
+      "license": "MIT",
+      "manifest": "third_party/serpent64/PROVENANCE.json",
+      "modifications": "None",
+      "rebuilt_from_source": false
+    }
+  ]
+}

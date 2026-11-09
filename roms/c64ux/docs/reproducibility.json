@@ -1,0 +1,341 @@
+{
+  "system": "C64/UX",
+  "version": "0.2.0",
+  "test": "Clean separate-directory deterministic rebuild and independent assembler occupancy check",
+  "checked_at_utc": "2026-11-06T20:02:20+00:00",
+  "success": true,
+  "python": "3.12.14",
+  "external_assembler": false,
+  "build_dependencies": "Python standard library, bundled assembler/Python tools and the two supplied binary input assets listed below",
+  "procedure": {
+    "command": [
+      "python",
+      "build.py"
+    ],
+    "fresh_temporary_directory": true,
+    "inputs_only_before_build": true,
+    "existing_generated_outputs_copied": [],
+    "only_preexisting_output_paths": [
+      "roms/open-1541-dos.bin",
+      "roms/open-character-rom64.bin"
+    ],
+    "pythonpath_removed": true,
+    "build_exit_code": 0,
+    "build_stdout": "C64/UX 0.2.0: BASIC slot 7661/8192 bytes, KERNAL slot 6727/8192 bytes\nReady: roms/c64-basic-kernal.bin and roms/c64-character.bin\n",
+    "build_stderr": "",
+    "independent_write_map_check_exit_code": 0,
+    "root_sources_and_build_outputs_unchanged": true,
+    "temporary_directory_removed_after_check": true
+  },
+  "scope": {
+    "compared_artifacts": 14,
+    "rom_binary_files_compared": 8,
+    "claim": "Byte-for-byte repeatability of C64/UX 0.2.0 generated outputs from delivered sources plus explicitly identified input assets.",
+    "supplied_rom_input_assets": [
+      "roms/open-1541-dos.bin",
+      "roms/open-character-rom64.bin"
+    ],
+    "input_asset_limit": "The character ROM and 1541 ROM are supplied binary inputs. Their unchanged copies, split halves and hashes are verified, but this check does not compile those two input assets from source.",
+    "classic_and_serpent_limit": "Classic-profile ROMs and SERPENT 64 PRG/D64 are copied distribution assets. They are excluded from the clean build, not consumed by build.py, and not claimed to be reproduced from source. The separate asset inventory only verifies their bytes and hashes against the delivered provenance/manifest.",
+    "other_limits": "This is a build/placement check, not an additional gameplay, hardware-compatibility, licensing or provenance-origin audit. Existing emulator reports cover runtime tests."
+  },
+  "inputs": [
+    {
+      "name": "build.py",
+      "bytes": 5223,
+      "sha256": "e74cc2c4c850da7646377f447ee6417bc6d5ba0c5b20ee15fc828b37bddf1fab",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/assemble.py",
+      "bytes": 12091,
+      "sha256": "d9eb9629aeeff46c6d73f6936ab7dd46c50c73aff40b83e4efbc66171b1ae7be",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/disk.asm",
+      "bytes": 9358,
+      "sha256": "2f2786e02cc4e447fdc1bb84b13b8b4abf34f5c9da7a9891a766b63db31a1b14",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/filesystem.asm",
+      "bytes": 13813,
+      "sha256": "5a0bce4a143b8ae185c6b8181145d706c75212a997b7807c96b630523981a4aa",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/kernal.asm",
+      "bytes": 55923,
+      "sha256": "205cd6f9362577732230d104993283924e3b8c55bfe38646a1a4882c11cc7530",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/keyboard.asm",
+      "bytes": 6814,
+      "sha256": "70d2e1ec5864dfa0f7930124700700533bdc7c0446dd0b07ae01ad3692491589",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/play.asm",
+      "bytes": 13187,
+      "sha256": "4fa40ebfd61f08a5b3529198d66aba3c16244613277a98116e434681a2da5160",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/shell.asm",
+      "bytes": 15472,
+      "sha256": "b75daf9b2fb2ba4f8176b6048ca1c8b9312c6ed427c1f0b51771659ec963815d",
+      "kind": "delivered source"
+    },
+    {
+      "name": "src/strings.asm",
+      "bytes": 4875,
+      "sha256": "9bde6132aefd29e9b23e64a52c3c61c0631e4515a1327fdff2f38536f2af6a28",
+      "kind": "delivered source"
+    },
+    {
+      "name": "tools/__init__.py",
+      "bytes": 73,
+      "sha256": "c11765c774d986c6d6722e329c427a82b8d9927fd17eec3bf36979951577ed4f",
+      "kind": "delivered source"
+    },
+    {
+      "name": "tools/make_demo_disk.py",
+      "bytes": 3451,
+      "sha256": "fad2a8db8b64fd6500261615c45c6e86dc8d55987ced912bbd8877ca17da6d4e",
+      "kind": "delivered source"
+    },
+    {
+      "name": "tools/make_play_disk.py",
+      "bytes": 5056,
+      "sha256": "05fa1c78e6d9e2cb9800b98ea7e2d068e0fe74708741a956bdf45c827435d543",
+      "kind": "delivered source"
+    },
+    {
+      "name": "examples/hello.asm",
+      "bytes": 439,
+      "sha256": "bda9a795ad02e3f35ac40bfec187d7df97ab33b57407af5e3503f5b5cd9529af",
+      "kind": "delivered source"
+    },
+    {
+      "name": "examples/rom_runner.asm",
+      "bytes": 12075,
+      "sha256": "b5f16bddce2ebc844169ae5a94ff167c90c00dbae847c7e46efd9f93df6915aa",
+      "kind": "delivered source"
+    },
+    {
+      "name": "roms/open-character-rom64.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "kind": "supplied binary input asset"
+    },
+    {
+      "name": "roms/open-1541-dos.bin",
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+      "kind": "supplied binary input asset"
+    }
+  ],
+  "results": [
+    {
+      "name": "roms/1541-c000-rom.bin",
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+      "clean_build_sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+      "identical": true,
+      "origin": "derived from supplied binary input: first 8192 bytes of roms/open-1541-dos.bin"
+    },
+    {
+      "name": "roms/1541-e000-rom.bin",
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+      "clean_build_sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+      "identical": true,
+      "origin": "derived from supplied binary input: last 8192 bytes of roms/open-1541-dos.bin"
+    },
+    {
+      "name": "roms/c64-basic-kernal.bin",
+      "bytes": 16384,
+      "sha256": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49",
+      "clean_build_sha256": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "roms/c64-character.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "clean_build_sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "identical": true,
+      "origin": "derived from supplied binary input: roms/open-character-rom64.bin"
+    },
+    {
+      "name": "roms/open-1541-dos.bin",
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+      "clean_build_sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+      "identical": true,
+      "origin": "supplied binary input, copied unchanged; not assembled from source in this check"
+    },
+    {
+      "name": "roms/open-basic64.bin",
+      "bytes": 8192,
+      "sha256": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a",
+      "clean_build_sha256": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "roms/open-character-rom64.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "clean_build_sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "identical": true,
+      "origin": "supplied binary input, copied unchanged; not assembled from source in this check"
+    },
+    {
+      "name": "roms/open-kernal64.bin",
+      "bytes": 8192,
+      "sha256": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9",
+      "clean_build_sha256": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "roms/manifest.json",
+      "bytes": 1265,
+      "sha256": "27347ec182e4e654b5179e2e88823356e32ab5eb45d42a9fb3d0c8c7a2f2dfef",
+      "clean_build_sha256": "27347ec182e4e654b5179e2e88823356e32ab5eb45d42a9fb3d0c8c7a2f2dfef",
+      "identical": true,
+      "origin": "generated deterministically by delivered Python tools"
+    },
+    {
+      "name": "examples/hello.prg",
+      "bytes": 61,
+      "sha256": "fd8ef50e7d52e529e0e37f84ce532407a0b6cd50e2005c57db748a80e8ea88d8",
+      "clean_build_sha256": "fd8ef50e7d52e529e0e37f84ce532407a0b6cd50e2005c57db748a80e8ea88d8",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "examples/c64ux-demo.d64",
+      "bytes": 174848,
+      "sha256": "dcaf5b0e562d5b191c8499a5f5d3b7fbd0a9cb1075f2dbd67e0383f26b3cebe8",
+      "clean_build_sha256": "dcaf5b0e562d5b191c8499a5f5d3b7fbd0a9cb1075f2dbd67e0383f26b3cebe8",
+      "identical": true,
+      "origin": "generated deterministically by delivered Python tools"
+    },
+    {
+      "name": "examples/rom_runner.prg",
+      "bytes": 1862,
+      "sha256": "a2d9329fa8092d18d038b3c6ea4a1f4414d46faac5709c7466ec7716f6e54604",
+      "clean_build_sha256": "a2d9329fa8092d18d038b3c6ea4a1f4414d46faac5709c7466ec7716f6e54604",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "examples/rom_runner.map",
+      "bytes": 1552,
+      "sha256": "2ea8e9b1c562add012548fd153d9bc8055f8ae5517d42ec4b2b666101bfae4a7",
+      "clean_build_sha256": "2ea8e9b1c562add012548fd153d9bc8055f8ae5517d42ec4b2b666101bfae4a7",
+      "identical": true,
+      "origin": "assembled from delivered source"
+    },
+    {
+      "name": "examples/play-games.d64",
+      "bytes": 174848,
+      "sha256": "b3a2e69c8d7fe8d1676054f68aecbb77870aaf53c6dbf90b597fe590b5f3c9ba",
+      "clean_build_sha256": "b3a2e69c8d7fe8d1676054f68aecbb77870aaf53c6dbf90b597fe590b5f3c9ba",
+      "identical": true,
+      "origin": "generated deterministically by delivered Python tools"
+    }
+  ],
+  "memory_map_verification": {
+    "method": "Independent call to the bundled assembler with a per-byte write bitmap for the combined $A000-$FFFF address range",
+    "forbidden_range_inclusive": "$C000-$DFFF",
+    "forbidden_range_bytes": 8192,
+    "forbidden_range_written_bytes": 0,
+    "no_assembled_occupancy_outside_rom_slots": true,
+    "basic_slot_range_inclusive": "$A000-$BFFF",
+    "basic_slot_written_bytes": 7661,
+    "kernal_slot_range_inclusive": "$E000-$FFFF",
+    "kernal_slot_written_bytes": 6727,
+    "shell_core_end_exclusive": "$BD0B",
+    "basic_slice_matches_generated_rom": true,
+    "kernal_slice_matches_generated_rom": true,
+    "occupancy_matches_manifest": true
+  },
+  "copied_assets_outside_source_rebuild": [
+    {
+      "name": "profiles/classic/roms/1541-c000-rom.bin",
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/1541-e000-rom.bin",
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/c64-basic-kernal.bin",
+      "bytes": 16384,
+      "sha256": "d65710af922beb8ee33037848a19fd73f41e831b498a70f44b7da9e393b56273",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/c64-character.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/open-1541-dos.bin",
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/open-basic64.bin",
+      "bytes": 8192,
+      "sha256": "79a773607d1d105ccdccf7f562ee22436d9df9bf31050dbc1b3c64296ea33887",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/open-character-rom64.bin",
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "profiles/classic/roms/open-kernal64.bin",
+      "bytes": 8192,
+      "sha256": "49093468dd6de3e43a7b38c32cfa93973447e1cf5ba9bf786fba573633f52a14",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "third_party/serpent64/serpent64.prg",
+      "bytes": 12289,
+      "sha256": "f1c1219eddc1de4729ce1455127c23e040a7148efb8d83e87bc1c76e29bbe734",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    },
+    {
+      "name": "third_party/serpent64/serpent64.d64",
+      "bytes": 174848,
+      "sha256": "0e6ca2e47be076d2704e26fe346f0503fb3ef6d47fbe21bf264f5b7e66f2ede9",
+      "matches_declared_hash_and_size": true,
+      "rebuilt_from_source": false
+    }
+  ]
+}

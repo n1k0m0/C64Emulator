@@ -1,0 +1,283 @@
+{
+  "suite": "Actual C64Emulator core integration",
+  "emulator_repository": "https://github.com/n1k0m0/C64Emulator",
+  "emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "pinned_revision": true,
+  "firmware_execution": "Unmodified ROM instructions on the original emulator CPU and peripherals",
+  "load_shortcut": false,
+  "kernal_iec_hooks": false,
+  "automatic_host_input_injection": false,
+  "manual_queue_input_and_physical_matrix": true,
+  "host_audio_sink_only_is_replaced": true,
+  "success": true,
+  "scenarios": 40,
+  "seconds": 86.293,
+  "rom_sha256": {
+    "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+    "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+    "c64-basic-kernal.bin": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49",
+    "c64-character.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+    "open-basic64.bin": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a",
+    "open-character-rom64.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-kernal64.bin": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9"
+  },
+  "disk_read_scope": "This public emulator revision only opens PRG entries and does not parse SEQ suffixes; the ROM reports read/import errors and preserves the existing RAM file. Actual-core SEQ reads/imports are not verified.",
+  "disk_write_scope": "This public emulator revision rejects normal SEQ creation; the ROM reports the DOS/I/O error. Persistent SEQ export is not verified in this actual-core run.",
+  "results": [
+    {
+      "test": "ROM cold boot",
+      "status": "passed"
+    },
+    {
+      "test": "boot enters the home directory",
+      "command": "pwd",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "system identity",
+      "command": "uname",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "quoted text and redirection",
+      "command": "echo \"Hello world\" > note",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "read saved text",
+      "command": "cat note",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "append to a RAM file",
+      "command": "echo second >> note",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "read both appended lines",
+      "command": "cat note",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "create a directory",
+      "command": "mkdir work",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "copy across directories",
+      "command": "cp note work/copy",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "read independent copied file",
+      "command": "cat work/copy",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "execute the bundled shell script",
+      "command": "sh hello.sh",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "clock is derived from actual CIA jiffies",
+      "command": "uptime",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "memory accounting",
+      "command": "mem",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "physical CIA keyboard matrix",
+      "command": "keys:pwd",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "physical Shift, quotes and >",
+      "command": "keys:echo \"Shift Works\" > keyfile",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "physical mixed-case input",
+      "command": "cat keyfile",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "physical Ctrl+C cancellation",
+      "command": "keys:echo cancel\u0003",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "shell recovers after cancellation",
+      "command": "echo alive",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "prepare long-line guard",
+      "command": "echo protected > kept",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "overlong command is discarded",
+      "command": "echo overwritten > kept                                                                                                                                            ",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "discarded input has no file side effect",
+      "command": "cat kept",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "mount the isolated D64 fixture",
+      "command": "mount8:demo.d64",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "directory over the actual IEC implementation",
+      "command": "run:6000000:dir",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "observe ASCII SEQ support over IEC",
+      "command": "run:6000000:dcat README",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "prepare atomic import destination",
+      "command": "echo import-sentinel > imported",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "observe complete SEQ import",
+      "command": "run:6000000:import README imported",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "observe imported or preserved bytes",
+      "command": "cat imported",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "reject 513-byte import",
+      "command": "run:6000000:import LARGE imported",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "failed import preserves the original RAM file",
+      "command": "cat imported",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "reject PRG below application memory",
+      "command": "run:4000000:load LOWPRG",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "rejected PRG cannot be executed",
+      "command": "run",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "reject PRG crossing $9FFF",
+      "command": "run:4000000:load OVERPRG",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "overflowed PRG cannot be executed",
+      "command": "run",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "reject a PRG containing only its header",
+      "command": "run:4000000:load EMPTYPRG",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "accept the final byte of application RAM",
+      "command": "run:4000000:load TOPPRG",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "RTS from $9FFF returns to the shell",
+      "command": "run",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "load the native 6510 example",
+      "command": "run:4000000:load HELLO",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "execute native code and return",
+      "command": "run",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "observe SEQ write/DOS status",
+      "command": "run:6000000:export imported SAVED",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "observe SEQ persistence after write",
+      "command": "run:6000000:dcat SAVED",
+      "status": "observed",
+      "problems": []
+    },
+    {
+      "test": "shell still accepts commands after disk work",
+      "command": "echo integration-complete",
+      "status": "passed",
+      "problems": []
+    },
+    {
+      "test": "SEQ read/import outcome and atomic failure",
+      "status": "limited",
+      "detail": "This public emulator revision only opens PRG entries and does not parse SEQ suffixes; the ROM reports read/import errors and preserves the existing RAM file. Actual-core SEQ reads/imports are not verified."
+    },
+    {
+      "test": "SEQ write outcome is reported honestly",
+      "status": "limited",
+      "detail": "This public emulator revision rejects normal SEQ creation; the ROM reports the DOS/I/O error. Persistent SEQ export is not verified in this actual-core run."
+    }
+  ]
+}

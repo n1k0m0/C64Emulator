@@ -375,9 +375,12 @@ namespace C64Emulator
 
             try
             {
-                using (var window = new C64Window(C64Model.Pal,
-                    openRomDirectory == null ? "C64 Emulator" : "C64 Emulator - Open ROMs",
-                    openRomDirectory))
+                string windowTitle = openRomDirectory == null
+                    ? "C64 Emulator"
+                    : string.Equals(openRomDirectory, RomStartupDownloader.GetBundledUxRomDirectory(), StringComparison.OrdinalIgnoreCase)
+                        ? "C64 Emulator - C64/UX (Experimental)"
+                        : "C64 Emulator - Open ROMs";
+                using (var window = new C64Window(C64Model.Pal, windowTitle, openRomDirectory))
                 {
                     StartupUpdateChecker.CheckForUpdatesOnStartup(window.RequestClose);
                     window.Run();
@@ -421,6 +424,7 @@ namespace C64Emulator
             EmulatorSettings settings = EmulatorSettingsStore.Load();
             bool originalsPresent = RomPathResolver.HasCompleteRomSet();
             bool openReady = RomStartupDownloader.BundledOpenRomsAvailable();
+            bool uxReady = RomStartupDownloader.BundledUxRomsAvailable();
 
             if (string.IsNullOrEmpty(settings.RomDownloadChoice))
             {
@@ -465,6 +469,11 @@ namespace C64Emulator
             }
 
             bool wantsOpen = string.Equals(settings.RomSet, "Open", StringComparison.OrdinalIgnoreCase);
+            bool wantsUx = string.Equals(settings.RomSet, "Ux", StringComparison.OrdinalIgnoreCase);
+            if (wantsUx && uxReady)
+            {
+                return RomStartupDownloader.GetBundledUxRomDirectory();
+            }
             if (settings.RomDownloadChoice == "No")
             {
                 // The original ROM download was declined: the bundled open set

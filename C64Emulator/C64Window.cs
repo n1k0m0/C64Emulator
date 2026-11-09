@@ -97,7 +97,8 @@ namespace C64Emulator
         private enum RomSet
         {
             Original,
-            Open
+            Open,
+            Ux
         }
 
         /// <summary>
@@ -365,7 +366,9 @@ namespace C64Emulator
             _loadedSettings = EmulatorSettingsStore.Load();
             if (_openRomDirectory != null)
             {
-                _romSet = RomSet.Open;
+                // Program resolves the bundled directories before constructing the
+                // window; identify which bundled set the passed directory belongs to.
+                _romSet = IsUxBundledRomDirectory(_openRomDirectory) ? RomSet.Ux : RomSet.Open;
             }
             else
             {
@@ -375,6 +378,17 @@ namespace C64Emulator
                     if (RomStartupDownloader.BundledOpenRomsAvailable())
                     {
                         _openRomDirectory = RomStartupDownloader.GetBundledOpenRomDirectory();
+                    }
+                    else
+                    {
+                        _romSet = RomSet.Original;
+                    }
+                }
+                else if (_romSet == RomSet.Ux)
+                {
+                    if (RomStartupDownloader.BundledUxRomsAvailable())
+                    {
+                        _openRomDirectory = RomStartupDownloader.GetBundledUxRomDirectory();
                     }
                     else
                     {
@@ -911,7 +925,11 @@ namespace C64Emulator
             UpdateNetworkSendFps();
             UpdateNetworkTrafficRates();
 
-            string romSetTitleSuffix = _romSet == RomSet.Open ? " - Open ROMs" : string.Empty;
+            string romSetTitleSuffix = _romSet == RomSet.Open
+                ? " - Open ROMs"
+                : _romSet == RomSet.Ux
+                    ? " - C64/UX (Experimental)"
+                    : string.Empty;
             if (_networkMode == NetworkSessionMode.Host)
             {
                 // Host title intentionally shows network send FPS and render FPS, but not
@@ -6825,7 +6843,7 @@ namespace C64Emulator
 
             if (_audioOverlaySelection == 17)
             {
-                RequestRomSetSwitch(_romSet == RomSet.Open ? RomSet.Original : RomSet.Open);
+                CycleRomSet();
                 return;
             }
 
@@ -6873,7 +6891,7 @@ namespace C64Emulator
         {
             if (_openRomDirectory != null)
             {
-                _overlayStatusText = "LOAD HACK OFF (OPEN ROM)";
+                _overlayStatusText = "LOAD HACK OFF (" + FormatRomSet(_romSet) + " ROM)";
                 return;
             }
             _system.EnableLoadHack = !_system.EnableLoadHack;
@@ -7889,7 +7907,11 @@ namespace C64Emulator
                     DrawOverlayItem(x, y, "RESET MODE", GetResetModeFill(_resetMode), FormatResetMode(_resetMode), "WARM", "POWER", _audioOverlaySelection == menuIndex, enabled);
                     break;
                 case 17:
-                    DrawOverlayItem(x, y, "ROM SET", _romSet == RomSet.Open ? 1.0f : 0.0f, FormatRomSet(_romSet), "ORIGINAL", "OPEN", _audioOverlaySelection == menuIndex, enabled);
+                    DrawOverlayItem(x, y, "ROM SET", GetRomSetFill(_romSet), FormatRomSet(_romSet), "ORIGINAL", "C64/UX", _audioOverlaySelection == menuIndex, enabled);
+                    if (_romSet == RomSet.Ux)
+                    {
+                        DrawOverlayText(x + 190, y + 20, "EXPERIMENTAL", 1, 255, 190, 108);
+                    }
                     break;
                 case 18:
                     DrawOverlayItem(x, y, "DRIVE OVERLAY", _driveOverlayEnabled ? 1.0f : 0.0f, _driveOverlayEnabled ? "ON" : "OFF", "OFF", "ON", _audioOverlaySelection == menuIndex, enabled);
@@ -8476,11 +8498,66 @@ namespace C64Emulator
         /// </summary>
         private static string FormatRomSet(RomSet romSet)
         {
-            return romSet == RomSet.Open ? "OPEN" : "ORIGINAL";
+            switch (romSet)
+            {
+                case RomSet.Open:
+                    return "OPEN";
+                case RomSet.Ux:
+                    return "C64/UX";
+                default:
+                    return "ORIGINAL";
+            }
         }
 
         /// <summary>
-        /// Opens the confirmation for switching between the original and the bundled open ROM set.
+        /// Gets the normalized fill for the three-state ROM SET overlay bar.
+        /// </summary>
+        private static float GetRomSetFill(RomSet romSet)
+        {
+            switch (romSet)
+            {
+                case RomSet.Open:
+                    return 0.5f;
+                case RomSet.Ux:
+                    return 1.0f;
+                default:
+                    return 0.0f;
+            }
+        }
+
+        /// <summary>
+        /// Cycles the ROM image set and asks for confirmation before applying it.
+        /// </summary>
+        private void CycleRomSet()
+        {
+            RomSet target;
+            switch (_romSet)
+            {
+                case RomSet.Open:
+                    target = RomSet.Ux;
+                    break;
+                case RomSet.Ux:
+                    target = RomSet.Original;
+                    break;
+                default:
+                    target = RomSet.Open;
+                    break;
+            }
+
+            RequestRomSetSwitch(target);
+        }
+
+        /// <summary>
+        /// Returns whether the directory is the bundled C64/UX ROM set directory.
+        /// </summary>
+        private static bool IsUxBundledRomDirectory(string directory)
+        {
+            return !string.IsNullOrEmpty(directory) &&
+                string.Equals(Path.GetFullPath(directory), Path.GetFullPath(RomStartupDownloader.GetBundledUxRomDirectory()), StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Opens the confirmation for switching between the bundled ROM sets and the original set.
         /// </summary>
         private void RequestRomSetSwitch(RomSet targetRomSet)
         {
@@ -8492,6 +8569,12 @@ namespace C64Emulator
             if (targetRomSet == RomSet.Open && !RomStartupDownloader.BundledOpenRomsAvailable())
             {
                 _overlayStatusText = "OPEN ROMS MISSING";
+                return;
+            }
+
+            if (targetRomSet == RomSet.Ux && !RomStartupDownloader.BundledUxRomsAvailable())
+            {
+                _overlayStatusText = "C64UX ROMS MISSING";
                 return;
             }
 
@@ -8527,7 +8610,9 @@ namespace C64Emulator
             _romSet = targetRomSet;
             _openRomDirectory = targetRomSet == RomSet.Open
                 ? RomStartupDownloader.GetBundledOpenRomDirectory()
-                : null;
+                : targetRomSet == RomSet.Ux
+                    ? RomStartupDownloader.GetBundledUxRomDirectory()
+                    : null;
             PerformSystemReset();
             _system.EnableLoadHack = _openRomDirectory == null && _loadedSettings.EnableLoadHack;
             _overlayStatusText = "ROM SET " + FormatRomSet(targetRomSet);
@@ -9266,7 +9351,9 @@ namespace C64Emulator
                 title = "SWITCH ROM SET";
                 infoLine1 = _confirmationRomSetTarget == RomSet.Open
                     ? "USE BUNDLED OPEN ROMS"
-                    : "USE ORIGINAL ROMS";
+                    : _confirmationRomSetTarget == RomSet.Ux
+                        ? "C64/UX EXPERIMENTAL"
+                        : "USE ORIGINAL ROMS";
                 infoLine2 = "MACHINE RESETS";
             }
             else

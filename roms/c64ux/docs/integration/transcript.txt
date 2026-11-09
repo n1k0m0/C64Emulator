@@ -1,0 +1,213 @@
+### BOOT
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### pwd
+pwd
+/home/root
+root@c64:/home/root#
+
+### uname
+uname
+C64/UX 0.2.0 c64 6510
+root@c64:/home/root#
+
+### echo "Hello world" > note
+echo "Hello world" > note
+root@c64:/home/root#
+
+### cat note
+cat note
+Hello world
+root@c64:/home/root#
+
+### echo second >> note
+echo second >> note
+root@c64:/home/root#
+
+### cat note
+cat note
+Hello world
+second
+root@c64:/home/root#
+
+### mkdir work
+mkdir work
+root@c64:/home/root#
+
+### cp note work/copy
+cp note work/copy
+root@c64:/home/root#
+
+### cat work/copy
+cat work/copy
+Hello world
+second
+root@c64:/home/root#
+
+### sh hello.sh
+sh hello.sh
+Hello from C64/UX
+C64/UX 0.2.0 c64 6510
+/home/root
+scripts work
+root@c64:/home/root#
+
+### uptime
+uptime
+up 9 seconds (60 Hz jiffies)
+root@c64:/home/root#
+
+### mem
+mem
+ROM  16 KiB (shell + KERNAL)
+RAM  64 KiB physical
+APP  $6000-$9fff: 16 KiB
+FS   32 fixed slots x 512 bytes
+NODES 12/32 allocated
+DATA  641 bytes stored
+root@c64:/home/root#
+
+### keys:pwd
+pwd
+/home/root
+root@c64:/home/root#
+
+### keys:echo "Shift Works" > keyfile
+echo "Shift Works" > keyfile
+root@c64:/home/root#
+
+### cat keyfile
+cat keyfile
+Shift Works
+root@c64:/home/root#
+
+### keys:echo cancel
+echo cancel^C
+root@c64:/home/root#
+root@c64:/home/root#
+
+### echo alive
+echo alive
+alive
+root@c64:/home/root#
+
+### echo protected > kept
+echo protected > kept
+root@c64:/home/root#
+
+### echo overwritten > kept
+echo overwritten > kept
+error: line too long, command discarded
+root@c64:/home/root#
+
+### cat kept
+cat kept
+protected
+root@c64:/home/root#
+
+### mount8:demo.d64
+DISK MOUNTED IN DRIVE 8
+
+
+### run:6000000:dir
+dir
+0 "C64UX DEMO" UX
+1 "HELLO" PRG
+1 "README" SEQ
+3 "LARGE" SEQ
+1 "LOWPRG" PRG
+1 "OVERPRG" PRG
+1 "TOPPRG" PRG
+1 "EMPTYPRG" PRG
+root@c64:/home/root#
+
+### run:6000000:dcat README
+dcat README
+disk: I/O, DOS or filename error
+root@c64:/home/root#
+
+### echo import-sentinel > imported
+echo import-sentinel > imported
+root@c64:/home/root#
+
+### run:6000000:import README imported
+import README imported
+disk: I/O, DOS or filename error
+root@c64:/home/root#
+
+### cat imported
+cat imported
+import-sentinel
+root@c64:/home/root#
+
+### run:6000000:import LARGE imported
+import LARGE imported
+disk: I/O, DOS or filename error
+root@c64:/home/root#
+
+### cat imported
+cat imported
+import-sentinel
+root@c64:/home/root#
+
+### run:4000000:load LOWPRG
+load LOWPRG
+load: PRG must fit $6000-$9fff
+root@c64:/home/root#
+
+### run
+run
+run: no program loaded
+root@c64:/home/root#
+
+### run:4000000:load OVERPRG
+load OVERPRG
+load: PRG must fit $6000-$9fff
+root@c64:/home/root#
+
+### run
+run
+run: no program loaded
+root@c64:/home/root#
+
+### run:4000000:load EMPTYPRG
+load EMPTYPRG
+load: PRG must fit $6000-$9fff
+root@c64:/home/root#
+
+### run:4000000:load TOPPRG
+load TOPPRG
+root@c64:/home/root#
+
+### run
+run
+root@c64:/home/root#
+
+### run:4000000:load HELLO
+load HELLO
+root@c64:/home/root#
+
+### run
+run
+hello from a native 6510 program!
+root@c64:/home/root#
+
+### run:6000000:export imported SAVED
+export imported SAVED
+disk: I/O, DOS or filename error
+root@c64:/home/root#
+
+### run:6000000:dcat SAVED
+dcat SAVED
+disk: I/O, DOS or filename error
+root@c64:/home/root#
+
+### echo integration-complete
+echo integration-complete
+integration-complete
+root@c64:/home/root#

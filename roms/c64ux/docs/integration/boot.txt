@@ -1,0 +1,6 @@
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM . 64 KiB RAM . device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#

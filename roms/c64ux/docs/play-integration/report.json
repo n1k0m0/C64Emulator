@@ -1,0 +1,350 @@
+{
+  "suite": "Actual C64Emulator PLAY and game integration",
+  "emulator_repository": "https://github.com/n1k0m0/C64Emulator",
+  "emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "pinned_revision": true,
+  "firmware_execution": "Unchanged ROM instructions on the external CPU, VIC, SID, CIA and IEC core",
+  "load_shortcut": false,
+  "kernal_iec_hooks": false,
+  "automatic_host_input_injection": false,
+  "game_input": "Physical keyboard matrix via KeyboardKeyDown/KeyboardKeyUp; apple route chosen from read-only game/screen observations",
+  "host_audio_sink_only_is_replaced": true,
+  "sound_scope": "SID synthesis is executed and register/envelope state captured; audible output is not evaluated",
+  "game_observation_source": "https://github.com/AdvancingDevelopment/c64snake/blob/d45412cef4242f97d505f8913509c5542939b768/src/constants.asm",
+  "serpent64_version": "1.0.4",
+  "serpent64_upstream_commit": "d45412cef4242f97d505f8913509c5542939b768",
+  "serpent64_prg_changed_for_tests": false,
+  "coverage_limits": [
+    "Proves these scenarios on the pinned emulator revision, not all C64 games or physical hardware.",
+    "SERPENT64 was exercised through its title, first apple, steering, pause and title return; all levels and high-score persistence were not tested.",
+    "Original Commodore BASIC/KERNAL private routines, cartridges, tape and custom fast loaders are outside this proof.",
+    "Mid-read fault injection is covered separately by controlled public-file-API instruction tests, not this normal IEC run."
+  ],
+  "scenarios": 36,
+  "checks": 25,
+  "seconds": 129.448,
+  "rom_sha256": {
+    "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+    "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+    "c64-basic-kernal.bin": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49",
+    "c64-character.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+    "open-basic64.bin": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a",
+    "open-character-rom64.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-kernal64.bin": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9"
+  },
+  "asset_sha256": {
+    "play-fixtures.d64": "ba88bab477482c2f99b208a081e2be1d75b69630c7944e385fd735a6d49db3c1",
+    "play-games.d64": "b3a2e69c8d7fe8d1676054f68aecbb77870aaf53c6dbf90b597fe590b5f3c9ba",
+    "rom_runner.prg": "a2d9329fa8092d18d038b3c6ea4a1f4414d46faac5709c7466ec7716f6e54604",
+    "rom_runner.map": "2ea8e9b1c562add012548fd153d9bc8055f8ae5517d42ec4b2b666101bfae4a7",
+    "serpent64.d64": "0e6ca2e47be076d2704e26fe346f0503fb3ef6d47fbe21bf264f5b7e66f2ede9",
+    "serpent64.prg": "f1c1219eddc1de4729ce1455127c23e040a7148efb8d83e87bc1c76e29bbe734"
+  },
+  "rom_runner_observations": {
+    "2": {
+      "game_state": 0,
+      "player_x": 20,
+      "score_ones": 0,
+      "lives": 3
+    },
+    "3": {
+      "game_state": 1,
+      "player_x": 20,
+      "score_ones": 0,
+      "lives": 3
+    },
+    "4": {
+      "game_state": 1,
+      "player_x": 20,
+      "score_ones": 1,
+      "lives": 3
+    },
+    "5": {
+      "game_state": 1,
+      "player_x": 32,
+      "score_ones": 1,
+      "lives": 3
+    },
+    "6": {
+      "game_state": 1,
+      "player_x": 20,
+      "score_ones": 1,
+      "lives": 3
+    }
+  },
+  "serpent64_observations": {
+    "2": {
+      "state": 0,
+      "head_x": 0,
+      "head_y": 0,
+      "direction": 0,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 0
+    },
+    "3": {
+      "state": 2,
+      "head_x": 0,
+      "head_y": 0,
+      "direction": 0,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 0
+    },
+    "4": {
+      "state": 3,
+      "head_x": 21,
+      "head_y": 12,
+      "direction": 1,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 0
+    },
+    "5": {
+      "state": 3,
+      "head_x": 21,
+      "head_y": 9,
+      "direction": 0,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 0
+    },
+    "6": {
+      "state": 3,
+      "head_x": 17,
+      "head_y": 9,
+      "direction": 3,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 0
+    },
+    "7": {
+      "state": 3,
+      "head_x": 7,
+      "head_y": 4,
+      "direction": 3,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 1
+    },
+    "8": {
+      "state": 9,
+      "head_x": 7,
+      "head_y": 4,
+      "direction": 3,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 1
+    },
+    "9": {
+      "state": 9,
+      "head_x": 7,
+      "head_y": 4,
+      "direction": 3,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 1
+    },
+    "11": {
+      "state": 0,
+      "head_x": 7,
+      "head_y": 4,
+      "direction": 3,
+      "lives": 3,
+      "level": 1,
+      "food_eaten": 1
+    }
+  },
+  "results": [
+    {
+      "test": "All three runs cold boot the supplied ROMs",
+      "status": "passed"
+    },
+    {
+      "test": "No CPU JAM during any scenario",
+      "status": "passed"
+    },
+    {
+      "test": "Firmware images remain unchanged throughout execution",
+      "status": "passed"
+    },
+    {
+      "test": "6 KiB BASIC SYS PRG overwrites shell workspace and executes",
+      "status": "passed",
+      "transcript": "play SYSDEMO\nChecking game...\nStarting game. RAM files released.\nPLAY SYS OK\nC64/UX 0.2.0\nUnix-like ROM system for the 6510\n\n16 KiB ROM | 64 KiB RAM | device 8\nRAM files are volatile. Type help.\nroot@c64:/home/root# ",
+      "execution_marker": 165
+    },
+    {
+      "test": "Machine code executes at its original $2000 address",
+      "status": "passed",
+      "transcript": "play DIRECT\nChecking game...\nStarting game. RAM files released.\nPLAY DIRECT OK\nC64/UX 0.2.0\nUnix-like ROM system for the 6510\n\n16 KiB ROM | 64 KiB RAM | device 8\nRAM files are volatile. Type help.\nroot@c64:/home/root# ",
+      "execution_marker": 165
+    },
+    {
+      "test": "Machine code loads and executes in RAM under BASIC at $A000",
+      "status": "passed",
+      "transcript": "play UNDERROM\nChecking game...\nStarting game. RAM files released.\nPLAY ROM RAM OK\nC64/UX 0.2.0\nUnix-like ROM system for the 6510\n\n16 KiB ROM | 64 KiB RAM | device 8\nRAM files are volatile. Type help.\nroot@c64:/home/root# ",
+      "execution_marker": 165
+    },
+    {
+      "test": "Explicit $0840 entry executes a PRG without a BASIC stub",
+      "status": "passed",
+      "transcript": "play EXPLICIT $0840\nChecking game...\nStarting game. RAM files released.\nPLAY EXPLICIT OK\nC64/UX 0.2.0\nUnix-like ROM system for the 6510\n\n16 KiB ROM | 64 KiB RAM | device 8\nRAM files are volatile. Type help.\nroot@c64:/home/root# ",
+      "execution_marker": 165
+    },
+    {
+      "test": "Successful game launch releases the prior RAM filesystem",
+      "status": "passed"
+    },
+    {
+      "test": "RTS at the last supported RAM byte $CFFF returns through cold boot",
+      "status": "passed"
+    },
+    {
+      "test": "A PRG crossing into $D000 is rejected and keeps the RAM file",
+      "status": "passed"
+    },
+    {
+      "test": "A BASIC-only program is rejected and keeps the RAM file",
+      "status": "passed"
+    },
+    {
+      "test": "The terminal still accepts commands after the fixture scenarios",
+      "status": "passed"
+    },
+    {
+      "test": "ROM RUNNER reaches its title through the actual IEC loader",
+      "status": "passed",
+      "observed": {
+        "game_state": 0,
+        "player_x": 20,
+        "score_ones": 0,
+        "lives": 3
+      }
+    },
+    {
+      "test": "Physical SPACE starts ROM RUNNER",
+      "status": "passed",
+      "observed": {
+        "game_state": 1,
+        "player_x": 20,
+        "score_ones": 0,
+        "lives": 3
+      }
+    },
+    {
+      "test": "ROM RUNNER catches a star and earns a point with three lives",
+      "status": "passed",
+      "observed": {
+        "game_state": 1,
+        "player_x": 20,
+        "score_ones": 1,
+        "lives": 3
+      },
+      "sid_debug": "model=6581 vol=F fc=000 res=0 mode=0F osc3=00 env3=00 v0=f=2400 pw=800 c=00 e=28 s=Release v1=f=0000 pw=000 c=00 e=00 s=Release v2=f=0000 pw=000 c=00 e=00 s=Release"
+    },
+    {
+      "test": "Physical D and A move the ROM RUNNER player in both directions",
+      "status": "passed",
+      "positions": [
+        20,
+        32,
+        20
+      ]
+    },
+    {
+      "test": "Q returns from ROM RUNNER to a fresh, working terminal",
+      "status": "passed"
+    },
+    {
+      "test": "Unmodified SERPENT64 v1.0.4 reaches its title through IEC",
+      "status": "passed",
+      "observed": {
+        "state": 0,
+        "head_x": 0,
+        "head_y": 0,
+        "direction": 0,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 0
+      }
+    },
+    {
+      "test": "Physical SPACE starts the third-party game",
+      "status": "passed",
+      "observed": {
+        "state": 3,
+        "head_x": 21,
+        "head_y": 12,
+        "direction": 1,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 0
+      }
+    },
+    {
+      "test": "Physical W steers the third-party snake upwards",
+      "status": "passed",
+      "observed": {
+        "state": 3,
+        "head_x": 21,
+        "head_y": 9,
+        "direction": 0,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 0
+      }
+    },
+    {
+      "test": "Physical A steers the third-party snake left",
+      "status": "passed",
+      "observed": {
+        "state": 3,
+        "head_x": 17,
+        "head_y": 9,
+        "direction": 3,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 0
+      }
+    },
+    {
+      "test": "A physical WASD route to the observed apple earns points",
+      "status": "passed",
+      "observed": {
+        "state": 3,
+        "head_x": 7,
+        "head_y": 4,
+        "direction": 3,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 1
+      },
+      "route": "Physical SERPENT64 route WA: (17,9) -> (7,4), food 0->1, 1941000 cycles\n",
+      "sid_debug": "model=6581 vol=F fc=000 res=0 mode=0F osc3=40 env3=CA v0=f=3A89 pw=800 c=40 e=00 s=Release v1=f=0751 pw=000 c=10 e=00 s=Release v2=f=1480 pw=800 c=41 e=CA s=Decay"
+    },
+    {
+      "test": "SPACE pauses SERPENT64 and its position remains fixed",
+      "status": "passed",
+      "observed": {
+        "state": 9,
+        "head_x": 7,
+        "head_y": 4,
+        "direction": 3,
+        "lives": 3,
+        "level": 1,
+        "food_eaten": 1
+      }
+    },
+    {
+      "test": "Q leaves SERPENT64's pause screen for its title",
+      "status": "passed"
+    },
+    {
+      "test": "Emulator cold reset restores a usable terminal after SERPENT64",
+      "status": "passed"
+    }
+  ],
+  "success": true
+}

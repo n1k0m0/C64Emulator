@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <Target Name="ValidateEmulatorSource" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(EmulatorSourceRoot)' == ''" Text="Pass -p:EmulatorSourceRoot=/absolute/path/to/C64Emulator (see README.md)." />
+    <Error Condition="!Exists('$(EmulatorSourceRoot)/C64Emulator/Machine/C64System.cs')" Text="EmulatorSourceRoot must identify the C64Emulator repository root." />
+  </Target>
+  <ItemGroup>
+    <Compile Include="$(EmulatorSourceRoot)/C64Emulator/**/*.cs"
+      Exclude="$(EmulatorSourceRoot)/C64Emulator/Program.cs;$(EmulatorSourceRoot)/C64Emulator/C64Window.cs;$(EmulatorSourceRoot)/C64Emulator/RomStartupDownloader.cs;$(EmulatorSourceRoot)/C64Emulator/Updates/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/Properties/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/Network/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/Golden/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/Accuracy/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/Sid/SidAudioOutput.cs;$(EmulatorSourceRoot)/C64Emulator/Machine/OpenRomBootCapture.cs;$(EmulatorSourceRoot)/C64Emulator/obj/**/*.cs;$(EmulatorSourceRoot)/C64Emulator/bin/**/*.cs" />
+    <Compile Include="$(EmulatorSourceRoot)/SharpPixels/Input/OpenTkInputCompatibility.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Stubs.cs" />
+  </ItemGroup>
+</Project>

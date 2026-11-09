@@ -63,6 +63,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The bundled C64/UX shell ROM set; it reuses the open ROM file names. -->
+    <Content Include="..\roms\c64ux\roms\open-basic64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="c64ux-roms\open-basic64.bin" />
+    <Content Include="..\roms\c64ux\roms\open-kernal64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="c64ux-roms\open-kernal64.bin" />
+    <Content Include="..\roms\c64ux\roms\open-character-rom64.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="c64ux-roms\open-character-rom64.bin" />
+    <Content Include="..\roms\c64ux\roms\open-1541-dos.bin" CopyToOutputDirectory="PreserveNewest" TargetPath="c64ux-roms\open-1541-dos.bin" />
+    <Content Include="..\roms\c64ux\roms\manifest.json" CopyToOutputDirectory="PreserveNewest" TargetPath="c64ux-roms\manifest.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="NAudio" Version="2.3.0" />
   </ItemGroup>
 </Project>

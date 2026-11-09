@@ -1,0 +1,80 @@
+{
+  "suite": "C64/UX game loader instruction contract",
+  "actual_rom_instructions": true,
+  "controlled_public_kernal_file_endpoints": true,
+  "iec_signaling_verified": false,
+  "rom_sha256": {
+    "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+    "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+    "c64-basic-kernal.bin": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49",
+    "c64-character.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+    "open-basic64.bin": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a",
+    "open-character-rom64.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-kernal64.bin": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9"
+  },
+  "images_unchanged_during_run": true,
+  "tests_run": 14,
+  "tests": [
+    {
+      "name": "__main__.PlayTests.test_basic_sys_overwrites_shell_workspace_and_returns_by_reset",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_changed_second_pass_data_never_reaches_game_entry",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_direct_programs_use_their_original_addresses",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_empty_headers_and_loads_outside_supported_ram_are_rejected",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_explicit_decimal_and_hex_entry_are_inside_payload",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_explicit_entry_syntax_and_bounds_are_checked",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_game_entry_has_c64_registers_memory_pointers_and_terminal",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_last_ram_byte_is_valid_but_io_boundary_is_rejected",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_missing_file_and_first_pass_io_failure_preserve_session",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_ram_under_basic_rom_is_loaded_and_executable",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_return_trampoline_restores_banking_and_reset_clears_sprites",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_second_pass_io_failure_cold_resets_after_partial_write",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_unsupported_or_malformed_basic_is_rejected_before_loading",
+      "passed": true
+    },
+    {
+      "name": "__main__.PlayTests.test_whitespace_and_leading_zeroes_in_literal_sys",
+      "passed": true
+    }
+  ],
+  "failures": [],
+  "errors": [],
+  "success": true,
+  "seconds": 38.625
+}

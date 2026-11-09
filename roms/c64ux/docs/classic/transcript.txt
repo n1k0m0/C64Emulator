@@ -1,0 +1,258 @@
+### BOOT
+CPU PC=$E97C  jiffies=73
+
+        **** OPEN BASIC 64 ****
+
+ 64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+READY.
+
+### keys:PRINT 1+1
+CPU PC=$E921  jiffies=158
+
+        **** OPEN BASIC 64 ****
+
+ 64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+READY.
+PRINT 1+1
+ 2
+
+READY.
+
+### mount8:play-games.d64
+CPU PC=$E97A  jiffies=206
+
+        **** OPEN BASIC 64 ****
+
+ 64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+READY.
+PRINT 1+1
+ 2
+
+READY.
+
+### run:6000000:LOAD "ROMRUNNER",8,1
+CPU PC=$E925  jiffies=379
+
+        **** OPEN BASIC 64 ****
+
+ 64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+READY.
+PRINT 1+1
+ 2
+
+READY.
+LOAD "ROMRUNNER",8,1
+
+READY.
+
+### keys:RUN
+CPU PC=$088B  jiffies=442
+
+
+
+           R O M  R U N N E R
+
+        AN ORIGINAL C64/UX GAME
+
+
+   * CATCH THE STARS WITH YOUR <A> SHIP
+
+   X DODGE THE RED FALLING ROCKS
+
+   MISSED STAR OR ROCK HIT: LOSE 1 LIFE
+
+   3 LIVES. FASTER AT 10,20,30 STARS.
+
+
+     MOVE: HOLD A / D OR JOYSTICK 2
+
+     R RESTARTS   Q OR RUN/STOP EXITS
+
+
+        PRESS SPACE OR FIRE TO PLAY
+
+### classic-hold:Space:60000
+CPU PC=$088B  jiffies=449
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 000       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:                             X        :
+:                                      :
+:                                      :
+:         X                            :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                   *                  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                  <A>                 :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### classic-wait:1100000
+CPU PC=$0889  jiffies=516
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 001       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:                                      :
+:                                   *  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                             X        :
+:                                      :
+:                                      :
+:         X                            :
+:                                      :
+:                                      :
+:                  <A>                 :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### classic-hold:D:150000
+CPU PC=$088E  jiffies=528
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 001       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                   *  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                             X        :
+:                                      :
+:                                      :
+:         X                            :
+:                           <A>        :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### classic-hold:A:150000
+CPU PC=$088A  jiffies=540
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 001       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:     X                                :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                   *  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                             X        :
+:                                      :
+:                  <A>                 :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### classic-hold:Q:60000
+CPU PC=$E921  jiffies=547
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 001       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:     X                                :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                   *  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+READY.                                 :
+:                                      :
+:                                      :
+:                                      :
+:                             X        :
+:                                      :
+:                  <A>                 :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### keys:PRINT 2+2
+CPU PC=$E954  jiffies=632
+  ROM RUNNER             CATCH * DODGE X
+  SCORE 001       LIVES 3     SPEED 3
+----------------------------------------
+:                                      :
+:     X                                :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                   *  :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+:                                      :
+READY.                                 :
+PRINT 2+2                              :
+ 4                                     :
+:                                      :
+READY.                        X        :
+:                                      :
+:                  <A>                 :
+----------------------------------------
+  A/D OR JOY2 MOVE     R RESTART
+  Q OR RUN/STOP RETURNS TO C64/UX
+
+### Separate physical quoted-LOAD probe
+With this unchanged classic keyboard routine and the harness's physical matrix path, Shift+quote does not reliably enter the required quotation marks. The observed command 'LOAD 2ROMRUNNER,8,1' reports ?SYNTAX ERROR. The successful game load above therefore uses an explicitly queued PETSCII command. Its IEC transfer and subsequent RUN/game controls still execute in the real core.
+
+        **** OPEN BASIC 64 ****
+
+ 64K RAM SYSTEM  38911 BASIC BYTES FREE
+
+READY.
+LOAD 2ROMRUNNER,8,1
+
+?SYNTAX ERROR
+
+READY.

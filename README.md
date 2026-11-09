@@ -2,7 +2,7 @@
 
 A Commodore 64 emulator written in C# with an OpenTK/SharpPixels rendering frontend, SID audio output, IEC bus handling, savestates, and Commodore 1541 drive emulation.
 
-Latest GitHub release: [C64Emulator 0.3.18](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.18), including a self-contained Windows x64 setup package.
+Latest GitHub release: [C64Emulator 0.3.21](https://github.com/n1k0m0/C64Emulator/releases/tag/v0.3.21), including a self-contained Windows x64 setup package.
 
 `SharpPixels` is my own small library for pixel-oriented games and Experiments based on OpenTK. It was inspired by the OneLoneCoder Pixel Game Engine and by Javidx9's excellent videos, which have been a wonderful source of motivation for approachable, hands-on graphics and emulator programming.
 
@@ -19,15 +19,21 @@ This project is not intended to replace the excellent VICE emulator in any way. 
 - **Network Play** — play with friends over the network: the server emulates the C64 while clients receive video and audio and send joystick and keyboard input
 - **Automatic updates** — checks for new releases and provides an easy way to update to the latest version
 - **Easy installation** — a ready-to-use Windows installer handles the complete setup
-- **Easy ROM setup** — on the very first start the emulator asks once whether to download the original C64 and 1541 ROMs. Answering no remembers the decision and uses the bundled open ROM set by default; the F10 settings overlay (`ROM SET`) can switch to the original ROMs at any time; when the original files are not present yet, it first asks whether to download them and then offers the download
+- **Easy ROM setup** — on the first start the emulator offers to download the original C64 and 1541 ROMs. The F10 settings overlay (`ROM SET`) lets you choose the downloaded originals, bundled Open BASIC, or the experimental C64/UX shell.
 
 ## Experimental open C64 ROMs
 
 The repository ships the open C64 ROM package [`2026.11.07-rc4`](roms/README.md): Open Basic 64, Open Kernal 64, Open Character Rom 64, and the Open 1541 bootstrap. The BASIC interpreter is a C64 port of Microsoft's officially open-sourced [BASIC for the 6502 v1.1](https://github.com/microsoft/BASIC-M6502) under the MIT license; the KERNAL, character ROM, 1541 helper, and build sources are Apache-2.0. The exact provenance and license texts are in [roms/NOTICE.md](roms/NOTICE.md) and `roms/licenses/`, and the image sizes plus SHA-256 checksums are in [roms/build/manifest.json](roms/build/manifest.json). `python roms/build.py` rebuilds all four images from the included sources with ca65/ld65; the prebuilt images are in `roms/build/roms`.
 
-The build and the Windows installer ship the four ROM images and the manifest in `open-roms/` next to the executable. The F10 settings overlay offers a `ROM SET` entry that switches between the original C64/1541 ROMs (`ORIGINAL`) and the bundled open ROMs (`OPEN`). Switching asks for confirmation; after confirmation the machine power-cycles with the selected set, and declining leaves the current set active. On the very first start the emulator asks once whether to download the original ROMs: answering yes downloads and verifies them and keeps `ORIGINAL` as the active set, while answering no is remembered in the settings and makes the bundled open set the default. Installations where the original ROMs already exist are not asked. Switching `ROM SET` to `ORIGINAL` while the original files are missing first asks whether the original ROMs should be downloaded, and the download dialog only opens after a positive answer; the original set only becomes active after the complete set was downloaded. The open ROM set passes the headless verification (`--verify-open-roms`), which covers boot, BASIC arithmetic and tokenized program editing, KERNAL entries, IEC file service, TAP cassette playback/recording, and RS-232 frames. The RC3 package also carries optional emulator patches; this repository keeps its own TAP/Datassette and serial implementation, so only the ROM images are used. The open set is deliberately not a byte clone of the original: the BASIC keyword table and program line format follow the Microsoft port (for example, `CLS` is not a keyword, and direct-mode `INPUT`/`INPUT#` raise `ILLEGAL DIRECT`, the same as the original ROM), and the character ROM has its own letter shapes. The tested scope and the remaining limits are documented in `roms/README.md` and `roms/docs/VALIDATION.md`.
+The build and Windows installer ship the four open ROM images and their manifest in `open-roms/` next to the executable. They also ship the experimental [C64/UX 0.2.0](roms/c64ux/README_DE.md) shell ROM set in `c64ux-roms/`. C64/UX replaces BASIC with a Unix-like command shell; it is not Linux or POSIX, and it does not run arbitrary Linux programs or every C64 game. Its ROM source, tests, limits, and inherited asset provenance are in `roms/c64ux/` and [its NOTICE](roms/c64ux/NOTICE). The `ROM SET` entry cycles through `ORIGINAL`, `OPEN`, and `C64/UX`; the C64/UX row and switch confirmation say **EXPERIMENTAL**. A confirmed switch power-cycles the machine and is saved for the next start. If the original ROMs are missing, choosing `ORIGINAL` asks before downloading them. The original ROM files are not bundled.
+
+The open ROM set passes headless verification (`--verify-open-roms`) for boot, BASIC, KERNAL entries, IEC file service, TAP cassette, and RS-232. It is not a byte clone of the original: its BASIC keyword table and program format follow the Microsoft port, and its character ROM has its own letter shapes. See [ROM validation](roms/docs/VALIDATION.md) for tested scope and limits. The C64/UX shell passed 40 command scenarios on the current emulator core; SEQ file persistence and broad game compatibility remain experimental.
 
 ## Screenshots
+
+| Downloaded original ROMs | Bundled Open BASIC ROMs | Experimental C64/UX boot | C64/UX commands |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/original-rom-boot.png" alt="Downloaded original C64 ROM boot screen" width="220"> | <img src="docs/screenshots/open-rom-boot.png" alt="Open BASIC 64 boot screen" width="220"> | <img src="docs/screenshots/c64ux-shell-boot.png" alt="Experimental C64/UX shell boot screen" width="220"> | <img src="docs/screenshots/c64ux-shell-commands.png" alt="C64/UX uname and root directory commands" width="220"> |
 
 | C64 boot screen | Main menu | Settings overlay | Controller mapping |
 | --- | --- | --- | --- |
@@ -226,7 +232,7 @@ Menu entries:
 | `IEC SOFTWARE` | `OFF` / `ON` | Toggles the high-level software IEC/DOS transport for standard disk traffic. This can improve compatibility for normal file access, while low-level custom loaders may still need more accurate 1541 behavior. |
 | `INPUT INJECT` | `OFF` / `ON` | Enables host-side input injection for known intro/menu polling loops. This is a pragmatic compatibility helper, not original C64 hardware behavior. |
 | `RESET MODE` | `WARM`, `RELOAD`, `POWER` | Chooses what the main menu `RESET` entry will do. `WARM` restarts the CPU while keeping RAM/media, `RELOAD` restarts and reloads mounted media, and `POWER` performs a fuller machine restart with media remounting. |
-| `ROM SET` | `ORIGINAL`, `OPEN` | Chooses the machine ROMs: the original C64/1541 ROMs or the bundled open ROM set shipped in `open-roms/`. Changing it asks for confirmation; accepting power-cycles the machine with the selected set, and declining keeps the current set active. Switching to `ORIGINAL` while the original ROM files are missing first asks whether to download them, and the download dialog only opens after a positive answer; the switch only completes after the complete set is available. |
+| `ROM SET` | `ORIGINAL`, `OPEN`, `C64/UX` | Chooses downloaded original ROMs, bundled Open BASIC ROMs, or the bundled **experimental** C64/UX shell. The C64/UX selection and confirmation display `EXPERIMENTAL`. Confirming power-cycles the machine. Switching to `ORIGINAL` while its files are missing asks before downloading them. |
 | `DRIVE OVERLAY` | `OFF` / `ON` | Shows or hides the drive activity footer. |
 | `EASYFLASH` | `OFF` / `ON` | Enables or disables the inserted EasyFlash cartridge. |
 | `EF SAVE` | `CLEAN`, `DIRTY`, `SAVE` | Saves flash changes back to the mounted `.crt` file when the cartridge has been modified by software. |
@@ -319,7 +325,7 @@ C64Emulator/bin/x64/Release/C64Emulator.exe
 
 ## Windows Installer
 
-The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.20`.
+The latest Windows setup can be downloaded from the [GitHub Releases](https://github.com/n1k0m0/C64Emulator/releases) page. The current release is `0.3.21`.
 
 The installer build uses Inno Setup 6. If `ISCC.exe` is not available on the PATH, install it first:
 
@@ -467,6 +473,8 @@ The source directory listings are available at:
 - <https://www.zimmers.net/anonftp/pub/cbm/firmware/drives/new/1541/>
 
 When `ROM SET` is `OPEN`, the emulator instead loads the bundled open ROM set from `open-roms/` next to the executable (`open-basic64.bin`, `open-kernal64.bin`, `open-character-rom64.bin`, `open-1541-dos.bin`, plus `manifest.json`); the original ROM files above are then not required.
+
+When `ROM SET` is `C64/UX`, the emulator loads the similarly named files from `c64ux-roms/`. This profile is experimental and boots into a shell instead of BASIC. Neither bundled profile requires a download of the original ROMs.
 
 The bundled open ROM set ships with the emulator under its own licenses: the Microsoft BASIC-derived interpreter is MIT, and the KERNAL, character ROM, 1541 helper, and build sources are Apache-2.0 (see `roms/LICENSE`, `roms/NOTICE.md`, and `roms/licenses/`). The original C64/1541 ROMs downloaded from zimmers.net are not covered by the source-code license and are not redistributed with the emulator. Check the rights for downloaded ROM files and disk/program media before publishing or redistributing a repository or build package.
 

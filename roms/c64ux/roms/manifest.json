@@ -1,0 +1,41 @@
+{
+  "system": "C64/UX",
+  "version": "0.2.0",
+  "shell_core_bytes": 7435,
+  "basic_used_bytes": 7661,
+  "kernal_used_bytes": 6727,
+  "images": {
+    "1541-c000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686"
+    },
+    "1541-e000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc"
+    },
+    "c64-basic-kernal.bin": {
+      "bytes": 16384,
+      "sha256": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49"
+    },
+    "c64-character.bin": {
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38"
+    },
+    "open-1541-dos.bin": {
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522"
+    },
+    "open-basic64.bin": {
+      "bytes": 8192,
+      "sha256": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a"
+    },
+    "open-character-rom64.bin": {
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38"
+    },
+    "open-kernal64.bin": {
+      "bytes": 8192,
+      "sha256": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9"
+    }
+  }
+}

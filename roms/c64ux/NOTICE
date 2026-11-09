@@ -1,0 +1,39 @@
+C64/UX 0.2.0
+
+New shell, RAM filesystem, keyboard extensions, disk interface, game loader,
+ROM RUNNER game, build scripts and tests: Apache License, Version 2.0.
+See LICENSE.
+
+The starting Open Kernal 64 source and standalone 6502 assembler were supplied
+by the user in kernal-private-eddd-current-v2.zip and carry
+SPDX-License-Identifier: Apache-2.0. Their original SPDX markings are retained.
+The new paired images replace the supplied BASIC interpreter and remove its
+floating-point support from the KERNAL.
+
+The supplied open-character-rom64.bin and open-1541-dos.bin are copied unchanged
+from that user-provided archive. Corresponding emulator-named files are exact
+copies or 8 KiB splits. Their sources and a separate license document were not
+included in the supplied archive. No new license grant for those binary assets
+is asserted here. See docs/PROVENANCE.json for source hashes.
+
+The optional profiles/classic/roms directory preserves the user-supplied
+Open BASIC and Open KERNAL binaries unchanged, alongside the same character
+and drive assets. It does not contain Commodore's proprietary original ROMs.
+The complete source needed to rebuild that supplied BASIC binary was not in
+the input archive. This package makes no additional license grant for those
+inherited binaries and does not claim to reproduce the classic profile from
+source. Its manifest records each exact binary.
+
+SERPENT 64 v1.0.4, Copyright (c) 2026 AdvancingDevelopment, is redistributed
+unchanged under the MIT license. Its original LICENSE.txt and README.txt are
+included in third_party/serpent64. The project's Apache-2.0 license does not
+replace that game's license. Release URL, commit and hashes are recorded in
+third_party/serpent64/PROVENANCE.json.
+
+The independent test runner uses py65 (BSD license), installed separately.
+The optional integration harness builds against the user's C64Emulator source;
+that repository and its dependencies are not redistributed in this package.
+
+C64/UX is an independent Unix-like firmware experiment. It contains no Linux
+kernel code and does not implement the Linux ABI. Product names identify
+compatibility targets, not affiliation or endorsement.

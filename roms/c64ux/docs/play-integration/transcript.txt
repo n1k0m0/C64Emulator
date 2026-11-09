@@ -1,0 +1,216 @@
+### fixtures: BOOT
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: mount8:fixtures.d64
+DISK MOUNTED IN DRIVE 8
+
+
+### fixtures: echo keep-me > keeper
+echo keep-me > keeper
+root@c64:/home/root#
+
+### fixtures: run:70000000:play SYSDEMO
+play SYSDEMO
+Checking game...
+Starting game. RAM files released.
+PLAY SYS OK
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: cat keeper
+cat keeper
+error: path missing, invalid or FS full
+root@c64:/home/root#
+
+### fixtures: run:6000000:play DIRECT
+play DIRECT
+Checking game...
+Starting game. RAM files released.
+PLAY DIRECT OK
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: run:6000000:play UNDERROM
+play UNDERROM
+Checking game...
+Starting game. RAM files released.
+PLAY ROM RAM OK
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: run:6000000:play EXPLICIT $0840
+play EXPLICIT $0840
+Checking game...
+Starting game. RAM files released.
+PLAY EXPLICIT OK
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: run:6000000:play TOPRAM
+play TOPRAM
+Checking game...
+Starting game. RAM files released.
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### fixtures: echo boundary-safe > keeper
+echo boundary-safe > keeper
+root@c64:/home/root#
+
+### fixtures: run:6000000:play CROSSIO
+play CROSSIO
+Checking game...
+play: PRG must fit $0800-$cfff
+root@c64:/home/root#
+
+### fixtures: cat keeper
+cat keeper
+boundary-safe
+root@c64:/home/root#
+
+### fixtures: run:6000000:play BASIC
+play BASIC
+Checking game...
+play: invalid entry or no simple SYS
+root@c64:/home/root#
+
+### fixtures: cat keeper
+cat keeper
+boundary-safe
+root@c64:/home/root#
+
+### fixtures: echo play-fixtures-complete
+echo play-fixtures-complete
+play-fixtures-complete
+root@c64:/home/root#
+
+### runner: BOOT
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### runner: mount8:runner.d64
+DISK MOUNTED IN DRIVE 8
+
+
+### runner: run:30000000:play ROMRUNNER
+play ROMRUNNER
+Checking game...
+Starting game. RAM files released.
+
+
+### runner: hold:50000:Space
+
+
+### runner: wait:1100000
+
+
+### runner: hold:200000:D
+
+
+### runner: hold:200000:A
+
+
+### runner: hold:50000:Q
+
+
+### runner: wait:800000
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### runner: echo runner-returned
+echo runner-returned
+runner-returned
+root@c64:/home/root#
+
+### serpent: BOOT
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### serpent: mount8:serpent64.d64
+DISK MOUNTED IN DRIVE 8
+
+
+### serpent: run:140000000:play "SERPENT 64"
+play "SERPENT 64"
+Checking game...
+Starting game. RAM files released.
+
+
+### serpent: hold:50000:Space
+
+
+### serpent: wait:800000
+
+
+### serpent: hold:400000:W
+
+
+### serpent: hold:400000:A
+
+
+### serpent: serpent-food:8000000
+Physical SERPENT64 route WA: (17,9) -> (7,4), food 0->1, 1941000 cycles
+
+
+### serpent: hold:50000:Space
+
+
+### serpent: wait:200000
+
+
+### serpent: hold:50000:Q
+
+
+### serpent: wait:500000
+
+
+### serpent: cold-reset:
+COLD RESET
+C64/UX 0.2.0
+Unix-like ROM system for the 6510
+
+16 KiB ROM | 64 KiB RAM | device 8
+RAM files are volatile. Type help.
+root@c64:/home/root#
+
+### serpent: echo serpent-reset-complete
+echo serpent-reset-complete
+serpent-reset-complete
+root@c64:/home/root#

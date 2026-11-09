@@ -1,0 +1,72 @@
+C64/UX 0.2.0 - Unix-artige C64-ROMs mit Spielmodus
+=================================================
+
+EXPERIMENTELL: In C64Emulator 0.3.21 F10 > SETTINGS > ROM SET > C64/UX
+waehlen und den Neustart bestaetigen. ORIGINAL waehlt die separat
+heruntergeladenen ROMs; OPEN startet den freien BASIC-Satz.
+Die folgenden Dateischritte gelten fuer aeltere Emulator-Versionen.
+
+1. Fuer C64/UX die Dateien aus roms/ verwenden:
+   c64-basic-kernal.bin   - Shell und KERNAL zusammen, 16 KiB
+   c64-character.bin     - Zeichensatz, 4 KiB
+   1541-c000-rom.bin und 1541-e000-rom.bin - vorhandenes Laufwerk-ROM
+
+   Fuer Emulatoren mit getrennten ROM-Dateien liegen auch
+   open-basic64.bin und open-kernal64.bin bereit. IMMER BEIDE austauschen.
+   Am besten ein separates ROM-Profil verwenden.
+
+2. Kalt starten, ohne BASIC-Autostart. Erwarteter Prompt:
+   root@c64:/home/root#
+
+3. ROM RUNNER spielen:
+   examples/play-games.d64 in Laufwerk 8 einlegen, dann eingeben:
+
+   play romrunner
+
+   SPACE startet, A/D oder Joystick 2 bewegt die Figur.
+   Sterne fangen, Felsen ausweichen. R startet eine neue Partie.
+   Q oder RUN/STOP startet die Shell wieder frisch.
+
+4. SERPENT 64 spielen:
+   third_party/serpent64/serpent64.d64 in Laufwerk 8 einlegen:
+
+   play "SERPENT 64"
+
+   SPACE startet/pausiert, W/A/S/D steuert.
+   Im Pausenbildschirm fuehrt Q zum Titel. Emulator-Reset fuehrt zur Shell.
+   Das Spiel ist unveraendert unter MIT-Lizenz beigepackt.
+
+5. Shell ausprobieren:
+   help
+   echo "Hallo Nils" > notiz
+   cat notiz
+   mkdir arbeit
+   cp notiz arbeit/kopie
+   ls arbeit
+   sh hello.sh
+
+6. Klassisches Profil mit deinem bisherigen BASIC:
+   Statt roms/ den kompletten Satz aus profiles/classic/roms/ auswaehlen,
+   dann kalt starten. Einzelheiten und bekannte Tastatureinschraenkung:
+   profiles/classic/README_DE.md
+
+Die gepruefte oeffentliche Emulator-Version bevorzugt ROM-Dateien in
+%APPDATA%\C64Emulator\roms gegenueber Dateien neben der EXE.
+
+WICHTIG:
+- PLAY gibt Shell-RAM und RAM-Dateien an das Spiel ab. Es gibt kein Resume.
+- PLAY liest die Datei zuerst zur Pruefung, dann zum Laden. Geduld bei IEC.
+- PLAY unterstuetzt Nutzdaten $0800-$CFFF und einfache BASIC-SYS-Vorsaetze.
+- Optionaler Start: play name 2061 oder play name $080d.
+- Das ist kein Linux-Kernel und kein vollstaendiger BASIC-Interpreter.
+- Eine allgemeine Kompatibilitaet mit allen C64-Spielen besteht nicht.
+- LOAD/RUN bleibt fuer kooperierende Programme in $6000-$9FFF erhalten.
+- RAM-Dateien verschwinden auch beim Kaltstart/reboot; maximal 512 Byte/Datei.
+- SEQ-Lesen/Schreiben ist im alten oeffentlichen Emulator eingeschraenkt.
+  Erfolgreiche SEQ-Persistenz auf deinem neueren lokalen Stand wurde hier
+  nicht nachgewiesen. Siehe den Pruefbericht, bevor du EXPORT als Sicherung nutzt.
+
+Anleitung: README_DE.md
+Pruefumfang und Grenzen: docs/VERIFICATION.md
+Spielanleitung mit Quellcode: examples/ROM_RUNNER.txt
+Selbst bauen: python build.py oder build.cmd (Python 3.10+)

@@ -1,0 +1,71 @@
+{
+  "kind": "controlled-kernal-file-api-contract",
+  "iec_signaling_verified": false,
+  "real_rom_instructions": true,
+  "images": {
+    "open-basic64.bin": {
+      "bytes": 8192,
+      "sha256": "6d6089f65922f8ad8a8d7ed82cda3d5496ad9f46aadbd274c5bd076b6607e03a"
+    },
+    "open-kernal64.bin": {
+      "bytes": 8192,
+      "sha256": "837cbb272510becaf416bfe100426bc224b2bcf722cda39a020326d9ad9ba9a9"
+    },
+    "open-character-rom64.bin": {
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38"
+    },
+    "c64-basic-kernal.bin": {
+      "bytes": 16384,
+      "sha256": "403ce869e4903918c48d6a7da9f466380981690118c82107e12b4ba362e5de49"
+    }
+  },
+  "images_unchanged_during_run": true,
+  "tests_run": 10,
+  "tests": [
+    {
+      "name": "__main__.DiskContractTests.test_bad_filenames_are_rejected_before_open",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_export_detects_dos_file_exists_and_disk_full",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_export_round_trip_empty_and_512_binary_bytes",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_import_zero_one_and_512_bytes",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_interrupted_import_preserves_existing",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_invalid_program_headers_and_overflow_disable_run",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_load_and_run_native_program",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_oversized_import_preserves_existing_and_does_not_create",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_program_can_use_last_byte_of_arena",
+      "passed": true
+    },
+    {
+      "name": "__main__.DiskContractTests.test_status_channel_failure_does_not_commit_import",
+      "passed": true
+    }
+  ],
+  "failures": [],
+  "errors": [],
+  "passed": true,
+  "seconds": 4.663
+}

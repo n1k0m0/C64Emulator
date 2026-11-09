@@ -1,0 +1,61 @@
+ROM RUNNER -- ein eigenes kleines C64-Spiel
+==========================================
+
+ROM RUNNER ist ein originales Maschinensprache-Spiel fuer den C64.
+Quellcode, Spiel und Bildzeichen verwenden keine fremden Spielassets.
+Lizenz: Apache-2.0 (siehe LICENSE im Projektverzeichnis).
+
+START MIT C64/UX
+---------------
+Die Diskette play-games.d64 als Laufwerk 8 einlegen.
+Im Terminal eingeben:
+
+    play ROMRUNNER
+
+Der PLAY-Start gibt den Arbeitsspeicher des Terminals fuer das Spiel frei.
+Die RAM-Dateien der Shell werden dabei verworfen. Beim Verlassen startet
+C64/UX wieder frisch. Fuer eine vorherige Sicherung die SEQ-Einschraenkungen
+in README_DE.md beachten; EXPORT ist im alten oeffentlichen Core begrenzt.
+
+Alternativ ist rom_runner.prg eine normale PRG-Datei mit Ladeadresse $0801.
+Sie enthaelt eine BASIC-Zeile 10 SYS 2061. Auf einem C64 mit BASIC kann sie
+mit LOAD "ROMRUNNER",8 und RUN gestartet werden. Der vorgesehene
+Integrationspfad dieses Pakets ist der PLAY-Befehl in C64/UX.
+
+STEUERUNG
+---------
+SPACE oder Joystick-2-Feuer: Spiel starten.
+A / D gedrueckt halten: nach links / rechts bewegen.
+Joystick 2 links / rechts: dieselbe Bewegung.
+R: neue Partie starten.
+Q oder RUN/STOP: Spiel verlassen und zum aufrufenden Programm zurueck.
+Nach GAME OVER startet auch SPACE oder Joystick-2-Feuer eine neue Partie.
+
+REGELN
+------
+Die hellblaue <A>-Figur faengt gelbe Sterne (*). Jeder Stern gibt 1 Punkt.
+Den roten Felsen (X) ausweichen. Ein verpasster Stern oder ein Felsentreffer
+kostet ein Leben. Mit drei Leben starten. Bei 10, 20 und 30 Punkten steigt
+die Fallgeschwindigkeit. Der Fangbereich ist die ganze dreistellige Figur.
+Es gibt einen fallenden Stern und zwei zeitversetzt fallende Felsen.
+
+Der erste Stern faellt direkt ueber der Startposition. Zum Ausprobieren:
+SPACE druecken und die Figur kurz stehenlassen. Nach etwa einer Sekunde
+erscheint der erste Punkt; dazu spielt der SID einen kurzen Ton.
+
+TECHNIK UND NACHBAU
+------------------
+rom_runner.asm ist der vollstaendige 6510-Quellcode.
+rom_runner.map enthaelt die Adressen fuer Debugger und Reproduktion.
+Das Programm schreibt Bildschirm- und Farb-RAM direkt, liest die reale
+CIA-Tastaturmatrix und Joystick 2 und programmiert den SID. Es verwendet
+keinen Emulator-Load-Hack und keine Eingabe- oder Sound-Simulation.
+Der KERNAL-Jiffy-Zaehler $A2 taktet das Spiel. Der KERNAL muss deshalb
+seine regulaeren Timer-Interrupts mit 60 Hz ausfuehren.
+
+Im Projektverzeichnis:
+
+    python tools/make_play_disk.py
+
+Erzeugt die PRG-Datei, Symbolkarte und play-games.d64 erneut. Der Builder
+benutzt nur Python-Standardbibliothek und den mitgelieferten Assembler.

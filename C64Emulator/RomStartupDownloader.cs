@@ -202,6 +202,23 @@ namespace C64Emulator
         }
 
         /// <summary>
+        /// Returns the directory of the C64/UX shell ROM set shipped next to the executable.
+        /// </summary>
+        public static string GetBundledUxRomDirectory()
+        {
+            return Path.Combine(AppContext.BaseDirectory, "c64ux-roms");
+        }
+
+        /// <summary>
+        /// Checks whether the C64/UX shell ROM set shipped next to the executable is complete.
+        /// The C64/UX set reuses the open ROM file names, so the same file check applies.
+        /// </summary>
+        public static bool BundledUxRomsAvailable()
+        {
+            return IsOpenRomSetComplete(GetBundledUxRomDirectory());
+        }
+
+        /// <summary>
         /// Checks whether a directory contains the complete open ROM set.
         /// </summary>
         public static bool IsOpenRomSetComplete(string openRomDirectory)

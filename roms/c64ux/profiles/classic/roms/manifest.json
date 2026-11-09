@@ -1,0 +1,39 @@
+{
+  "profile": "Classic Open BASIC / Open KERNAL",
+  "origin": "Unchanged binaries from user-supplied kernal-private-eddd-current-v2.zip",
+  "compatibility": "Original user-provided development baseline, not a universal compatibility claim",
+  "images": {
+    "1541-c000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686"
+    },
+    "1541-e000-rom.bin": {
+      "bytes": 8192,
+      "sha256": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc"
+    },
+    "c64-basic-kernal.bin": {
+      "bytes": 16384,
+      "sha256": "d65710af922beb8ee33037848a19fd73f41e831b498a70f44b7da9e393b56273"
+    },
+    "c64-character.bin": {
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38"
+    },
+    "open-1541-dos.bin": {
+      "bytes": 16384,
+      "sha256": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522"
+    },
+    "open-basic64.bin": {
+      "bytes": 8192,
+      "sha256": "79a773607d1d105ccdccf7f562ee22436d9df9bf31050dbc1b3c64296ea33887"
+    },
+    "open-character-rom64.bin": {
+      "bytes": 4096,
+      "sha256": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38"
+    },
+    "open-kernal64.bin": {
+      "bytes": 8192,
+      "sha256": "49093468dd6de3e43a7b38c32cfa93973447e1cf5ba9bf786fba573633f52a14"
+    }
+  }
+}

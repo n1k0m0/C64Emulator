@@ -1,0 +1,202 @@
+{
+  "suite": "Unchanged classic ROM profile on the actual C64Emulator core",
+  "emulator_repository": "https://github.com/n1k0m0/C64Emulator",
+  "emulator_commit": "f01750e17a2c3f4cabfd57dc0c470dac93a91a23",
+  "external_source_tracked_changes": false,
+  "profile": "Classic Open BASIC / Open KERNAL",
+  "profile_origin": "Unchanged user-supplied development ROMs",
+  "rom_sha256": {
+    "1541-c000-rom.bin": "312d072774e52fbe4adfbbe86ff338668294ba6d7c2ce5381ef39a1e182b0686",
+    "1541-e000-rom.bin": "a5720a5a1d5e90a21aaa76f3fb2ce08a1118726a85a05fa69ee51846a989bdfc",
+    "c64-basic-kernal.bin": "d65710af922beb8ee33037848a19fd73f41e831b498a70f44b7da9e393b56273",
+    "c64-character.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-1541-dos.bin": "a512f93736ad31a0dbff01cab1aa39b9571921af77bbc59bd414627b15612522",
+    "open-basic64.bin": "79a773607d1d105ccdccf7f562ee22436d9df9bf31050dbc1b3c64296ea33887",
+    "open-character-rom64.bin": "fe483a784be2d41c336a9b254fe414fb797cafabaadb4fa4fe94e3e6012f8a38",
+    "open-kernal64.bin": "49093468dd6de3e43a7b38c32cfa93973447e1cf5ba9bf786fba573633f52a14"
+  },
+  "game_prg_sha256": "a2d9329fa8092d18d038b3c6ea4a1f4414d46faac5709c7466ec7716f6e54604",
+  "game_map_sha256": "2ea8e9b1c562add012548fd153d9bc8055f8ae5517d42ec4b2b666101bfae4a7",
+  "disk_sha256": "b3a2e69c8d7fe8d1676054f68aecbb77870aaf53c6dbf90b597fe590b5f3c9ba",
+  "temporary_frontend_sha256": "9b783331db8c70e5195cfd9649d06a4de7c6016ae924ef445d592e529ef397b7",
+  "cpu_cia_vic_sid_iec_source_modified": false,
+  "load_shortcut": false,
+  "kernal_iec_hooks": false,
+  "automatic_host_input_injection": false,
+  "explicit_petscii_input": "Only LOAD \"ROMRUNNER\",8,1 uses an explicit queue",
+  "physical_matrix_input": "PRINT, RUN, SPACE, held A/D, Q and the separate quote probe",
+  "host_audio_sink_only_is_replaced": true,
+  "audible_sound_verified": false,
+  "success": true,
+  "scope": "This verifies the listed BASIC arithmetic and the bundled original ROM RUNNER game under these exact ROM/core versions. It does not establish broad C64 game, BASIC, fastloader, tape or cartridge compatibility.",
+  "physical_quoted_load": "With this unchanged classic keyboard routine and the harness's physical matrix path, Shift+quote does not reliably enter the required quotation marks. The observed command 'LOAD 2ROMRUNNER,8,1' reports ?SYNTAX ERROR. The successful game load above therefore uses an explicitly queued PETSCII command. Its IEC transfer and subsequent RUN/game controls still execute in the real core.",
+  "seconds": 24.004,
+  "observations": [
+    {
+      "pc": "E97C",
+      "sp": "FB",
+      "state": "ExecuteInstruction",
+      "jiffies": 73,
+      "command": "BOOT"
+    },
+    {
+      "pc": "E921",
+      "sp": "FB",
+      "state": "FetchOpcode",
+      "jiffies": 158,
+      "command": "keys:PRINT 1+1"
+    },
+    {
+      "pc": "E97A",
+      "sp": "FD",
+      "state": "FetchOpcode",
+      "jiffies": 206,
+      "command": "mount8:play-games.d64"
+    },
+    {
+      "pc": "E925",
+      "sp": "F9",
+      "state": "ExecuteInstruction",
+      "jiffies": 379,
+      "command": "run:6000000:LOAD \"ROMRUNNER\",8,1"
+    },
+    {
+      "pc": "088B",
+      "sp": "F7",
+      "state": "FetchOpcode",
+      "jiffies": 442,
+      "command": "keys:RUN"
+    },
+    {
+      "pc": "088B",
+      "sp": "F7",
+      "state": "ExecuteInstruction",
+      "jiffies": 449,
+      "command": "classic-hold:Space:60000"
+    },
+    {
+      "pc": "0889",
+      "sp": "F7",
+      "state": "FetchOpcode",
+      "jiffies": 516,
+      "command": "classic-wait:1100000"
+    },
+    {
+      "pc": "088E",
+      "sp": "F7",
+      "state": "FetchOpcode",
+      "jiffies": 528,
+      "command": "classic-hold:D:150000"
+    },
+    {
+      "pc": "088A",
+      "sp": "F7",
+      "state": "ExecuteInstruction",
+      "jiffies": 540,
+      "command": "classic-hold:A:150000"
+    },
+    {
+      "pc": "E921",
+      "sp": "F7",
+      "state": "FetchOpcode",
+      "jiffies": 547,
+      "command": "classic-hold:Q:60000"
+    },
+    {
+      "pc": "E954",
+      "sp": "F7",
+      "state": "FetchOpcode",
+      "jiffies": 632,
+      "command": "keys:PRINT 2+2"
+    }
+  ],
+  "results": [
+    {
+      "test": "Cold boot enters the supplied OPEN BASIC",
+      "status": "passed"
+    },
+    {
+      "test": "Physical keyboard PRINT 1+1 produces 2",
+      "status": "passed",
+      "input": "Physical CIA matrix"
+    },
+    {
+      "test": "D64 mounts in device 8",
+      "status": "passed",
+      "output": "DISK MOUNTED IN DRIVE 8"
+    },
+    {
+      "test": "LOAD ROMRUNNER,8,1 transfers the exact PRG over IEC",
+      "status": "passed",
+      "requested_command": "LOAD \"ROMRUNNER\",8,1",
+      "input": "Explicit PETSCII queue for the quoted command",
+      "load_address": "$0801",
+      "bytes": 1860,
+      "expected_payload_sha256": "524c3815bbeed9e830d07dc5d90ad428772a9c735e11b8276e83cdd40a0b70f4",
+      "observed_ram_sha256": "524c3815bbeed9e830d07dc5d90ad428772a9c735e11b8276e83cdd40a0b70f4"
+    },
+    {
+      "test": "Physical RUN executes the ordinary BASIC SYS bootstrap",
+      "status": "passed",
+      "sys_entry": "$080D",
+      "observation": {
+        "state": 0,
+        "player_x": 20,
+        "score": 0,
+        "lives": 3,
+        "fall_delay": 6
+      }
+    },
+    {
+      "test": "Physical SPACE starts the game",
+      "status": "passed",
+      "observation": {
+        "state": 1,
+        "player_x": 20,
+        "score": 0,
+        "lives": 3,
+        "fall_delay": 6
+      }
+    },
+    {
+      "test": "The running 6510 game catches its first star and updates score",
+      "status": "passed",
+      "observation": {
+        "state": 1,
+        "player_x": 20,
+        "score": 1,
+        "lives": 3,
+        "fall_delay": 6
+      }
+    },
+    {
+      "test": "Held physical D moves the visible player right",
+      "status": "passed",
+      "before": 20,
+      "after": 29
+    },
+    {
+      "test": "Held physical A moves the visible player left",
+      "status": "passed",
+      "before": 29,
+      "after": 20
+    },
+    {
+      "test": "Physical Q returns through RTS to BASIC",
+      "status": "passed",
+      "pc": "E921",
+      "output": "READY."
+    },
+    {
+      "test": "Physical PRINT 2+2 still produces 4 after the game",
+      "status": "passed",
+      "output": "4 \n\nREADY."
+    },
+    {
+      "test": "Wholly physical quoted LOAD behavior is accounted for",
+      "status": "limited",
+      "observed_command": "LOAD 2ROMRUNNER,8,1",
+      "detail": "With this unchanged classic keyboard routine and the harness's physical matrix path, Shift+quote does not reliably enter the required quotation marks. The observed command 'LOAD 2ROMRUNNER,8,1' reports ?SYNTAX ERROR. The successful game load above therefore uses an explicitly queued PETSCII command. Its IEC transfer and subsequent RUN/game controls still execute in the real core."
+    }
+  ]
+}

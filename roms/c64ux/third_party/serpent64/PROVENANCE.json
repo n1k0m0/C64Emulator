@@ -1,0 +1,31 @@
+{
+  "name": "SERPENT 64",
+  "version": "1.0.4",
+  "author": "AdvancingDevelopment",
+  "license": "MIT (see LICENSE.txt)",
+  "upstream_repository": "https://github.com/AdvancingDevelopment/c64snake",
+  "release_tag": "v1.0.4",
+  "release_commit": "d45412cef4242f97d505f8913509c5542939b768",
+  "release_archive_url": "https://github.com/AdvancingDevelopment/c64snake/releases/download/v1.0.4/serpent64-v1.0.4-2.zip",
+  "release_archive_sha256": "f11a11889a0385f551be43caba2656fd5280841600d978f1331e009a832849f0",
+  "modifications": "None: the PRG, D64, README and LICENSE are copied unchanged from the release archive.",
+  "purpose": "Independent existing-game compatibility test and playable example.",
+  "files": {
+    "LICENSE.txt": {
+      "bytes": 1078,
+      "sha256": "c07adeb9b24ff7c9222397272282453bf9daa7da1acbc0169757ac51f9857450"
+    },
+    "README.txt": {
+      "bytes": 1858,
+      "sha256": "45d1ef22fae7acc34ac0dbb6897dc8ee035409c1b2e3fb8068a3bb0b57f992ee"
+    },
+    "serpent64.d64": {
+      "bytes": 174848,
+      "sha256": "0e6ca2e47be076d2704e26fe346f0503fb3ef6d47fbe21bf264f5b7e66f2ede9"
+    },
+    "serpent64.prg": {
+      "bytes": 12289,
+      "sha256": "f1c1219eddc1de4729ce1455127c23e040a7148efb8d83e87bc1c76e29bbe734"
+    }
+  }
+}
